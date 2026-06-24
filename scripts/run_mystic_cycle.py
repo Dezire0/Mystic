@@ -543,6 +543,21 @@ def build_kaggle_training_script(
             "    print(f'[signal] {status}', flush=True)",
             "",
             "def find_package() -> Path:",
+            "    local_candidates = [",
+            "        Path(__file__).resolve().parent / PACKAGE_FILENAME,",
+            "        Path.cwd() / PACKAGE_FILENAME,",
+            "        Path('/kaggle/working') / PACKAGE_FILENAME,",
+            "        Path('/kaggle/src') / PACKAGE_FILENAME,",
+            "    ]",
+            "    for candidate in local_candidates:",
+            "        if candidate.exists():",
+            "            return candidate",
+            "    local_tarballs = []",
+            "    for root in [Path(__file__).resolve().parent, Path.cwd(), Path('/kaggle/working'), Path('/kaggle/src')]:",
+            "        if root.exists():",
+            "            local_tarballs.extend(root.rglob('*.tar.gz'))",
+            "    if local_tarballs:",
+            "        return local_tarballs[0]",
             "    dataset_root = Path('/kaggle/input') / DATASET_SLUG",
             "    matches = list(dataset_root.rglob(PACKAGE_FILENAME))",
             "    if matches:",
@@ -893,6 +908,8 @@ def run_submit(args: argparse.Namespace) -> int:
         dataset_ref=dataset_ref,
         title=f"Mystic Cycle {args.cycle_id}",
     )
+    bundled_kernel_package = kernel_dir / package_path.name
+    shutil.copy2(package_path, bundled_kernel_package)
 
     training_script_path = kernel_dir / "train_mystic_raven.py"
     write_text(

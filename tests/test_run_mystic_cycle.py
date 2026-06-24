@@ -145,6 +145,8 @@ class RunMysticCycleTests(unittest.TestCase):
         self.assertIn("mystic_cycle_signal.json", script)
         self.assertIn("cycle_done", script)
         self.assertIn("cycle_error", script)
+        self.assertIn("Path(__file__).resolve().parent / PACKAGE_FILENAME", script)
+        self.assertIn("Path('/kaggle/src') / PACKAGE_FILENAME", script)
 
     def test_safe_extract_adapter_tar_ignores_appledouble(self):
         with tempfile.TemporaryDirectory() as temp_dir:
