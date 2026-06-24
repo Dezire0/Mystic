@@ -230,6 +230,166 @@ python scripts/train_raven_lora.py \
   --qlora
 ```
 
+## Cycle Runner
+
+The local cycle can now be run in two stages: `prepare` before GPU training and `finish` after you download the trained adapter tarball.
+
+Prepare a cycle and build the GPU upload package:
+
+```bash
+.venv-training/bin/python scripts/run_mystic_cycle.py prepare \
+  --cycle-id cycle_1 \
+  --run-prepare-data \
+  --limit 500
+```
+
+This writes a tarball like `mystic_gpu_train_package_cycle_1.tar.gz` at the repo root and stores cycle artifacts under `mystic_data/cycles/cycle_1/`.
+
+Mac dry-run before real GPU training:
+
+```bash
+.venv-training/bin/python scripts/train_raven_lora.py \
+  --dry-run \
+  --base-model Qwen/Qwen2.5-0.5B-Instruct \
+  --train-file mystic_data/train_ready/raven_train.jsonl \
+  --eval-file mystic_data/eval_holdout/raven_eval.jsonl \
+  --output-dir mystic_data/adapters/raven_lora_v0
+```
+
+GPU QLoRA training:
+
+```bash
+python scripts/train_raven_lora.py \
+  --base-model Qwen/Qwen2.5-0.5B-Instruct \
+  --train-file mystic_data/train_ready/raven_train.jsonl \
+  --eval-file mystic_data/eval_holdout/raven_eval.jsonl \
+  --output-dir mystic_data/adapters/raven_lora_v0 \
+  --epochs 1 \
+  --batch-size 1 \
+  --learning-rate 0.0002 \
+  --max-length 2048 \
+  --qlora
+```
+
+Finish a cycle after downloading the adapter tarball:
+
+```bash
+.venv-training/bin/python scripts/run_mystic_cycle.py finish \
+  --cycle-id cycle_1 \
+  --base-model Qwen/Qwen2.5-0.5B-Instruct \
+  --adapter-tar ~/Downloads/raven_lora_v1_qwen.tar.gz \
+  --adapter-path mystic_data/adapters/raven_lora_v1 \
+  --model-id raven_lora_v1 \
+  --run-limit 20 \
+  --compare-limit 10
+```
+
+What `finish` does automatically:
+
+- checks that `adapter_config.json` exists
+- checks that `adapter_model.safetensors` exists
+- checks that `base_model_name_or_path` matches `--base-model`
+- backs up and clears `mystic_data/state/processed_ids.jsonl`
+- runs adapter reinjection through `scripts/mystic_loop.py`
+- runs `scripts/compare_raven_models.py`
+- verifies `adapter_better_or_equal_rate` exists in the comparison summary
+- runs `scripts/register_model.py`
+- appends cycle events and summaries without overwriting older JSONL logs
+
+Evaluate the adapter explicitly:
+
+```bash
+.venv-training/bin/python scripts/evaluate_raven_lora.py \
+  --base-model Qwen/Qwen2.5-0.5B-Instruct \
+  --adapter-path mystic_data/adapters/raven_lora_v1 \
+  --eval-file mystic_data/eval_holdout/raven_eval.jsonl \
+  --limit 10
+```
+
+Reinject the adapter into the live loop directly:
+
+```bash
+.venv-training/bin/python scripts/mystic_loop.py \
+  --limit 10 \
+  --backend adapter \
+  --base-model Qwen/Qwen2.5-0.5B-Instruct \
+  --adapter-path mystic_data/adapters/raven_lora_v1 \
+  --run-id qwen_raven_reinject_v1
+```
+
+Show current local cycle state:
+
+```bash
+.venv-training/bin/python scripts/run_mystic_cycle.py status \
+  --limit 5
+```
+
+## Kaggle Automation
+
+For free GPU automation, Mystic now supports a Kaggle CLI flow inside [scripts/run_mystic_cycle.py](/Users/JYH/Documents/Mystic/scripts/run_mystic_cycle.py).
+
+Install the Kaggle CLI and place credentials at `~/.kaggle/kaggle.json` or set `KAGGLE_USERNAME` and `KAGGLE_KEY`:
+
+```bash
+python -m pip install kaggle
+chmod 600 ~/.kaggle/kaggle.json
+```
+
+Prepare the package and train/eval data:
+
+```bash
+python scripts/run_mystic_cycle.py prepare \
+  --cycle-id cycle_1 \
+  --run-prepare-data \
+  --limit 500
+```
+
+Submit the prepared package to Kaggle:
+
+```bash
+python scripts/run_mystic_cycle.py submit \
+  --cycle-id cycle_1 \
+  --base-model Qwen/Qwen2.5-0.5B-Instruct \
+  --adapter-path mystic_data/adapters/raven_lora_v0
+```
+
+Poll the Kaggle kernel until it finishes:
+
+```bash
+python scripts/run_mystic_cycle.py poll \
+  --cycle-id cycle_1 \
+  --poll-seconds 60 \
+  --timeout-minutes 240
+```
+
+Download the trained adapter artifact:
+
+```bash
+python scripts/run_mystic_cycle.py download --cycle-id cycle_1
+```
+
+Run the full Kaggle-backed cycle automatically:
+
+```bash
+python scripts/run_mystic_cycle.py full \
+  --cycle-id cycle_1 \
+  --run-prepare-data \
+  --base-model Qwen/Qwen2.5-0.5B-Instruct \
+  --adapter-path mystic_data/adapters/raven_lora_v0 \
+  --model-id raven_lora_v0_qwen_auto \
+  --run-limit 20 \
+  --compare-limit 10
+```
+
+The cycle directory stores:
+
+- `prepare_summary.json`
+- `kaggle_commands.md`
+- `kaggle_submit_summary.json`
+- `kaggle_poll_summary.json`
+- `kaggle_download_summary.json`
+- `summary.json`
+
 Use the same command on:
 
 - Colab with a CUDA runtime

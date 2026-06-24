@@ -18,6 +18,7 @@ mystic_data/train_ready/*
 mystic_data/eval_holdout/*
 mystic_data/exports/*
 mystic_data/models/*
+mystic_data/cycles/*
 mystic_data/adapters/*
 mystic_data/logs/*
 mystic_data/state/*
@@ -36,6 +37,7 @@ mystic_data/state/*
 !mystic_data/eval_holdout/.gitkeep
 !mystic_data/exports/.gitkeep
 !mystic_data/models/.gitkeep
+!mystic_data/cycles/.gitkeep
 !mystic_data/adapters/.gitkeep
 !mystic_data/logs/.gitkeep
 !mystic_data/state/.gitkeep
