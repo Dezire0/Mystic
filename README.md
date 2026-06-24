@@ -45,6 +45,7 @@ mystic_data/
 ├── exports/
 ├── internal/
 ├── logs/
+├── reports/
 ├── processed/
 ├── raw/
 ├── rejected/
@@ -67,6 +68,7 @@ Important files written by the loop:
 - `mystic_data/logs/adapter_inference_log.jsonl`
 - `mystic_data/logs/raven_comparison_results.jsonl`
 - `mystic_data/logs/raven_promotion_log.jsonl`
+- `mystic_data/reports/execution_history.html`
 - `mystic_data/state/processed_ids.jsonl`
 - `mystic_data/exports/raven_lora.jsonl`
 - `mystic_data/train_ready/raven_lora.jsonl`
@@ -134,6 +136,19 @@ This writes both:
 
 - `mystic_data/exports/raven_lora.jsonl`
 - `mystic_data/train_ready/raven_lora.jsonl`
+
+## Execution History Page
+
+Build a single HTML page from the current execution logs:
+
+```bash
+.venv-training/bin/python scripts/render_execution_history_page.py
+```
+
+Outputs:
+
+- `mystic_data/reports/execution_history.html`
+- `mystic_data/reports/execution_history.json`
 
 ## Mystic v2 Training
 
