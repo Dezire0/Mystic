@@ -15,15 +15,18 @@ from scripts.run_mystic_cycle import (
     create_kaggle_package,
     current_adapter_status,
     extract_last_json_object,
+    locate_cycle_signal_file,
     locate_downloaded_adapter_tar,
     kaggle_dataset_create_needs_version,
     parse_kaggle_status_output,
+    parse_kaggle_dataset_status_output,
     run_finish,
     run_full,
     run_prepare,
     safe_extract_adapter_tar,
     slugify,
     validate_adapter_files,
+    wait_for_kaggle_dataset_ready,
     write_json,
 )
 
@@ -41,6 +44,11 @@ class RunMysticCycleTests(unittest.TestCase):
         self.assertEqual(parse_kaggle_status_output("status: running"), "running")
         self.assertEqual(parse_kaggle_status_output("Kernel status: complete"), "complete")
         self.assertEqual(parse_kaggle_status_output("status: failed"), "failed")
+
+    def test_parse_kaggle_dataset_status_output(self):
+        self.assertEqual(parse_kaggle_dataset_status_output("ready"), "ready")
+        self.assertEqual(parse_kaggle_dataset_status_output("Dataset status: running"), "running")
+        self.assertEqual(parse_kaggle_dataset_status_output("Dataset status: failed"), "failed")
 
     def test_kaggle_dataset_create_needs_version(self):
         self.assertTrue(
@@ -134,6 +142,9 @@ class RunMysticCycleTests(unittest.TestCase):
         self.assertIn("scripts/train_raven_lora.py", script)
         self.assertIn("scripts/evaluate_raven_lora.py", script)
         self.assertIn("raven_lora_v0_qwen.tar.gz", script)
+        self.assertIn("mystic_cycle_signal.json", script)
+        self.assertIn("cycle_done", script)
+        self.assertIn("cycle_error", script)
 
     def test_safe_extract_adapter_tar_ignores_appledouble(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -165,6 +176,33 @@ class RunMysticCycleTests(unittest.TestCase):
             expected.write_text("y", encoding="utf-8")
             located = locate_downloaded_adapter_tar(output_dir, "raven_lora_v0_qwen.tar.gz")
             self.assertEqual(located, expected)
+
+    def test_locate_cycle_signal_file_finds_signal(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            signal = output_dir / "mystic_cycle_signal.json"
+            signal.write_text('{"status":"cycle_done"}\n', encoding="utf-8")
+            located = locate_cycle_signal_file(output_dir)
+            self.assertEqual(located, signal)
+
+    def test_wait_for_kaggle_dataset_ready(self):
+        responses = [
+            type("Result", (), {"stdout": "running", "stderr": ""})(),
+            type("Result", (), {"stdout": "ready", "stderr": ""})(),
+        ]
+        with patch("scripts.run_mystic_cycle.run_raw_command", side_effect=responses), patch(
+            "scripts.run_mystic_cycle.time.sleep",
+            return_value=None,
+        ):
+            payload = wait_for_kaggle_dataset_ready(
+                kaggle_cmd=["python", "-m", "kaggle"],
+                dataset_ref="dyrakd/mystic-cycle-cycle-1",
+                cwd=Path("/tmp"),
+                poll_seconds=0,
+                timeout_minutes=1,
+            )
+        self.assertEqual(payload["final_status"], "ready")
+        self.assertEqual(len(payload["checks"]), 2)
 
     def test_run_finish_writes_cycle_summary(self):
         with tempfile.TemporaryDirectory() as temp_dir:

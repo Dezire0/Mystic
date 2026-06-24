@@ -447,6 +447,17 @@ def parse_kaggle_status_output(stdout: str) -> str:
     return "unknown"
 
 
+def parse_kaggle_dataset_status_output(stdout: str) -> str:
+    text = stdout.strip().lower()
+    if "ready" in text:
+        return "ready"
+    if any(token in text for token in ["running", "queued", "pending", "creating", "uploading"]):
+        return "running"
+    if any(token in text for token in ["failed", "error"]):
+        return "failed"
+    return "unknown"
+
+
 def kaggle_dataset_create_needs_version(stdout: str, stderr: str) -> bool:
     combined = f"{stdout}\n{stderr}".lower()
     return "dataset creation error" in combined and "already in use" in combined
@@ -460,6 +471,14 @@ def locate_downloaded_adapter_tar(output_dir: Path, expected_name: str) -> Path:
     if not tarballs:
         raise FileNotFoundError(f"No .tar.gz artifacts found under {output_dir}")
     return tarballs[0]
+
+
+def locate_cycle_signal_file(output_dir: Path) -> Path | None:
+    exact = output_dir / "mystic_cycle_signal.json"
+    if exact.exists():
+        return exact
+    matches = sorted(output_dir.rglob("mystic_cycle_signal.json"))
+    return matches[0] if matches else None
 
 
 def load_prepare_summary(base_dir: Path, cycle_id: str) -> dict[str, Any]:
@@ -492,12 +511,15 @@ def build_kaggle_training_script(
         [
             "from __future__ import annotations",
             "",
+            "from datetime import UTC, datetime",
+            "import json",
             "import os",
             "from pathlib import Path",
             "import subprocess",
             "import sys",
             "import tarfile",
             "import time",
+            "import traceback",
             "",
             f'DATASET_SLUG = "{dataset_slug}"',
             f'PACKAGE_FILENAME = "{package_filename}"',
@@ -505,9 +527,20 @@ def build_kaggle_training_script(
             f'ADAPTER_DIRNAME = "{adapter_dirname}"',
             f'OUTPUT_TAR_NAME = "{output_tar_name}"',
             "",
+            "SIGNAL_PATH = Path('/kaggle/working') / 'mystic_cycle_signal.json'",
+            "",
             "def run(args: list[str]) -> None:",
             '    print("+", " ".join(args), flush=True)',
             "    subprocess.run(args, check=True)",
+            "",
+            "def now_iso() -> str:",
+            "    return datetime.now(UTC).isoformat()",
+            "",
+            "def write_signal(status: str, **extra: object) -> None:",
+            "    payload = {'timestamp': now_iso(), 'status': status}",
+            "    payload.update(extra)",
+            "    SIGNAL_PATH.write_text(json.dumps(payload, indent=2) + '\\n', encoding='utf-8')",
+            "    print(f'[signal] {status}', flush=True)",
             "",
             "def find_package() -> Path:",
             "    dataset_root = Path('/kaggle/input') / DATASET_SLUG",
@@ -525,54 +558,65 @@ def build_kaggle_training_script(
             "        return global_matches[0]",
             "    raise FileNotFoundError(f'Package tarball not found under {dataset_root} or /kaggle/input')",
             "",
-            "package_path = None",
-            "last_error = None",
-            "for attempt in range(12):",
-            "    try:",
-            "        package_path = find_package()",
-            "        print(f'Found package on attempt {attempt + 1}: {package_path}', flush=True)",
-            "        break",
-            "    except FileNotFoundError as exc:",
-            "        last_error = exc",
-            "        print(f'Waiting for Kaggle dataset mount ({attempt + 1}/12)...', flush=True)",
-            "        time.sleep(10)",
-            "if package_path is None:",
-            "    raise last_error or FileNotFoundError('Package tarball not found.')",
-            "workdir = Path('/kaggle/working/mystic_cycle')",
-            "workdir.mkdir(parents=True, exist_ok=True)",
-            "with tarfile.open(package_path, 'r:gz') as archive:",
-            "    archive.extractall(workdir)",
-            "os.chdir(workdir)",
-            "run([sys.executable, '-m', 'pip', 'install', '-U', 'pip'])",
-            "if Path('requirements-training.txt').exists():",
-            "    run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements-training.txt'])",
-            "run([sys.executable, '-m', 'pip', 'install', 'bitsandbytes', 'peft', 'accelerate', 'datasets', 'safetensors'])",
-            "run([",
-            "    sys.executable,",
-            "    'scripts/train_raven_lora.py',",
-            "    '--base-model', BASE_MODEL,",
-            "    '--train-file', 'mystic_data/train_ready/raven_train.jsonl',",
-            "    '--eval-file', 'mystic_data/eval_holdout/raven_eval.jsonl',",
-            "    '--output-dir', f'mystic_data/adapters/{ADAPTER_DIRNAME}',",
-            f"    '--epochs', '{epochs}',",
-            f"    '--batch-size', '{batch_size}',",
-            f"    '--learning-rate', '{learning_rate}',",
-            f"    '--max-length', '{max_length}',",
-            "    '--qlora',",
-            "])",
-            "run([",
-            "    sys.executable,",
-            "    'scripts/evaluate_raven_lora.py',",
-            "    '--base-model', BASE_MODEL,",
-            "    '--adapter-path', f'mystic_data/adapters/{ADAPTER_DIRNAME}',",
-            "    '--eval-file', 'mystic_data/eval_holdout/raven_eval.jsonl',",
-            "    '--limit', '10',",
-            "])",
-            "output_tar = Path('/kaggle/working') / OUTPUT_TAR_NAME",
-            "with tarfile.open(output_tar, 'w:gz') as archive:",
-            "    archive.add(workdir / 'mystic_data' / 'adapters' / ADAPTER_DIRNAME, arcname=f'mystic_data/adapters/{ADAPTER_DIRNAME}')",
-            "    archive.add(workdir / 'mystic_data' / 'logs', arcname='mystic_data/logs')",
-            "print(output_tar)",
+            "write_signal('starting', dataset_slug=DATASET_SLUG, base_model=BASE_MODEL, adapter_dirname=ADAPTER_DIRNAME)",
+            "try:",
+            "    package_path = None",
+            "    last_error = None",
+            "    for attempt in range(12):",
+            "        try:",
+            "            package_path = find_package()",
+            "            print(f'Found package on attempt {attempt + 1}: {package_path}', flush=True)",
+            "            write_signal('package_found', package_path=str(package_path), attempt=attempt + 1)",
+            "            break",
+            "        except FileNotFoundError as exc:",
+            "            last_error = exc",
+            "            print(f'Waiting for Kaggle dataset mount ({attempt + 1}/12)...', flush=True)",
+            "            time.sleep(10)",
+            "    if package_path is None:",
+            "        raise last_error or FileNotFoundError('Package tarball not found.')",
+            "    workdir = Path('/kaggle/working/mystic_cycle')",
+            "    workdir.mkdir(parents=True, exist_ok=True)",
+            "    with tarfile.open(package_path, 'r:gz') as archive:",
+            "        archive.extractall(workdir)",
+            "    write_signal('package_extracted', workdir=str(workdir))",
+            "    os.chdir(workdir)",
+            "    run([sys.executable, '-m', 'pip', 'install', '-U', 'pip'])",
+            "    if Path('requirements-training.txt').exists():",
+            "        run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements-training.txt'])",
+            "    run([sys.executable, '-m', 'pip', 'install', 'bitsandbytes', 'peft', 'accelerate', 'datasets', 'safetensors'])",
+            "    write_signal('training_started')",
+            "    run([",
+            "        sys.executable,",
+            "        'scripts/train_raven_lora.py',",
+            "        '--base-model', BASE_MODEL,",
+            "        '--train-file', 'mystic_data/train_ready/raven_train.jsonl',",
+            "        '--eval-file', 'mystic_data/eval_holdout/raven_eval.jsonl',",
+            "        '--output-dir', f'mystic_data/adapters/{ADAPTER_DIRNAME}',",
+            f"        '--epochs', '{epochs}',",
+            f"        '--batch-size', '{batch_size}',",
+            f"        '--learning-rate', '{learning_rate}',",
+            f"        '--max-length', '{max_length}',",
+            "        '--qlora',",
+            "    ])",
+            "    write_signal('training_complete')",
+            "    run([",
+            "        sys.executable,",
+            "        'scripts/evaluate_raven_lora.py',",
+            "        '--base-model', BASE_MODEL,",
+            "        '--adapter-path', f'mystic_data/adapters/{ADAPTER_DIRNAME}',",
+            "        '--eval-file', 'mystic_data/eval_holdout/raven_eval.jsonl',",
+            "        '--limit', '10',",
+            "    ])",
+            "    write_signal('evaluation_complete')",
+            "    output_tar = Path('/kaggle/working') / OUTPUT_TAR_NAME",
+            "    with tarfile.open(output_tar, 'w:gz') as archive:",
+            "        archive.add(workdir / 'mystic_data' / 'adapters' / ADAPTER_DIRNAME, arcname=f'mystic_data/adapters/{ADAPTER_DIRNAME}')",
+            "        archive.add(workdir / 'mystic_data' / 'logs', arcname='mystic_data/logs')",
+            "    write_signal('cycle_done', output_tar=str(output_tar))",
+            "    print(output_tar)",
+            "except Exception as exc:",
+            "    write_signal('cycle_error', error=repr(exc), traceback=traceback.format_exc())",
+            "    raise",
             "",
         ]
     )
@@ -613,6 +657,32 @@ def write_kaggle_kernel_metadata(
     }
     write_json(metadata_path, payload)
     return metadata_path
+
+
+def wait_for_kaggle_dataset_ready(
+    *,
+    kaggle_cmd: list[str],
+    dataset_ref: str,
+    cwd: Path,
+    poll_seconds: int = 10,
+    timeout_minutes: int = 10,
+) -> dict[str, Any]:
+    started_at = time.monotonic()
+    checks: list[dict[str, Any]] = []
+    while True:
+        result = run_raw_command([*kaggle_cmd, "datasets", "status", dataset_ref], cwd=cwd)
+        stdout = result.stdout.strip() or result.stderr.strip()
+        status = parse_kaggle_dataset_status_output(stdout)
+        snapshot = {"timestamp": now_iso(), "status": status, "raw": stdout}
+        checks.append(snapshot)
+        if status == "ready":
+            return {"final_status": status, "checks": checks}
+        if status == "failed":
+            raise RuntimeError(f"Kaggle dataset failed: {stdout}")
+        elapsed_minutes = (time.monotonic() - started_at) / 60.0
+        if elapsed_minutes > timeout_minutes:
+            raise TimeoutError(f"Kaggle dataset polling timed out after {timeout_minutes} minutes.")
+        time.sleep(poll_seconds)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -865,6 +935,11 @@ def run_submit(args: argparse.Namespace) -> int:
             cwd=ROOT,
         )
         dataset_action = "version"
+    dataset_status = wait_for_kaggle_dataset_ready(
+        kaggle_cmd=kaggle_cmd,
+        dataset_ref=dataset_ref,
+        cwd=ROOT,
+    )
     kernel_result = run_raw_command([*kaggle_cmd, "kernels", "push", "-p", str(kernel_dir)], cwd=ROOT)
 
     payload = {
@@ -880,6 +955,7 @@ def run_submit(args: argparse.Namespace) -> int:
         "output_tar_name": output_tar_name,
         "dataset_action": dataset_action,
         "dataset_stdout": dataset_result.stdout.strip(),
+        "dataset_status": dataset_status,
         "kernel_stdout": kernel_result.stdout.strip(),
     }
     write_json(kaggle_submit_summary_path(base_dir, args.cycle_id), payload)
@@ -950,6 +1026,8 @@ def run_download(args: argparse.Namespace) -> int:
     expected_tar_name = args.output_tar_name or str(submit_summary.get("output_tar_name", "")).strip() or default_output_tar_name("mystic_data/adapters/raven_lora_v0")
     result = run_raw_command([*kaggle_cmd, "kernels", "output", kernel_ref, "-p", str(output_dir)], cwd=ROOT)
     adapter_tar = locate_downloaded_adapter_tar(output_dir, expected_tar_name)
+    signal_file = locate_cycle_signal_file(output_dir)
+    signal_payload = read_json(signal_file) if signal_file is not None else None
     payload = {
         "timestamp": now_iso(),
         "command": "download",
@@ -958,6 +1036,8 @@ def run_download(args: argparse.Namespace) -> int:
         "output_dir": str(output_dir),
         "adapter_tar": str(adapter_tar),
         "output_tar_name": expected_tar_name,
+        "signal_file": str(signal_file) if signal_file is not None else None,
+        "signal_payload": signal_payload,
         "stdout": result.stdout.strip(),
     }
     write_json(kaggle_download_summary_path(base_dir, args.cycle_id), payload)
