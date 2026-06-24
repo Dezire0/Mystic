@@ -19,9 +19,12 @@ mystic_data/eval_holdout/*
 mystic_data/exports/*
 mystic_data/models/*
 mystic_data/cycles/*
+mystic_data/workflows/*
 mystic_data/adapters/*
 mystic_data/logs/*
 mystic_data/state/*
+mystic_gpu_train_package*.tar.gz
+raven_lora*_qwen.tar.gz
 
 !data/datasets/.gitkeep
 !data/exports/.gitkeep
@@ -38,6 +41,7 @@ mystic_data/state/*
 !mystic_data/exports/.gitkeep
 !mystic_data/models/.gitkeep
 !mystic_data/cycles/.gitkeep
+!mystic_data/workflows/.gitkeep
 !mystic_data/adapters/.gitkeep
 !mystic_data/logs/.gitkeep
 !mystic_data/state/.gitkeep

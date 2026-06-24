@@ -410,6 +410,51 @@ Use the same command on:
 
 On macOS, `--qlora` will fail gracefully when `bitsandbytes` or CUDA is unavailable. Dry-run mode is intended for local inspection.
 
+## Manifest Workflow
+
+The repository also includes a checklist-derived workflow runner that follows the existing manifests instead of requiring manual step selection.
+
+Run the full local preparation workflow:
+
+```bash
+.venv-training/bin/python scripts/run_manifest_workflow.py run \
+  --workflow-id manifest_cycle_1 \
+  --seed-internal \
+  --max-hf-rows 3 \
+  --numina-limit 1100 \
+  --raven-prepare-limit 500 \
+  --train-limit 1000 \
+  --eval-limit 100 \
+  --run-cycle-prepare \
+  --cycle-id cycle_1 \
+  --base-model Qwen/Qwen2.5-0.5B-Instruct \
+  --adapter-path mystic_data/adapters/raven_lora_v1 \
+  --learning-rate 0.00015
+```
+
+What this workflow does:
+
+- initializes local internal Mystic data files
+- optionally seeds internal example records
+- resolves checklist-linked Hugging Face datasets
+- downloads public dataset samples into `mystic_data/raw/`
+- grows the local Numina cache
+- exports Raven critique data
+- prepares Raven train/eval JSONL files
+- prepares specialist train-ready JSONL files
+- generates training plans for every target in `mystic_data/metadata/manifests/training_manifest.json`
+- optionally prepares the Kaggle Raven cycle package
+
+Show the latest workflow summary:
+
+```bash
+.venv-training/bin/python scripts/run_manifest_workflow.py status --limit 5
+```
+
+The workflow writes its summary to:
+
+- `mystic_data/workflows/<workflow_id>/summary.json`
+
 ## Mystic v3 Reinjection
 
 Run the loop with the trained Raven adapter:
