@@ -1,0 +1,13 @@
+{
+  "adapter": "core_router_lora_v0",
+  "agent": "core",
+  "label": "Core-Router-LoRA",
+  "priority": 5,
+  "base_model": "qwen3-14b",
+  "datasets": [
+    "routing_logs",
+    "attack_maps",
+    "Internal Mystic Data"
+  ],
+  "train_ready_output": "mystic_data/train_ready/core_train_ready.jsonl"
+}

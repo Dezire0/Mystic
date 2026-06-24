@@ -1,0 +1,16 @@
+{
+  "name": "AM-DeepSeek-R1-Distilled",
+  "slug": "am_deepseek_r1_distilled",
+  "priority": 7,
+  "source_type": "public_dataset",
+  "status": "manifest_ready",
+  "recommended_target_agents": [
+    "prime",
+    "core",
+    "report"
+  ],
+  "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/am_deepseek_r1_distilled",
+  "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/am_deepseek_r1_distilled",
+  "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/am_deepseek_r1_distilled/README.md",
+  "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/am_deepseek_r1_distilled/manifest.json"
+}

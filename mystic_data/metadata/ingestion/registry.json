@@ -1,0 +1,164 @@
+{
+  "sources": [
+    {
+      "name": "Internal Mystic Data",
+      "slug": "internal_mystic_data",
+      "priority": 1,
+      "source_type": "local",
+      "status": "bootstrap_ready",
+      "recommended_target_agents": [
+        "raven",
+        "forge",
+        "prime",
+        "lean",
+        "core",
+        "pattern",
+        "report"
+      ],
+      "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/internal_mystic_data",
+      "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/internal_mystic_data",
+      "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/internal_mystic_data/README.md",
+      "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/internal_mystic_data/manifest.json"
+    },
+    {
+      "name": "NuminaMath-CoT",
+      "slug": "numinamath_cot",
+      "priority": 2,
+      "source_type": "public_dataset",
+      "status": "manifest_ready",
+      "recommended_target_agents": [
+        "prime",
+        "core",
+        "report"
+      ],
+      "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/numinamath_cot",
+      "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/numinamath_cot",
+      "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/numinamath_cot/README.md",
+      "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/numinamath_cot/manifest.json"
+    },
+    {
+      "name": "OpenMathInstruct-2",
+      "slug": "openmathinstruct_2",
+      "priority": 3,
+      "source_type": "public_dataset",
+      "status": "manifest_ready",
+      "recommended_target_agents": [
+        "prime",
+        "core",
+        "report"
+      ],
+      "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/openmathinstruct_2",
+      "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/openmathinstruct_2",
+      "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/openmathinstruct_2/README.md",
+      "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/openmathinstruct_2/manifest.json"
+    },
+    {
+      "name": "OpenMathInstruct-1",
+      "slug": "openmathinstruct_1",
+      "priority": 4,
+      "source_type": "public_dataset",
+      "status": "manifest_ready",
+      "recommended_target_agents": [
+        "prime",
+        "core"
+      ],
+      "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/openmathinstruct_1",
+      "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/openmathinstruct_1",
+      "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/openmathinstruct_1/README.md",
+      "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/openmathinstruct_1/manifest.json"
+    },
+    {
+      "name": "OpenThoughts3 / OpenThoughts2",
+      "slug": "openthoughts",
+      "priority": 5,
+      "source_type": "public_dataset",
+      "status": "manifest_ready",
+      "recommended_target_agents": [
+        "prime",
+        "forge",
+        "core",
+        "report"
+      ],
+      "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/openthoughts",
+      "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/openthoughts",
+      "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/openthoughts/README.md",
+      "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/openthoughts/manifest.json"
+    },
+    {
+      "name": "OpenR1 / Mixture-of-Thoughts",
+      "slug": "openr1_mixture_of_thoughts",
+      "priority": 6,
+      "source_type": "public_dataset",
+      "status": "manifest_ready",
+      "recommended_target_agents": [
+        "prime",
+        "core",
+        "lean"
+      ],
+      "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/openr1_mixture_of_thoughts",
+      "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/openr1_mixture_of_thoughts",
+      "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/openr1_mixture_of_thoughts/README.md",
+      "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/openr1_mixture_of_thoughts/manifest.json"
+    },
+    {
+      "name": "AM-DeepSeek-R1-Distilled",
+      "slug": "am_deepseek_r1_distilled",
+      "priority": 7,
+      "source_type": "public_dataset",
+      "status": "manifest_ready",
+      "recommended_target_agents": [
+        "prime",
+        "core",
+        "report"
+      ],
+      "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/am_deepseek_r1_distilled",
+      "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/am_deepseek_r1_distilled",
+      "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/am_deepseek_r1_distilled/README.md",
+      "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/am_deepseek_r1_distilled/manifest.json"
+    },
+    {
+      "name": "LeanDojo",
+      "slug": "leandojo",
+      "priority": 8,
+      "source_type": "public_dataset",
+      "status": "manifest_ready",
+      "recommended_target_agents": [
+        "lean"
+      ],
+      "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/leandojo",
+      "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/leandojo",
+      "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/leandojo/README.md",
+      "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/leandojo/manifest.json"
+    },
+    {
+      "name": "LEAN-GitHub",
+      "slug": "lean_github",
+      "priority": 9,
+      "source_type": "public_dataset",
+      "status": "manifest_ready",
+      "recommended_target_agents": [
+        "lean"
+      ],
+      "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/lean_github",
+      "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/lean_github",
+      "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/lean_github/README.md",
+      "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/lean_github/manifest.json"
+    },
+    {
+      "name": "ProofNet",
+      "slug": "proofnet",
+      "priority": 10,
+      "source_type": "public_dataset",
+      "status": "manifest_ready",
+      "recommended_target_agents": [
+        "lean",
+        "raven",
+        "report"
+      ],
+      "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/proofnet",
+      "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/proofnet",
+      "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/proofnet/README.md",
+      "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/proofnet/manifest.json"
+    }
+  ]
+}

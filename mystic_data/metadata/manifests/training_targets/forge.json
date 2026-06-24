@@ -1,0 +1,14 @@
+{
+  "adapter": "forge_lora_v0",
+  "agent": "forge",
+  "label": "Forge-LoRA",
+  "priority": 2,
+  "base_model": "qwen3-coder",
+  "datasets": [
+    "forge_experiments",
+    "counterexamples",
+    "OpenCodeInstruct",
+    "SciCode"
+  ],
+  "train_ready_output": "mystic_data/train_ready/forge_train_ready.jsonl"
+}

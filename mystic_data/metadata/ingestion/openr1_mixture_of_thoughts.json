@@ -1,0 +1,16 @@
+{
+  "name": "OpenR1 / Mixture-of-Thoughts",
+  "slug": "openr1_mixture_of_thoughts",
+  "priority": 6,
+  "source_type": "public_dataset",
+  "status": "manifest_ready",
+  "recommended_target_agents": [
+    "prime",
+    "core",
+    "lean"
+  ],
+  "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/openr1_mixture_of_thoughts",
+  "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/openr1_mixture_of_thoughts",
+  "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/openr1_mixture_of_thoughts/README.md",
+  "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/openr1_mixture_of_thoughts/manifest.json"
+}

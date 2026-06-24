@@ -1,0 +1,129 @@
+{
+  "version": "0.1",
+  "description": "Checklist-derived specialist training plan",
+  "targets": [
+    {
+      "adapter": "raven_lora_v0",
+      "agent": "raven",
+      "label": "Raven-LoRA",
+      "base_model": "qwen3-14b",
+      "priority": 1,
+      "datasets": [
+        "failed_proofs",
+        "raven_critiques",
+        "proof_repairs"
+      ]
+    },
+    {
+      "adapter": "forge_lora_v0",
+      "agent": "forge",
+      "label": "Forge-LoRA",
+      "base_model": "qwen3-coder",
+      "priority": 2,
+      "datasets": [
+        "forge_experiments",
+        "counterexamples",
+        "OpenCodeInstruct",
+        "SciCode"
+      ]
+    },
+    {
+      "adapter": "prime_lora_v0",
+      "agent": "prime",
+      "label": "Prime-LoRA",
+      "base_model": "deepseek-r1-distill-14b",
+      "priority": 3,
+      "datasets": [
+        "NuminaMath-CoT",
+        "OpenMathInstruct-2",
+        "OpenR1",
+        "raven_critiques"
+      ]
+    },
+    {
+      "adapter": "lean_lora_v0",
+      "agent": "lean",
+      "label": "Lean-LoRA",
+      "base_model": "qwen3-14b",
+      "priority": 4,
+      "datasets": [
+        "LeanDojo",
+        "LEAN-GitHub",
+        "ProofNet",
+        "lean_attempts"
+      ]
+    },
+    {
+      "adapter": "core_router_lora_v0",
+      "agent": "core",
+      "label": "Core-Router-LoRA",
+      "base_model": "qwen3-14b",
+      "priority": 5,
+      "datasets": [
+        "routing_logs",
+        "attack_maps",
+        "Internal Mystic Data"
+      ]
+    },
+    {
+      "adapter": "pattern_lora_v0",
+      "agent": "pattern",
+      "label": "Pattern-LoRA",
+      "base_model": "qwen3-14b",
+      "priority": 6,
+      "datasets": [
+        "counterexamples",
+        "forge_experiments",
+        "OpenWebMath"
+      ]
+    },
+    {
+      "adapter": "physics_lora_v0",
+      "agent": "physics",
+      "label": "Physics-LoRA",
+      "base_model": "qwen3-14b",
+      "priority": 7,
+      "datasets": [
+        "GPQA Diamond",
+        "SciBench",
+        "SciCode"
+      ]
+    },
+    {
+      "adapter": "chem_lora_v0",
+      "agent": "chem",
+      "label": "Chem-LoRA",
+      "base_model": "qwen3-14b",
+      "priority": 8,
+      "datasets": [
+        "GPQA Diamond",
+        "SciCode",
+        "MSQA"
+      ]
+    },
+    {
+      "adapter": "biomath_lora_v0",
+      "agent": "biomath",
+      "label": "BioMath-LoRA",
+      "base_model": "qwen3-14b",
+      "priority": 9,
+      "datasets": [
+        "LAB-Bench",
+        "GPQA Diamond",
+        "SciCode"
+      ]
+    },
+    {
+      "adapter": "report_lora_v0",
+      "agent": "report",
+      "label": "Report-LoRA",
+      "base_model": "qwen3-14b",
+      "priority": 10,
+      "datasets": [
+        "final_reports",
+        "structured_summaries",
+        "raven_critiques"
+      ]
+    }
+  ]
+}

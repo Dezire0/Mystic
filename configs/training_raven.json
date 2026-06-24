@@ -1,0 +1,11 @@
+{
+  "base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "adapter_name": "raven_lora_v0",
+  "epochs": 1,
+  "batch_size": 1,
+  "learning_rate": 0.0002,
+  "max_length": 2048,
+  "lora_r": 16,
+  "lora_alpha": 32,
+  "lora_dropout": 0.05
+}

@@ -1,0 +1,230 @@
+{
+  "auth": {
+    "token_present": true,
+    "whoami": {
+      "type": "user",
+      "id": "6a3a726bd566bf8f5229bd48",
+      "name": "dyrakd",
+      "fullname": "daniel",
+      "canPay": false,
+      "billingMode": "prepaid",
+      "periodEnd": 1782864000,
+      "isPro": false,
+      "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/noauth/ueoiFHjAwUVub4TlT0cMs.png",
+      "orgs": [],
+      "auth": {
+        "type": "oauth",
+        "expiresAt": "2026-07-23T12:49:13.000Z"
+      }
+    }
+  },
+  "sources": [
+    {
+      "slug": "numinamath_cot",
+      "name": "NuminaMath-CoT",
+      "query": "NuminaMath-CoT",
+      "preferred_repo_id": "AI-MO/NuminaMath-CoT",
+      "candidates": [
+        {
+          "id": "AI-MO/NuminaMath-CoT"
+        },
+        {
+          "id": "RedaAlami/NuminaMath-CoT-Split-part-1"
+        },
+        {
+          "id": "RedaAlami/NuminaMath-CoT-Split-part-2"
+        },
+        {
+          "id": "RedaAlami/NuminaMath-CoT-Split-part-3"
+        },
+        {
+          "id": "RedaAlami/NuminaMath-CoT-Split-part-4"
+        }
+      ]
+    },
+    {
+      "slug": "openmathinstruct_2",
+      "name": "OpenMathInstruct-2",
+      "query": "OpenMathInstruct-2",
+      "preferred_repo_id": "nvidia/OpenMathInstruct-2",
+      "candidates": [
+        {
+          "id": "nvidia/OpenMathInstruct-2"
+        },
+        {
+          "id": "junyeong-nero/OpenMathInstruct-2-filtered"
+        },
+        {
+          "id": "styal/OpenMathInstruct-2-1M"
+        },
+        {
+          "id": "styal/OpenMathInstruct-2-0_5M"
+        },
+        {
+          "id": "styal/OpenMathInstruct-2-10k"
+        }
+      ]
+    },
+    {
+      "slug": "openmathinstruct_1",
+      "name": "OpenMathInstruct-1",
+      "query": "OpenMathInstruct-1",
+      "preferred_repo_id": "nvidia/OpenMathInstruct-1",
+      "candidates": [
+        {
+          "id": "nvidia/OpenMathInstruct-1"
+        },
+        {
+          "id": "kunishou/OpenMathInstruct-1-1.8m-ja"
+        },
+        {
+          "id": "kaleinaNyan/OpenMathInstruct-1-Parsed"
+        },
+        {
+          "id": "geniacllm/OpenMathInstruct-1-1.8m-ja-askllm-v1"
+        },
+        {
+          "id": "GENIAC-Team-Ozaki/OpenMathInstruct-1-1.8m-ja_10k"
+        }
+      ]
+    },
+    {
+      "slug": "openthoughts",
+      "name": "OpenThoughts3 / OpenThoughts2",
+      "query": "OpenThoughts",
+      "preferred_repo_id": "open-thoughts/OpenThoughts-114k",
+      "candidates": [
+        {
+          "id": "open-thoughts/OpenThoughts-114k"
+        },
+        {
+          "id": "open-r1/OpenThoughts-114k-math"
+        },
+        {
+          "id": "open-thoughts/AgentTrove"
+        },
+        {
+          "id": "open-thoughts/TaskTrove"
+        },
+        {
+          "id": "trungtvu/open-thoughts-code"
+        }
+      ]
+    },
+    {
+      "slug": "openr1_mixture_of_thoughts",
+      "name": "OpenR1 / Mixture-of-Thoughts",
+      "query": "OpenR1",
+      "preferred_repo_id": "open-r1/OpenR1-Math-220k",
+      "candidates": [
+        {
+          "id": "open-r1/OpenR1-Math-220k"
+        },
+        {
+          "id": "open-r1/OpenThoughts-114k-math"
+        },
+        {
+          "id": "seven89/openr1"
+        },
+        {
+          "id": "oieieio/OpenR1-Math-220k"
+        },
+        {
+          "id": "meoconxinhxan/open-r1-math-220k-chatml"
+        }
+      ]
+    },
+    {
+      "slug": "am_deepseek_r1_distilled",
+      "name": "AM-DeepSeek-R1-Distilled",
+      "query": "AM-DeepSeek-R1-Distilled",
+      "preferred_repo_id": null,
+      "candidates": [
+        {
+          "id": "a-m-team/AM-DeepSeek-R1-Distilled-1.4M"
+        },
+        {
+          "id": "koajoel/AM-DeepSeek-R1-Distilled-1.4M"
+        },
+        {
+          "id": "koajoel/AM-DeepSeek-R1-Distilled-1.4M-English"
+        },
+        {
+          "id": "mlfoundations-dev/AM-DeepSeek-R1-Distilled-1.4M-am_0.9M"
+        },
+        {
+          "id": "mlfoundations-dev/AM-DeepSeek-R1-Distilled-1.4M-am_0.9M_sample100k"
+        }
+      ]
+    },
+    {
+      "slug": "leandojo",
+      "name": "LeanDojo",
+      "query": "LeanDojo",
+      "preferred_repo_id": "tasksource/leandojo",
+      "candidates": [
+        {
+          "id": "tasksource/leandojo"
+        },
+        {
+          "id": "JohnYang88/lean-dojo-mathlib4"
+        },
+        {
+          "id": "sean-lamont/leandojo_traces"
+        },
+        {
+          "id": "akjadhav/leandojo-lean4-formal-informal-strings"
+        },
+        {
+          "id": "akjadhav/leandojo-lean4-formal-informal-strings-split"
+        }
+      ]
+    },
+    {
+      "slug": "lean_github",
+      "name": "LEAN-GitHub",
+      "query": "LEAN-GitHub",
+      "preferred_repo_id": null,
+      "candidates": [
+        {
+          "id": "internlm/Lean-Github"
+        },
+        {
+          "id": "WhiteGiverPlus/lean-github-big"
+        },
+        {
+          "id": "pkuAI4M/Lean-Github-Big"
+        },
+        {
+          "id": "pkuAI4M/RAG_lean_github"
+        },
+        {
+          "id": "pkuAI4M/Lean_github_formal_only_1119"
+        }
+      ]
+    },
+    {
+      "slug": "proofnet",
+      "name": "ProofNet",
+      "query": "ProofNet",
+      "preferred_repo_id": "hoskinson-center/proofnet",
+      "candidates": [
+        {
+          "id": "hoskinson-center/proofnet"
+        },
+        {
+          "id": "autores/DSP1.5RL-proofnet-sampling_16"
+        },
+        {
+          "id": "HaimingW/proofnet-lean4"
+        },
+        {
+          "id": "UDACA/proofnet-lean4"
+        },
+        {
+          "id": "AI4M/less-proofnet-lean4-top1M"
+        }
+      ]
+    }
+  ]
+}

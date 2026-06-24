@@ -1,0 +1,88 @@
+routes:
+  prime:
+    keywords:
+      - integer
+      - prime
+      - divisor
+      - congruence
+      - modular
+      - diophantine
+      - fraction
+      - rational
+  algebra:
+    keywords:
+      - group
+      - ring
+      - field
+      - module
+      - homomorphism
+      - representation
+      - category
+  geo:
+    keywords:
+      - geometry
+      - topology
+      - manifold
+      - curve
+      - variety
+      - dimension
+      - algebraic geometry
+  analysis:
+    keywords:
+      - limit
+      - convergence
+      - pde
+      - differential equation
+      - compactness
+      - regularity
+      - functional analysis
+  probability:
+    keywords:
+      - probability
+      - random
+      - stochastic
+      - expectation
+      - markov
+      - concentration
+  logic:
+    keywords:
+      - logic
+      - axiom
+      - undecidable
+      - computable
+      - model theory
+      - set theory
+  physics:
+    keywords:
+      - symmetry
+      - conservation
+      - quantum
+      - relativity
+      - field
+      - energy
+  complexity:
+    keywords:
+      - algorithm
+      - complexity
+      - np
+      - reduction
+      - lower bound
+      - runtime
+  conjecture:
+    keywords:
+      - conjecture
+      - evidence
+      - speculate
+  pattern:
+    keywords:
+      - pattern
+      - residue
+      - sequence
+      - invariant
+  forge:
+    always_if_computable: true
+  raven:
+    always: true
+  lean:
+    always_if_math_claim: true
+

@@ -1,0 +1,23 @@
+{
+  "slug": "lean_github",
+  "name": "LEAN-GitHub",
+  "query": "LEAN-GitHub",
+  "preferred_repo_id": null,
+  "candidates": [
+    {
+      "id": "internlm/Lean-Github"
+    },
+    {
+      "id": "WhiteGiverPlus/lean-github-big"
+    },
+    {
+      "id": "pkuAI4M/Lean-Github-Big"
+    },
+    {
+      "id": "pkuAI4M/RAG_lean_github"
+    },
+    {
+      "id": "pkuAI4M/Lean_github_formal_only_1119"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "train": {
+    "path": "mystic_data/train_ready/train.jsonl"
+  },
+  "validation": {
+    "path": "mystic_data/eval_holdout/validation.jsonl"
+  },
+  "test": {
+    "path": "mystic_data/eval_holdout/test.jsonl"
+  }
+}

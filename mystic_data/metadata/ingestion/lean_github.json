@@ -1,0 +1,14 @@
+{
+  "name": "LEAN-GitHub",
+  "slug": "lean_github",
+  "priority": 9,
+  "source_type": "public_dataset",
+  "status": "manifest_ready",
+  "recommended_target_agents": [
+    "lean"
+  ],
+  "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/lean_github",
+  "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/lean_github",
+  "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/lean_github/README.md",
+  "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/lean_github/manifest.json"
+}

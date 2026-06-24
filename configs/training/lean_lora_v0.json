@@ -1,0 +1,18 @@
+{
+  "adapter_name": "lean_lora_v0",
+  "agent": "lean",
+  "base_model": "qwen3-14b",
+  "smoke_model": "sshleifer/tiny-gpt2",
+  "method": "qlora",
+  "epochs": 1,
+  "max_steps": 2,
+  "learning_rate": 0.00015,
+  "target_modules": [
+    "c_attn",
+    "c_proj"
+  ],
+  "source_manifest": "mystic_data/metadata/manifests/training_targets/lean.json",
+  "train_ready_path": "mystic_data/train_ready/lean_train_ready.jsonl",
+  "output_dir": "mystic_data/adapters/lean_lora_v0",
+  "notes": "Prioritize proof states, tactic sequences, and Lean error repair."
+}

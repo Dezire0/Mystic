@@ -1,0 +1,23 @@
+{
+  "slug": "openmathinstruct_2",
+  "name": "OpenMathInstruct-2",
+  "query": "OpenMathInstruct-2",
+  "preferred_repo_id": "nvidia/OpenMathInstruct-2",
+  "candidates": [
+    {
+      "id": "nvidia/OpenMathInstruct-2"
+    },
+    {
+      "id": "junyeong-nero/OpenMathInstruct-2-filtered"
+    },
+    {
+      "id": "styal/OpenMathInstruct-2-1M"
+    },
+    {
+      "id": "styal/OpenMathInstruct-2-0_5M"
+    },
+    {
+      "id": "styal/OpenMathInstruct-2-10k"
+    }
+  ]
+}

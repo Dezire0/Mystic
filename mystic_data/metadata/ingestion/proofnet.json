@@ -1,0 +1,16 @@
+{
+  "name": "ProofNet",
+  "slug": "proofnet",
+  "priority": 10,
+  "source_type": "public_dataset",
+  "status": "manifest_ready",
+  "recommended_target_agents": [
+    "lean",
+    "raven",
+    "report"
+  ],
+  "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/proofnet",
+  "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/proofnet",
+  "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/proofnet/README.md",
+  "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/proofnet/manifest.json"
+}

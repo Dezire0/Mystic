@@ -1,0 +1,14 @@
+{
+  "adapter": "lean_lora_v0",
+  "agent": "lean",
+  "label": "Lean-LoRA",
+  "priority": 4,
+  "base_model": "qwen3-14b",
+  "datasets": [
+    "LeanDojo",
+    "LEAN-GitHub",
+    "ProofNet",
+    "lean_attempts"
+  ],
+  "train_ready_output": "mystic_data/train_ready/lean_train_ready.jsonl"
+}

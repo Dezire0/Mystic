@@ -1,0 +1,13 @@
+{
+  "adapter": "biomath_lora_v0",
+  "agent": "biomath",
+  "label": "BioMath-LoRA",
+  "priority": 9,
+  "base_model": "qwen3-14b",
+  "datasets": [
+    "LAB-Bench",
+    "GPQA Diamond",
+    "SciCode"
+  ],
+  "train_ready_output": "mystic_data/train_ready/biomath_train_ready.jsonl"
+}

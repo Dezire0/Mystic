@@ -1,0 +1,11 @@
+{
+  "results": [
+    {
+      "slug": "proofnet",
+      "repo_id": "hoskinson-center/proofnet",
+      "status": "snapshot_fallback",
+      "snapshot_path": "/Users/JYH/Documents/Mystic/mystic_data/raw/proofnet/snapshot",
+      "reason": "dataset_script_fallback"
+    }
+  ]
+}

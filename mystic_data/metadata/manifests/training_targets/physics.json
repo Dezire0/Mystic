@@ -1,0 +1,13 @@
+{
+  "adapter": "physics_lora_v0",
+  "agent": "physics",
+  "label": "Physics-LoRA",
+  "priority": 7,
+  "base_model": "qwen3-14b",
+  "datasets": [
+    "GPQA Diamond",
+    "SciBench",
+    "SciCode"
+  ],
+  "train_ready_output": "mystic_data/train_ready/physics_train_ready.jsonl"
+}

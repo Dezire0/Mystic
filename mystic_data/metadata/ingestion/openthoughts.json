@@ -1,0 +1,17 @@
+{
+  "name": "OpenThoughts3 / OpenThoughts2",
+  "slug": "openthoughts",
+  "priority": 5,
+  "source_type": "public_dataset",
+  "status": "manifest_ready",
+  "recommended_target_agents": [
+    "prime",
+    "forge",
+    "core",
+    "report"
+  ],
+  "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/openthoughts",
+  "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/openthoughts",
+  "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/openthoughts/README.md",
+  "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/openthoughts/manifest.json"
+}

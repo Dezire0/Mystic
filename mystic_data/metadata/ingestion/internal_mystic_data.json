@@ -1,0 +1,20 @@
+{
+  "name": "Internal Mystic Data",
+  "slug": "internal_mystic_data",
+  "priority": 1,
+  "source_type": "local",
+  "status": "bootstrap_ready",
+  "recommended_target_agents": [
+    "raven",
+    "forge",
+    "prime",
+    "lean",
+    "core",
+    "pattern",
+    "report"
+  ],
+  "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/internal_mystic_data",
+  "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/internal_mystic_data",
+  "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/internal_mystic_data/README.md",
+  "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/internal_mystic_data/manifest.json"
+}

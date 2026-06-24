@@ -1,0 +1,23 @@
+{
+  "slug": "openmathinstruct_1",
+  "name": "OpenMathInstruct-1",
+  "query": "OpenMathInstruct-1",
+  "preferred_repo_id": "nvidia/OpenMathInstruct-1",
+  "candidates": [
+    {
+      "id": "nvidia/OpenMathInstruct-1"
+    },
+    {
+      "id": "kunishou/OpenMathInstruct-1-1.8m-ja"
+    },
+    {
+      "id": "kaleinaNyan/OpenMathInstruct-1-Parsed"
+    },
+    {
+      "id": "geniacllm/OpenMathInstruct-1-1.8m-ja-askllm-v1"
+    },
+    {
+      "id": "GENIAC-Team-Ozaki/OpenMathInstruct-1-1.8m-ja_10k"
+    }
+  ]
+}

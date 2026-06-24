@@ -1,0 +1,9 @@
+{
+  "backend": "ollama",
+  "ollama_base_url": "http://localhost:11434",
+  "generator_model": "qwen2.5:7b",
+  "raven_model": "qwen2.5:7b",
+  "active_raven_backend": "adapter",
+  "active_raven_base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "active_raven_adapter": "mystic_data/adapters/raven_lora_v0"
+}

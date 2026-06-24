@@ -1,0 +1,14 @@
+{
+  "adapter": "prime_lora_v0",
+  "agent": "prime",
+  "label": "Prime-LoRA",
+  "priority": 3,
+  "base_model": "deepseek-r1-distill-14b",
+  "datasets": [
+    "NuminaMath-CoT",
+    "OpenMathInstruct-2",
+    "OpenR1",
+    "raven_critiques"
+  ],
+  "train_ready_output": "mystic_data/train_ready/prime_train_ready.jsonl"
+}

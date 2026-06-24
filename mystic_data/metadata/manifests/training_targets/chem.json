@@ -1,0 +1,13 @@
+{
+  "adapter": "chem_lora_v0",
+  "agent": "chem",
+  "label": "Chem-LoRA",
+  "priority": 8,
+  "base_model": "qwen3-14b",
+  "datasets": [
+    "GPQA Diamond",
+    "SciCode",
+    "MSQA"
+  ],
+  "train_ready_output": "mystic_data/train_ready/chem_train_ready.jsonl"
+}

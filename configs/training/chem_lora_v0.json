@@ -1,0 +1,18 @@
+{
+  "adapter_name": "chem_lora_v0",
+  "agent": "chem",
+  "base_model": "qwen3-14b",
+  "smoke_model": "sshleifer/tiny-gpt2",
+  "method": "lora",
+  "epochs": 1,
+  "max_steps": 2,
+  "learning_rate": 0.0002,
+  "target_modules": [
+    "c_attn",
+    "c_proj"
+  ],
+  "source_manifest": "mystic_data/metadata/manifests/training_targets/chem.json",
+  "train_ready_path": "mystic_data/train_ready/chem_train_ready.jsonl",
+  "output_dir": "mystic_data/adapters/chem_lora_v0",
+  "notes": "Prioritize chemistry and materials modeling tasks plus scientific coding examples."
+}

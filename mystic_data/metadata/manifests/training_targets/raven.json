@@ -1,0 +1,13 @@
+{
+  "adapter": "raven_lora_v0",
+  "agent": "raven",
+  "label": "Raven-LoRA",
+  "priority": 1,
+  "base_model": "qwen3-14b",
+  "datasets": [
+    "failed_proofs",
+    "raven_critiques",
+    "proof_repairs"
+  ],
+  "train_ready_output": "mystic_data/train_ready/raven_train_ready.jsonl"
+}

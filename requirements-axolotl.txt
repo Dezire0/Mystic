@@ -1,0 +1,9 @@
+axolotl
+torch
+transformers
+datasets
+peft
+trl
+accelerate
+sentencepiece
+

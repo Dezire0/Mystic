@@ -1,0 +1,23 @@
+{
+  "slug": "openthoughts",
+  "name": "OpenThoughts3 / OpenThoughts2",
+  "query": "OpenThoughts",
+  "preferred_repo_id": "open-thoughts/OpenThoughts-114k",
+  "candidates": [
+    {
+      "id": "open-thoughts/OpenThoughts-114k"
+    },
+    {
+      "id": "open-r1/OpenThoughts-114k-math"
+    },
+    {
+      "id": "open-thoughts/AgentTrove"
+    },
+    {
+      "id": "open-thoughts/TaskTrove"
+    },
+    {
+      "id": "trungtvu/open-thoughts-code"
+    }
+  ]
+}

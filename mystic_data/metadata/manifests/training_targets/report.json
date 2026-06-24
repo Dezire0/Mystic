@@ -1,0 +1,13 @@
+{
+  "adapter": "report_lora_v0",
+  "agent": "report",
+  "label": "Report-LoRA",
+  "priority": 10,
+  "base_model": "qwen3-14b",
+  "datasets": [
+    "final_reports",
+    "structured_summaries",
+    "raven_critiques"
+  ],
+  "train_ready_output": "mystic_data/train_ready/report_train_ready.jsonl"
+}

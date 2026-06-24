@@ -1,0 +1,23 @@
+{
+  "slug": "numinamath_cot",
+  "name": "NuminaMath-CoT",
+  "query": "NuminaMath-CoT",
+  "preferred_repo_id": "AI-MO/NuminaMath-CoT",
+  "candidates": [
+    {
+      "id": "AI-MO/NuminaMath-CoT"
+    },
+    {
+      "id": "RedaAlami/NuminaMath-CoT-Split-part-1"
+    },
+    {
+      "id": "RedaAlami/NuminaMath-CoT-Split-part-2"
+    },
+    {
+      "id": "RedaAlami/NuminaMath-CoT-Split-part-3"
+    },
+    {
+      "id": "RedaAlami/NuminaMath-CoT-Split-part-4"
+    }
+  ]
+}

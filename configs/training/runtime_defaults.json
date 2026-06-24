@@ -1,0 +1,21 @@
+{
+  "backend_priority": [
+    "unsloth",
+    "axolotl",
+    "manual"
+  ],
+  "defaults": {
+    "epochs": 1,
+    "max_steps": 100,
+    "learning_rate": 0.0002,
+    "micro_batch_size": 1,
+    "gradient_accumulation_steps": 8,
+    "sequence_length": 512,
+    "lora_r": 8,
+    "lora_alpha": 16,
+    "lora_dropout": 0.05
+  },
+  "logging": {
+    "job_log_dir": "mystic_data/logs/training_jobs"
+  }
+}

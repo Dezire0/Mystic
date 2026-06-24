@@ -1,0 +1,23 @@
+{
+  "slug": "leandojo",
+  "name": "LeanDojo",
+  "query": "LeanDojo",
+  "preferred_repo_id": "tasksource/leandojo",
+  "candidates": [
+    {
+      "id": "tasksource/leandojo"
+    },
+    {
+      "id": "JohnYang88/lean-dojo-mathlib4"
+    },
+    {
+      "id": "sean-lamont/leandojo_traces"
+    },
+    {
+      "id": "akjadhav/leandojo-lean4-formal-informal-strings"
+    },
+    {
+      "id": "akjadhav/leandojo-lean4-formal-informal-strings-split"
+    }
+  ]
+}

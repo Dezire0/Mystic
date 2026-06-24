@@ -1,0 +1,14 @@
+{
+  "name": "LeanDojo",
+  "slug": "leandojo",
+  "priority": 8,
+  "source_type": "public_dataset",
+  "status": "manifest_ready",
+  "recommended_target_agents": [
+    "lean"
+  ],
+  "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/leandojo",
+  "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/leandojo",
+  "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/leandojo/README.md",
+  "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/leandojo/manifest.json"
+}

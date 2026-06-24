@@ -1,0 +1,23 @@
+{
+  "slug": "am_deepseek_r1_distilled",
+  "name": "AM-DeepSeek-R1-Distilled",
+  "query": "AM-DeepSeek-R1-Distilled",
+  "preferred_repo_id": null,
+  "candidates": [
+    {
+      "id": "a-m-team/AM-DeepSeek-R1-Distilled-1.4M"
+    },
+    {
+      "id": "koajoel/AM-DeepSeek-R1-Distilled-1.4M"
+    },
+    {
+      "id": "koajoel/AM-DeepSeek-R1-Distilled-1.4M-English"
+    },
+    {
+      "id": "mlfoundations-dev/AM-DeepSeek-R1-Distilled-1.4M-am_0.9M"
+    },
+    {
+      "id": "mlfoundations-dev/AM-DeepSeek-R1-Distilled-1.4M-am_0.9M_sample100k"
+    }
+  ]
+}

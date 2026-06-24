@@ -1,0 +1,15 @@
+{
+  "name": "OpenMathInstruct-1",
+  "slug": "openmathinstruct_1",
+  "priority": 4,
+  "source_type": "public_dataset",
+  "status": "manifest_ready",
+  "recommended_target_agents": [
+    "prime",
+    "core"
+  ],
+  "raw_dir": "/Users/JYH/Documents/Mystic/mystic_data/raw/openmathinstruct_1",
+  "processed_dir": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/openmathinstruct_1",
+  "raw_readme": "/Users/JYH/Documents/Mystic/mystic_data/raw/openmathinstruct_1/README.md",
+  "processed_manifest": "/Users/JYH/Documents/Mystic/mystic_data/processed/public_datasets/openmathinstruct_1/manifest.json"
+}

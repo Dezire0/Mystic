@@ -1,0 +1,10 @@
+torch
+transformers
+datasets
+peft
+trl
+accelerate
+sentencepiece
+wandb
+mlflow
+

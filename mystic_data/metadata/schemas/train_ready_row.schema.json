@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MysticTrainReadyRow",
+  "type": "object",
+  "required": [
+    "agent",
+    "instruction",
+    "input",
+    "output",
+    "metadata"
+  ],
+  "properties": {
+    "agent": {
+      "type": "string"
+    },
+    "division": {
+      "type": "string"
+    },
+    "instruction": {
+      "type": "string"
+    },
+    "input": {
+      "type": "string"
+    },
+    "output": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object",
+      "required": [
+        "dataset",
+        "split"
+      ],
+      "properties": {
+        "dataset": {
+          "type": "string"
+        },
+        "split": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "adapter": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

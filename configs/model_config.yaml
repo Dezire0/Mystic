@@ -1,0 +1,103 @@
+default_provider: mock
+agents:
+  core:
+    provider: mock
+    model: qwen3-14b
+    temperature: 0.2
+  prime:
+    provider: mock
+    model: deepseek-r1-distill-14b
+    adapter: prime_lora_v0
+    temperature: 0.15
+  algebra:
+    provider: mock
+    model: qwen3-14b
+    adapter: algebra_lora_v0
+    temperature: 0.15
+  geo:
+    provider: mock
+    model: qwen3-14b
+    adapter: geo_lora_v0
+    temperature: 0.15
+  analysis:
+    provider: mock
+    model: qwen3-14b
+    adapter: analysis_lora_v0
+    temperature: 0.15
+  probability:
+    provider: mock
+    model: qwen3-14b
+    adapter: probability_lora_v0
+    temperature: 0.15
+  logic:
+    provider: mock
+    model: qwen3-14b
+    adapter: logic_lora_v0
+    temperature: 0.1
+  physics:
+    provider: mock
+    model: qwen3-14b
+    adapter: physics_lora_v0
+    temperature: 0.2
+  complexity:
+    provider: mock
+    model: qwen3-14b
+    adapter: complexity_lora_v0
+    temperature: 0.15
+  biomath:
+    provider: mock
+    model: qwen3-14b
+    adapter: biomath_lora_v0
+    temperature: 0.2
+  chem:
+    provider: mock
+    model: qwen3-14b
+    adapter: chem_lora_v0
+    temperature: 0.2
+  forge:
+    provider: mock
+    model: qwen3-coder
+    adapter: forge_lora_v0
+    temperature: 0.1
+  conjecture:
+    provider: mock
+    model: qwen3-14b
+    adapter: conjecture_lora_v0
+    temperature: 0.35
+  pattern:
+    provider: mock
+    model: qwen3-14b
+    adapter: pattern_lora_v0
+    temperature: 0.25
+  simulator:
+    provider: mock
+    model: qwen3-coder
+    adapter: simulator_lora_v0
+    temperature: 0.1
+  lean:
+    provider: mock
+    model: qwen3-14b
+    adapter: lean_lora_v0
+    temperature: 0.05
+  smt:
+    provider: local_tool
+    model: z3
+  raven:
+    provider: mock
+    model: qwen3-14b
+    adapter: raven_lora_v0
+    temperature: 0.05
+  archive:
+    provider: local
+    model: database
+  knowledge_graph:
+    provider: local
+    model: graph_db
+  evolution:
+    provider: local
+    model: dataset_builder
+  report:
+    provider: mock
+    model: qwen3-14b
+    temperature: 0.2
+

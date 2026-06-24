@@ -1,0 +1,13 @@
+{
+  "adapter": "pattern_lora_v0",
+  "agent": "pattern",
+  "label": "Pattern-LoRA",
+  "priority": 6,
+  "base_model": "qwen3-14b",
+  "datasets": [
+    "counterexamples",
+    "forge_experiments",
+    "OpenWebMath"
+  ],
+  "train_ready_output": "mystic_data/train_ready/pattern_train_ready.jsonl"
+}

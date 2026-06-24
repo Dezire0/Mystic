@@ -1,0 +1,40 @@
+{
+  "models": [
+    {
+      "model_id": "raven_lora_tiny_gpt2_smoke",
+      "base_model": "sshleifer/tiny-gpt2",
+      "adapter_path": "mystic_data/adapters/raven_lora_tiny_gpt2_smoke",
+      "created_at": null,
+      "training_data": "mystic_data/train_ready/raven_train.jsonl",
+      "eval_file": "mystic_data/eval_holdout/raven_eval.jsonl",
+      "metrics": {},
+      "notes": "smoke_test adapter preserved from early pipeline validation",
+      "smoke_test": true,
+      "real_target": false,
+      "active": false
+    },
+    {
+      "model_id": "raven_lora_v0",
+      "base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+      "adapter_path": "mystic_data/adapters/raven_lora_v0",
+      "created_at": null,
+      "training_data": "mystic_data/train_ready/raven_train.jsonl",
+      "eval_file": "mystic_data/eval_holdout/raven_eval.jsonl",
+      "metrics": {},
+      "notes": "reserved real Raven adapter target slot",
+      "smoke_test": false,
+      "real_target": true,
+      "active": false
+    },
+    {
+      "model_id": "raven_lora_v0_qwen_0_5b",
+      "base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+      "adapter_path": "mystic_data/adapters/raven_lora_v0",
+      "created_at": "2026-06-24T09:12:00.072182+00:00",
+      "training_data": "mystic_data/train_ready/raven_train.jsonl",
+      "eval_file": "mystic_data/eval_holdout/raven_eval.jsonl",
+      "metrics": {},
+      "notes": "First successful Mystic Raven LoRA reinjection. Kaggle trained. 90 train / 10 eval. Adapter compare passed 10/10."
+    }
+  ]
+}

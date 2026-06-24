@@ -1,0 +1,304 @@
+{
+  "internal_datasets": [
+    "failed_proofs",
+    "raven_critiques",
+    "counterexamples",
+    "forge_experiments",
+    "lean_attempts",
+    "proof_repairs",
+    "attack_maps",
+    "routing_logs"
+  ],
+  "priority_datasets": [
+    {
+      "rank": 1,
+      "name": "Internal Mystic Data",
+      "priority": "critical",
+      "data": [
+        "failed_proofs",
+        "raven_critiques",
+        "counterexamples",
+        "forge_experiments",
+        "lean_attempts",
+        "proof_repairs",
+        "attack_maps",
+        "routing_logs"
+      ]
+    },
+    {
+      "rank": 2,
+      "name": "NuminaMath-CoT",
+      "priority": "critical",
+      "data": [
+        "math problems",
+        "cot solutions"
+      ]
+    },
+    {
+      "rank": 3,
+      "name": "OpenMathInstruct-2",
+      "priority": "critical",
+      "data": [
+        "math instruction",
+        "problem-solution",
+        "code-interpreter traces"
+      ]
+    },
+    {
+      "rank": 4,
+      "name": "OpenMathInstruct-1",
+      "priority": "critical",
+      "data": [
+        "problem-solution pairs"
+      ]
+    },
+    {
+      "rank": 5,
+      "name": "OpenThoughts3 / OpenThoughts2",
+      "priority": "critical",
+      "data": [
+        "math/code/science reasoning traces"
+      ]
+    },
+    {
+      "rank": 6,
+      "name": "OpenR1 / Mixture-of-Thoughts",
+      "priority": "critical",
+      "data": [
+        "verified reasoning traces"
+      ]
+    },
+    {
+      "rank": 7,
+      "name": "AM-DeepSeek-R1-Distilled",
+      "priority": "critical",
+      "data": [
+        "distilled reasoning traces"
+      ]
+    },
+    {
+      "rank": 8,
+      "name": "LeanDojo",
+      "priority": "critical",
+      "data": [
+        "Lean proof states",
+        "tactics",
+        "premises"
+      ]
+    },
+    {
+      "rank": 9,
+      "name": "LEAN-GitHub",
+      "priority": "critical",
+      "data": [
+        "Lean theorem and tactic corpus"
+      ]
+    },
+    {
+      "rank": 10,
+      "name": "ProofNet",
+      "priority": "high",
+      "data": [
+        "natural language proof",
+        "Lean statement"
+      ]
+    },
+    {
+      "rank": 11,
+      "name": "miniF2F",
+      "priority": "high",
+      "data": [
+        "formal olympiad theorem proving"
+      ]
+    },
+    {
+      "rank": 12,
+      "name": "PutnamBench",
+      "priority": "high",
+      "data": [
+        "formal theorem proving"
+      ]
+    },
+    {
+      "rank": 13,
+      "name": "Proof-Pile / Proof-Pile-2",
+      "priority": "very_high",
+      "data": [
+        "formal math and theorem corpus"
+      ]
+    },
+    {
+      "rank": 14,
+      "name": "The Stack v2 Python subset",
+      "priority": "very_high",
+      "data": [
+        "Python source code"
+      ]
+    },
+    {
+      "rank": 15,
+      "name": "The Stack v2 Lean subset",
+      "priority": "very_high",
+      "data": [
+        "Lean and mathlib code"
+      ]
+    },
+    {
+      "rank": 16,
+      "name": "The Stack v2 Sage/SymPy subset",
+      "priority": "very_high",
+      "data": [
+        "SageMath and SymPy code"
+      ]
+    },
+    {
+      "rank": 17,
+      "name": "OpenCodeInstruct",
+      "priority": "very_high",
+      "data": [
+        "code instruction",
+        "tests",
+        "feedback"
+      ]
+    },
+    {
+      "rank": 18,
+      "name": "CodeContests",
+      "priority": "very_high",
+      "data": [
+        "programming problems",
+        "solutions",
+        "tests"
+      ]
+    },
+    {
+      "rank": 19,
+      "name": "APPS",
+      "priority": "high",
+      "data": [
+        "coding problems and Python solutions"
+      ]
+    },
+    {
+      "rank": 20,
+      "name": "TACO",
+      "priority": "high",
+      "data": [
+        "algorithmic code generation and tests"
+      ]
+    },
+    {
+      "rank": 21,
+      "name": "Codehacks",
+      "priority": "high",
+      "data": [
+        "adversarial tests",
+        "counterexamples"
+      ]
+    },
+    {
+      "rank": 22,
+      "name": "SciCode",
+      "priority": "critical",
+      "data": [
+        "scientific coding tasks"
+      ]
+    },
+    {
+      "rank": 23,
+      "name": "OpenWebMath",
+      "priority": "critical",
+      "data": [
+        "math web text",
+        "latex"
+      ]
+    },
+    {
+      "rank": 24,
+      "name": "Nemotron-CC-Math",
+      "priority": "critical",
+      "data": [
+        "math/science pretraining corpus"
+      ]
+    },
+    {
+      "rank": 25,
+      "name": "MegaMath",
+      "priority": "very_high",
+      "data": [
+        "math text",
+        "math code",
+        "synthetic qa"
+      ]
+    },
+    {
+      "rank": 26,
+      "name": "FineMath",
+      "priority": "high",
+      "data": [
+        "filtered math web corpus"
+      ]
+    },
+    {
+      "rank": 27,
+      "name": "DeepSeekMath-style Corpus",
+      "priority": "critical",
+      "data": [
+        "filtered math web corpus"
+      ]
+    },
+    {
+      "rank": 28,
+      "name": "MetaMathQA",
+      "priority": "high",
+      "data": [
+        "rephrased math qa"
+      ]
+    },
+    {
+      "rank": 29,
+      "name": "MathInstruct / MAmmoTH",
+      "priority": "very_high",
+      "data": [
+        "cot and pot math instruction"
+      ]
+    },
+    {
+      "rank": 30,
+      "name": "MATH / MATH-500",
+      "priority": "high",
+      "data": [
+        "competition math solutions"
+      ]
+    }
+  ],
+  "software_stack": [
+    "Python 3.11+",
+    "Git",
+    "Docker",
+    "SQLite",
+    "Ollama",
+    "Transformers",
+    "PEFT",
+    "Unsloth",
+    "Axolotl",
+    "TRL",
+    "PyTorch",
+    "FastAPI",
+    "Typer",
+    "SQLAlchemy",
+    "Pydantic",
+    "pytest",
+    "SymPy",
+    "NumPy",
+    "SciPy",
+    "SageMath",
+    "Lean 4",
+    "Z3",
+    "Jupyter",
+    "DVC",
+    "rclone",
+    "Weights & Biases",
+    "MLflow"
+  ]
+}

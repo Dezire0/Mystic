@@ -1,0 +1,23 @@
+{
+  "slug": "proofnet",
+  "name": "ProofNet",
+  "query": "ProofNet",
+  "preferred_repo_id": "hoskinson-center/proofnet",
+  "candidates": [
+    {
+      "id": "hoskinson-center/proofnet"
+    },
+    {
+      "id": "autores/DSP1.5RL-proofnet-sampling_16"
+    },
+    {
+      "id": "HaimingW/proofnet-lean4"
+    },
+    {
+      "id": "UDACA/proofnet-lean4"
+    },
+    {
+      "id": "AI4M/less-proofnet-lean4-top1M"
+    }
+  ]
+}
