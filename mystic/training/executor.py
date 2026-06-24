@@ -17,12 +17,13 @@ def execute_training_job(
     agent: str,
     backend: str = "manual",
     dry_run: bool = True,
+    overrides: dict[str, object] | None = None,
 ) -> dict[str, object]:
     root = Path(root_path)
     plan = build_training_plan(root, agent)
     env = audit_training_environment()
-    command = build_backend_command(plan, backend, dry_run=dry_run)
-    job_manifest = record_training_job(root, plan, backend, command, dry_run)
+    command = build_backend_command(plan, backend, dry_run=dry_run, overrides=overrides)
+    job_manifest = record_training_job(root, plan, backend, command, dry_run, overrides=overrides)
 
     if dry_run:
         return {
@@ -57,10 +58,15 @@ def execute_training_job(
     }
 
 
-def build_backend_command(plan: dict[str, object], backend: str, dry_run: bool = True) -> list[str]:
+def build_backend_command(
+    plan: dict[str, object],
+    backend: str,
+    dry_run: bool = True,
+    overrides: dict[str, object] | None = None,
+) -> list[str]:
     python_executable = str(plan.get("python_executable", sys.executable))
     if backend == "manual":
-        return [
+        command = [
             python_executable,
             "-m",
             "mystic.training.run",
@@ -68,6 +74,16 @@ def build_backend_command(plan: dict[str, object], backend: str, dry_run: bool =
             str(plan["agent"]),
             *(["--dry-run"] if dry_run else ["--execute"]),
         ]
+        if overrides:
+            if overrides.get("epochs"):
+                command.extend(["--epochs", str(overrides["epochs"])])
+            if overrides.get("max_steps"):
+                command.extend(["--max-steps", str(overrides["max_steps"])])
+            if overrides.get("learning_rate"):
+                command.extend(["--learning-rate", str(overrides["learning_rate"])])
+            if overrides.get("sequence_length"):
+                command.extend(["--sequence-length", str(overrides["sequence_length"])])
+        return command
     if backend == "unsloth":
         return [
             python_executable,
@@ -95,6 +111,7 @@ def record_training_job(
     backend: str,
     command: list[str],
     dry_run: bool,
+    overrides: dict[str, object] | None = None,
 ) -> Path:
     root = Path(root_path)
     logs_root = root / "mystic_data" / "logs" / "training_jobs"
@@ -112,6 +129,7 @@ def record_training_job(
         "source_manifest": plan["source_manifest"],
         "output_dir": plan["output_dir"],
         "command": command,
+        "overrides": overrides or {},
     }
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
     return path

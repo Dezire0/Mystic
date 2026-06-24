@@ -20,6 +20,7 @@ mystic_data/exports/*
 mystic_data/models/*
 mystic_data/cycles/*
 mystic_data/workflows/*
+mystic_data/overnight_runs/*
 mystic_data/adapters/*
 mystic_data/logs/*
 mystic_data/reports/*

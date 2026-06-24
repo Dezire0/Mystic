@@ -19,6 +19,10 @@ def main() -> int:
     parser.add_argument("--backend", default="manual", choices=["manual", "unsloth", "axolotl"])
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--real-train", action="store_true")
+    parser.add_argument("--epochs", type=int, default=0)
+    parser.add_argument("--max-steps", type=int, default=0)
+    parser.add_argument("--learning-rate", type=float, default=0.0)
+    parser.add_argument("--sequence-length", type=int, default=0)
     args = parser.parse_args()
     dry_run = not (args.execute or args.real_train)
     payload = execute_training_job(
@@ -26,6 +30,12 @@ def main() -> int:
         agent=args.agent,
         backend=args.backend,
         dry_run=dry_run,
+        overrides={
+            "epochs": args.epochs or None,
+            "max_steps": args.max_steps or None,
+            "learning_rate": args.learning_rate or None,
+            "sequence_length": args.sequence_length or None,
+        },
     )
     payload["history_outputs"] = write_execution_history_outputs(ROOT / "mystic_data")
     print(json.dumps(payload, indent=2))

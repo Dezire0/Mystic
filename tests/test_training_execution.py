@@ -30,6 +30,20 @@ class TrainingExecutionTests(unittest.TestCase):
         command = build_backend_command(plan, "manual", dry_run=False)
         self.assertIn("--execute", command)
 
+    def test_backend_command_for_manual_execute_with_overrides(self):
+        root = Path(__file__).resolve().parents[1]
+        plan = build_training_plan(root, "raven")
+        command = build_backend_command(
+            plan,
+            "manual",
+            dry_run=False,
+            overrides={"epochs": 2, "max_steps": 25, "learning_rate": 0.00015, "sequence_length": 768},
+        )
+        self.assertIn("--epochs", command)
+        self.assertIn("--max-steps", command)
+        self.assertIn("--learning-rate", command)
+        self.assertIn("--sequence-length", command)
+
     def test_record_training_job_writes_manifest(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

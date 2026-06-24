@@ -12,11 +12,12 @@ def run_local_training(
     root_path: str | Path,
     agent: str,
     dry_run: bool = True,
+    overrides: dict[str, object] | None = None,
 ) -> dict[str, object]:
     root = Path(root_path)
     config = load_training_config(root, agent)
     runtime = load_runtime_defaults(root)
-    plan = _build_local_plan(root, config, runtime)
+    plan = _build_local_plan(root, config, runtime, overrides=overrides)
 
     if dry_run:
         return {"executed": False, "plan": plan}
@@ -25,13 +26,15 @@ def run_local_training(
     return {"executed": True, "plan": plan, "result": result}
 
 
-def _build_local_plan(root: Path, config: dict, runtime: dict) -> dict:
+def _build_local_plan(root: Path, config: dict, runtime: dict, overrides: dict[str, object] | None = None) -> dict:
     train_ready_path = root / config["train_ready_path"]
     output_dir = root / config["output_dir"]
     output_dir.mkdir(parents=True, exist_ok=True)
 
     merged = dict(runtime.get("defaults", {}))
     merged.update(config)
+    if overrides:
+        merged.update({key: value for key, value in overrides.items() if value not in (None, "")})
     model_name = merged.get("training_model") or merged.get("smoke_model") or merged["base_model"]
     dataset_size = _count_jsonl_rows(train_ready_path)
     return {

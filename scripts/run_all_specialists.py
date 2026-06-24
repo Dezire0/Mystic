@@ -51,6 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Stop after the first training failure.",
     )
+    parser.add_argument("--epochs", type=int, default=0)
+    parser.add_argument("--max-steps", type=int, default=0)
+    parser.add_argument("--learning-rate", type=float, default=0.0)
+    parser.add_argument("--sequence-length", type=int, default=0)
     return parser
 
 
@@ -83,7 +87,16 @@ def write_batch_summary(path: Path, rows: list[dict[str, Any]]) -> None:
     path.write_text(json.dumps(rows, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
 
-def run_agent(root: Path, agent: str, backend: str) -> dict[str, Any]:
+def run_agent(
+    root: Path,
+    agent: str,
+    backend: str,
+    *,
+    epochs: int,
+    max_steps: int,
+    learning_rate: float,
+    sequence_length: int,
+) -> dict[str, Any]:
     command = [
         sys.executable,
         "scripts/run_specialist_training.py",
@@ -93,6 +106,14 @@ def run_agent(root: Path, agent: str, backend: str) -> dict[str, Any]:
         backend,
         "--execute",
     ]
+    if epochs:
+        command.extend(["--epochs", str(epochs)])
+    if max_steps:
+        command.extend(["--max-steps", str(max_steps)])
+    if learning_rate:
+        command.extend(["--learning-rate", str(learning_rate)])
+    if sequence_length:
+        command.extend(["--sequence-length", str(sequence_length)])
     started = datetime.now(UTC)
     completed = subprocess.run(
         command,
@@ -133,7 +154,15 @@ def main(argv: list[str] | None = None) -> int:
     write_execution_history_outputs(ROOT / "mystic_data")
 
     for agent in agents:
-        result = run_agent(ROOT, agent, args.backend)
+        result = run_agent(
+            ROOT,
+            agent,
+            args.backend,
+            epochs=args.epochs,
+            max_steps=args.max_steps,
+            learning_rate=args.learning_rate,
+            sequence_length=args.sequence_length,
+        )
         results.append(result)
         write_batch_summary(summary_file, results)
         write_execution_history_outputs(ROOT / "mystic_data")
