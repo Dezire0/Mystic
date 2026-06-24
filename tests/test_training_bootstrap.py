@@ -24,6 +24,13 @@ class TrainingBootstrapTests(unittest.TestCase):
             agents = [item["agent"] for item in payload["targets"]]
             self.assertIn("raven", agents)
             self.assertIn("forge", agents)
+            architecture_manifest = Path(bundle["manifests_root"]) / "architecture_training_plan.json"
+            architecture_payload = json.loads(architecture_manifest.read_text(encoding="utf-8"))
+            architecture_agents = [item["agent"] for item in architecture_payload["targets"]]
+            self.assertIn("algebra", architecture_agents)
+            self.assertIn("knowledge_graph", architecture_agents)
+            architecture_markdown = Path(bundle["metadata_root"]) / "architecture_training_plan.md"
+            self.assertTrue(architecture_markdown.exists())
 
     def test_train_ready_seed_files_are_created(self):
         with tempfile.TemporaryDirectory() as temp_dir:

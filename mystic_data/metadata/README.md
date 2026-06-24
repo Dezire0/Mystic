@@ -6,6 +6,7 @@ This directory contains versioned metadata that defines how Mystic data is colle
 
 - `schemas/`: JSON Schema files for internal records and train-ready rows
 - `manifests/`: generated manifests for dataset splits and specialist training targets
+- `architecture_training_plan.md`: architecture-canvas-aligned training plan mapped to checklist datasets
 - `dataset_catalog.json`: checklist-derived dataset catalog
 
 Bootstrap these files with:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from mystic.training.blueprints import (
+    ARCHITECTURE_TRAINING_TARGETS,
     CHECKLIST_DATASETS,
     INTERNAL_DATASETS,
     SOFTWARE_STACK,
@@ -24,6 +25,68 @@ def init_internal_data_files(base_dir: str | Path) -> list[str]:
             path.write_text("", encoding="utf-8")
         created.append(str(path))
     return created
+
+
+def _count_jsonl_rows(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def _build_architecture_plan_markdown(base_dir: Path) -> str:
+    snapshot = {
+        "numina_raw_rows": _count_jsonl_rows(base_dir / "raw" / "numina_math_cot_100.jsonl"),
+        "raven_critiques_rows": _count_jsonl_rows(base_dir / "internal" / "raven_critiques.jsonl"),
+        "failed_proofs_rows": _count_jsonl_rows(base_dir / "internal" / "failed_proofs.jsonl"),
+        "raven_lora_rows": _count_jsonl_rows(base_dir / "train_ready" / "raven_lora.jsonl"),
+        "raven_train_rows": _count_jsonl_rows(base_dir / "train_ready" / "raven_train.jsonl"),
+        "raven_eval_rows": _count_jsonl_rows(base_dir / "eval_holdout" / "raven_eval.jsonl"),
+    }
+
+    lines = [
+        "# Mystic Architecture-Aligned Training Plan",
+        "",
+        "This plan follows `mystic_v0_1_architecture_canvas.md` instead of collapsing Mystic into one generic model.",
+        "Even when two agents use the same base model, the code structure and future adapter path remain separate.",
+        "",
+        "## Current Local Snapshot",
+        "",
+        f"- Numina raw rows: `{snapshot['numina_raw_rows']}`",
+        f"- Raven critiques rows: `{snapshot['raven_critiques_rows']}`",
+        f"- Failed proofs rows: `{snapshot['failed_proofs_rows']}`",
+        f"- Raven LoRA export rows: `{snapshot['raven_lora_rows']}`",
+        f"- Raven train rows: `{snapshot['raven_train_rows']}`",
+        f"- Raven eval rows: `{snapshot['raven_eval_rows']}`",
+        "",
+        "## Architecture Targets",
+        "",
+    ]
+
+    for index, target in enumerate(ARCHITECTURE_TRAINING_TARGETS, start=1):
+        adapter_text = target["adapter"] if target["adapter"] else "none"
+        datasets = ", ".join(target["datasets"])
+        lines.extend(
+            [
+                f"{index}. {target['name']} - model `{target['model']}` - adapter `{adapter_text}`",
+                f"   Division: {target['division']}",
+                f"   Implementation priority: {target['implementation_priority']}",
+                f"   Current stage: {target['current_stage']}",
+                f"   Checklist datasets: {datasets}",
+                f"   Training plan: {target['training_plan']}",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "## Execution Note",
+            "",
+            "- The current repository can run a real Raven training cycle through the Qwen 0.5B Kaggle path.",
+            "- Other agents are mapped here for data planning and manifest alignment, but most still need dedicated train-ready builders, configs, and higher-volume datasets before real training starts.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def build_metadata_bundle(base_dir: str | Path) -> dict[str, str]:
@@ -108,6 +171,13 @@ def build_metadata_bundle(base_dir: str | Path) -> dict[str, str]:
     }
     write_json(manifests_root / "training_manifest.json", training_manifest)
 
+    architecture_plan = {
+        "version": "0.1",
+        "description": "Architecture-aligned training plan derived from mystic_v0_1_architecture_canvas.md and the checklist datasets",
+        "targets": ARCHITECTURE_TRAINING_TARGETS,
+    }
+    write_json(manifests_root / "architecture_training_plan.json", architecture_plan)
+
     for target in TRAINING_TARGETS:
         payload = {
             "adapter": target["adapter"],
@@ -126,6 +196,12 @@ def build_metadata_bundle(base_dir: str | Path) -> dict[str, str]:
         "test": {"path": "mystic_data/eval_holdout/test.jsonl"},
     }
     write_json(manifests_root / "dataset_splits.json", split_manifest)
+
+    architecture_plan_markdown = _build_architecture_plan_markdown(root)
+    (metadata_root / "architecture_training_plan.md").write_text(
+        architecture_plan_markdown + "\n",
+        encoding="utf-8",
+    )
 
     return {
         "metadata_root": str(metadata_root),
@@ -151,4 +227,3 @@ def write_train_ready_seed(base_dir: str | Path) -> list[str]:
             path.write_text("", encoding="utf-8")
         created.append(str(path))
     return created
-
