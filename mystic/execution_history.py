@@ -10,6 +10,7 @@ from typing import Any
 
 from mystic.jsonl_loop import ensure_data_dirs, read_jsonl
 from mystic.training.continuous import continuous_state_path, read_json, specialist_history_log_path
+from mystic.training.remote_cycle import remote_cycle_state_path
 
 
 @dataclass(slots=True)
@@ -77,6 +78,20 @@ def format_duration(duration_seconds: float | None) -> str:
     minutes = int(duration_seconds // 60)
     seconds = duration_seconds % 60
     return f"{minutes}m {seconds:.0f}s"
+
+
+def kaggle_kernel_url(ref: str | None) -> str:
+    value = str(ref or "").strip()
+    if not value or "/" not in value:
+        return ""
+    return f"https://www.kaggle.com/code/{value}"
+
+
+def kaggle_dataset_url(ref: str | None) -> str:
+    value = str(ref or "").strip()
+    if not value or "/" not in value:
+        return ""
+    return f"https://www.kaggle.com/datasets/{value}"
 
 
 def _normalize_model_name(value: str | None) -> str:
@@ -427,6 +442,108 @@ def load_continuous_status(base_dir: str | Path) -> dict[str, Any]:
     return read_json(path)
 
 
+def load_remote_cycle_status(base_dir: str | Path) -> dict[str, Any]:
+    path = remote_cycle_state_path(base_dir)
+    if not path.exists():
+        return {}
+    return read_json(path)
+
+
+def display_stream(record: ExecutionRecord) -> str:
+    mapping = {
+        "specialist_training_history": "Local Smoke",
+        "specialist_training_batch": "Local Batch",
+        "training_log": "Raven Train",
+        "raven_eval_results": "Raven Eval",
+        "raven_comparison_results": "Raven Compare",
+        "run_log": "Research Loop",
+        "cycle_prepare": "Remote Prepare",
+        "cycle_submit": "Remote Submit",
+        "cycle_poll": "Remote Poll",
+        "cycle_download": "Remote Download",
+        "cycle_finish": "Remote Finish",
+    }
+    return mapping.get(record.source, record.source.replace("_", " ").title())
+
+
+def display_context(record: ExecutionRecord) -> str:
+    details = record.details
+    if "run_label" in details:
+        return str(details["run_label"])
+    if "run_id" in details:
+        return str(details["run_id"])
+    if "cycle_id" in details:
+        return str(details["cycle_id"])
+    if record.source.startswith("cycle_") and ":" in record.record_id:
+        return record.record_id.split(":", 1)[1]
+    if "kernel_ref" in details:
+        return str(details["kernel_ref"])
+    return record.source
+
+
+def display_context_lines(record: ExecutionRecord) -> list[tuple[str, str]]:
+    details = record.details
+    lines: list[tuple[str, str]] = []
+    context = display_context(record)
+    if context and context != record.source:
+        lines.append(("text", context))
+    kernel_ref = str(details.get("kernel_ref", "") or "")
+    dataset_ref = str(details.get("dataset_ref", "") or "")
+    stdout_log = str(details.get("stdout_log", "") or "")
+    stderr_log = str(details.get("stderr_log", "") or "")
+    if kernel_ref:
+        lines.append(("url", kaggle_kernel_url(kernel_ref)))
+    if dataset_ref:
+        lines.append(("url", kaggle_dataset_url(dataset_ref)))
+    if stdout_log:
+        lines.append(("text", Path(stdout_log).name))
+    if stderr_log and stderr_log != stdout_log:
+        lines.append(("text", Path(stderr_log).name))
+    return lines[:4]
+
+
+def status_label(status: str) -> str:
+    mapping = {
+        "TRAIN_OK": "학습 완료",
+        "DRY_RUN_OK": "드라이런 완료",
+        "TRAIN_ERROR": "학습 실패",
+        "EVAL_OK": "평가 완료",
+        "EVAL_WARN": "평가 경고",
+        "COMPARE_OK": "비교 완료",
+        "COMPARE_ERROR": "비교 실패",
+        "LOOP_OK": "루프 완료",
+        "LOOP_ERROR": "루프 실패",
+        "PREPARE_OK": "준비 완료",
+        "SUBMIT_OK": "업로드 완료",
+        "POLL_OK": "원격 학습 완료",
+        "POLL_FAIL": "원격 학습 실패",
+        "DOWNLOAD_OK": "다운로드 완료",
+        "FINISH_OK": "재투입 완료",
+        "FINISH_FAIL": "재투입 실패",
+    }
+    return mapping.get(status, status)
+
+
+def summarize_records(records: list[ExecutionRecord]) -> dict[str, Any]:
+    total = len(records)
+    success_count = sum(1 for record in records if record.success)
+    failure_count = total - success_count
+    recent = records[:20]
+    recent_success_rate = 0.0
+    if recent:
+        recent_success_rate = (sum(1 for record in recent if record.success) / len(recent)) * 100.0
+    latest_success = next((record for record in records if record.success), None)
+    latest_failure = next((record for record in records if not record.success), None)
+    return {
+        "total": total,
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "recent_success_rate": recent_success_rate,
+        "latest_success": latest_success,
+        "latest_failure": latest_failure,
+    }
+
+
 def write_execution_history_outputs(base_dir: str | Path) -> dict[str, str | int]:
     base = Path(base_dir)
     reports_dir = base / "reports"
@@ -435,12 +552,15 @@ def write_execution_history_outputs(base_dir: str | Path) -> dict[str, str | int
     output_json = reports_dir / "execution_history.json"
     records = collect_execution_records(base)
     continuous_status = load_continuous_status(base)
+    remote_cycle_status = load_remote_cycle_status(base)
+    stats = summarize_records(records)
     generated_at = datetime.now(UTC).isoformat()
     output_html.write_text(
         render_execution_history_html(
             records,
             generated_at=generated_at,
             continuous_status=continuous_status,
+            remote_cycle_status=remote_cycle_status,
         )
         + "\n",
         encoding="utf-8",
@@ -450,6 +570,13 @@ def write_execution_history_outputs(base_dir: str | Path) -> dict[str, str | int
             {
                 "generated_at": generated_at,
                 "continuous_status": continuous_status,
+                "remote_cycle_status": remote_cycle_status,
+                "stats": {
+                    "total": stats["total"],
+                    "success_count": stats["success_count"],
+                    "failure_count": stats["failure_count"],
+                    "recent_success_rate": stats["recent_success_rate"],
+                },
                 "record_count": len(records),
                 "records": [
                     {
@@ -484,8 +611,11 @@ def render_execution_history_html(
     *,
     generated_at: str,
     continuous_status: dict[str, Any] | None = None,
+    remote_cycle_status: dict[str, Any] | None = None,
 ) -> str:
     status_payload = continuous_status or {}
+    remote_status = remote_cycle_status or {}
+    stats = summarize_records(records)
     rows: list[str] = []
     for index, record in enumerate(records, start=1):
         timestamp = html.escape(record.timestamp)
@@ -493,18 +623,31 @@ def render_execution_history_html(
         model_name = html.escape(record.model_name)
         success_text = "성공" if record.success else "실패"
         duration = html.escape(format_duration(record.duration_seconds))
+        stream = html.escape(display_stream(record))
+        context_lines = display_context_lines(record)
+        context_html = "".join(
+            (
+                f'<div class="subtle"><a href="{html.escape(value)}" target="_blank" rel="noreferrer">{html.escape(value)}</a></div>'
+                if kind == "url"
+                else f'<div class="subtle">{html.escape(value)}</div>'
+            )
+            for kind, value in context_lines
+        )
+        status = html.escape(status_label(record.status))
         rows.append(
-            "<tr>"
+            f"<tr class=\"{'row-ok' if record.success else 'row-fail'}\">"
             f"<td>{index}</td>"
             f"<td>{timestamp}</td>"
+            f"<td><div class=\"stream-chip\">{stream}</div>{context_html}</td>"
             f"<td>{part}</td>"
             f"<td>{model_name}</td>"
-            f"<td class=\"{'ok' if record.success else 'fail'}\">{success_text}</td>"
+            f"<td><span class=\"result {'ok' if record.success else 'fail'}\">{success_text}</span></td>"
+            f"<td><span class=\"status-pill\">{status}</span></td>"
             f"<td>{duration}</td>"
             "</tr>"
         )
 
-    body_rows = "\n".join(rows) if rows else "<tr><td colspan=\"6\">기록이 없습니다.</td></tr>"
+    body_rows = "\n".join(rows) if rows else "<tr><td colspan=\"8\">기록이 없습니다.</td></tr>"
     status_value = html.escape(str(status_payload.get("status", "inactive")))
     current_cycle = html.escape(str(status_payload.get("current_cycle", "-")))
     active_slug = html.escape(str(status_payload.get("active_slug", "-")))
@@ -512,6 +655,39 @@ def render_execution_history_html(
     completed_cycles = html.escape(str(status_payload.get("completed_cycles", "-")))
     last_heartbeat = html.escape(str(status_payload.get("last_heartbeat", "-")))
     last_error = html.escape(str(status_payload.get("last_error", "")))
+    remote_status_value = html.escape(str(remote_status.get("status", "inactive")))
+    remote_cycle_id = html.escape(str(remote_status.get("active_cycle_id", "-")))
+    remote_phase = html.escape(str(remote_status.get("current_phase", "-")))
+    remote_kernel_ref = html.escape(str(remote_status.get("current_kernel_ref", "-")))
+    remote_dataset_ref = html.escape(str(remote_status.get("current_dataset_ref", "-")))
+    remote_kernel_url = kaggle_kernel_url(remote_status.get("current_kernel_ref"))
+    remote_dataset_url = kaggle_dataset_url(remote_status.get("current_dataset_ref"))
+    remote_completed = html.escape(str(remote_status.get("completed_cycles", "-")))
+    remote_adapter = html.escape(str(remote_status.get("active_adapter_path", "-")))
+    remote_kernel_html = (
+        f'<a href="{html.escape(remote_kernel_url)}" target="_blank" rel="noreferrer">{remote_kernel_ref}</a>'
+        if remote_kernel_url
+        else remote_kernel_ref
+    )
+    remote_dataset_html = (
+        f'<a href="{html.escape(remote_dataset_url)}" target="_blank" rel="noreferrer">{remote_dataset_ref}</a>'
+        if remote_dataset_url
+        else remote_dataset_ref
+    )
+    latest_success = stats["latest_success"]
+    latest_failure = stats["latest_failure"]
+    latest_success_text = "-"
+    if latest_success is not None:
+        latest_success_text = (
+            f"{display_stream(latest_success)} / {latest_success.part} / "
+            f"{status_label(latest_success.status)} / {latest_success.timestamp}"
+        )
+    latest_failure_text = "-"
+    if latest_failure is not None:
+        latest_failure_text = (
+            f"{display_stream(latest_failure)} / {latest_failure.part} / "
+            f"{status_label(latest_failure.status)} / {latest_failure.timestamp}"
+        )
     return f"""<!doctype html>
 <html lang="ko">
 <head>
@@ -555,7 +731,7 @@ def render_execution_history_html(
     }}
     .status-grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       gap: 12px;
       margin-bottom: 20px;
     }}
@@ -573,6 +749,36 @@ def render_execution_history_html(
     .status-card p {{
       margin: 6px 0;
       font-size: 14px;
+    }}
+    .status-card a {{
+      color: var(--accent);
+      text-decoration: none;
+    }}
+    .status-card a:hover {{
+      text-decoration: underline;
+    }}
+    .stats-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }}
+    .stat-card {{
+      background: rgba(255, 253, 248, 0.92);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px 16px;
+    }}
+    .stat-card .label {{
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }}
+    .stat-card .value {{
+      font-size: 28px;
+      font-weight: 700;
+      margin-top: 6px;
     }}
     .panel {{
       background: var(--panel);
@@ -604,6 +810,12 @@ def render_execution_history_html(
     tbody tr:hover {{
       background: rgba(184, 92, 56, 0.05);
     }}
+    .row-ok {{
+      background: rgba(21, 87, 36, 0.02);
+    }}
+    .row-fail {{
+      background: rgba(139, 30, 45, 0.02);
+    }}
     .ok {{
       color: var(--ok);
       font-weight: 700;
@@ -611,6 +823,44 @@ def render_execution_history_html(
     .fail {{
       color: var(--fail);
       font-weight: 700;
+    }}
+    .result {{
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 13px;
+      background: rgba(0, 0, 0, 0.04);
+    }}
+    .status-pill {{
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(184, 92, 56, 0.08);
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }}
+    .subtle {{
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 4px;
+      word-break: break-word;
+    }}
+    .subtle a {{
+      color: var(--muted);
+      text-decoration: none;
+    }}
+    .subtle a:hover {{
+      text-decoration: underline;
+    }}
+    .stream-chip {{
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(31, 27, 22, 0.06);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
     }}
     .caption {{
       padding: 14px;
@@ -625,16 +875,52 @@ def render_execution_history_html(
   <div class="wrap">
     <h1>Mystic Execution History</h1>
     <div class="meta">생성 시각: {html.escape(generated_at)} · 총 {len(records)}개 실행 기록</div>
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="label">총 기록</div>
+        <div class="value">{stats['total']}</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">성공</div>
+        <div class="value">{stats['success_count']}</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">실패</div>
+        <div class="value">{stats['failure_count']}</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">최근 20개 성공률</div>
+        <div class="value">{stats['recent_success_rate']:.0f}%</div>
+      </div>
+    </div>
     <div class="status-grid">
       <div class="status-card">
-        <h2>Continuous Training</h2>
-        <p>status: {status_value}</p>
-        <p>current_cycle: {current_cycle}</p>
-        <p>completed_cycles: {completed_cycles}</p>
-        <p>active_slug: {active_slug}</p>
-        <p>next_slug: {next_slug}</p>
-        <p>last_heartbeat: {last_heartbeat}</p>
-        <p>last_error: {last_error or "-"}</p>
+        <h2>로컬 연속 학습</h2>
+        <p>상태: {status_value}</p>
+        <p>현재 사이클: {current_cycle}</p>
+        <p>완료 사이클: {completed_cycles}</p>
+        <p>현재 데이터셋: {active_slug}</p>
+        <p>다음 데이터셋: {next_slug}</p>
+        <p>마지막 heartbeat: {last_heartbeat}</p>
+        <p>마지막 오류: {last_error or "-"}</p>
+      </div>
+      <div class="status-card">
+        <h2>원격 Kaggle 사이클</h2>
+        <p>상태: {remote_status_value}</p>
+        <p>현재 사이클: {remote_cycle_id}</p>
+        <p>현재 단계: {remote_phase}</p>
+        <p>완료 사이클: {remote_completed}</p>
+        <p>어댑터 경로: {remote_adapter}</p>
+        <p>커널: {remote_kernel_html}</p>
+        <p>데이터셋: {remote_dataset_html}</p>
+      </div>
+      <div class="status-card">
+        <h2>최근 성공</h2>
+        <p>{html.escape(latest_success_text)}</p>
+      </div>
+      <div class="status-card">
+        <h2>최근 실패</h2>
+        <p>{html.escape(latest_failure_text)}</p>
       </div>
     </div>
     <div class="panel">
@@ -643,9 +929,11 @@ def render_execution_history_html(
           <tr>
             <th>번호</th>
             <th>시각</th>
+            <th>스트림</th>
             <th>파트</th>
             <th>모델명</th>
-            <th>성공 여부</th>
+            <th>결과</th>
+            <th>상태</th>
             <th>걸린 시간</th>
           </tr>
         </thead>
@@ -653,7 +941,7 @@ def render_execution_history_html(
           {body_rows}
         </tbody>
       </table>
-      <div class="caption">이 페이지는 기존 JSONL 로그와 cycle summary를 합쳐서 생성됩니다.</div>
+      <div class="caption">이 페이지는 append-only JSONL 로그, cycle summary, 로컬 연속 학습 상태, 원격 Kaggle 사이클 상태를 합쳐서 생성됩니다.</div>
     </div>
   </div>
 </body>

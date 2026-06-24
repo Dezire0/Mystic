@@ -12,10 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from mystic.training.continuous import LAUNCHD_LABEL, continuous_state_path, read_json
+from mystic.training.remote_cycle import REMOTE_LAUNCHD_LABEL, read_json, remote_cycle_state_path
 
 
-PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
+PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{REMOTE_LAUNCHD_LABEL}.plist"
 
 
 def xml_escape(value: str) -> str:
@@ -59,38 +59,40 @@ def plist_document(payload: dict[str, Any]) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Install and manage the Mystic continuous training launchd agent.")
+    parser = argparse.ArgumentParser(description="Install and manage the Mystic remote Kaggle cycle launchd agent.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--base-dir", default=str(ROOT / "mystic_data"))
-    common.add_argument("--backend", choices=["manual", "unsloth", "axolotl"], default="manual")
-    common.add_argument("--cycle-sleep-seconds", type=int, default=120)
-    common.add_argument("--error-sleep-seconds", type=int, default=180)
-    common.add_argument("--hf-base-rows", type=int, default=25)
-    common.add_argument("--numina-base-limit", type=int, default=1500)
-    common.add_argument("--public-base-rows-per-agent", type=int, default=50)
-    common.add_argument("--epochs", type=int, default=1)
-    common.add_argument("--max-steps", type=int, default=20)
+    common.add_argument("--base-model", default="Qwen/Qwen2.5-0.5B-Instruct")
+    common.add_argument("--cycle-prefix", default="remote_cycle")
+    common.add_argument("--adapter-prefix", default="raven_lora_remote")
+    common.add_argument("--model-suffix", default="qwen_0_5b")
+    common.add_argument("--sleep-seconds", type=int, default=300)
+    common.add_argument("--error-sleep-seconds", type=int, default=600)
+    common.add_argument("--poll-seconds", type=int, default=60)
+    common.add_argument("--timeout-minutes", type=int, default=240)
+    common.add_argument("--limit", type=int, default=0)
     common.add_argument("--learning-rate", type=float, default=0.00015)
-    common.add_argument("--sequence-length", type=int, default=512)
-    common.add_argument("--step-timeout-seconds", type=int, default=600)
-    common.add_argument("--cycle-timeout-seconds", type=int, default=7200)
-    common.add_argument("--hf-slugs", nargs="*", default=[])
+    common.add_argument("--epochs", type=int, default=1)
+    common.add_argument("--batch-size", type=int, default=1)
+    common.add_argument("--max-length", type=int, default=2048)
+    common.add_argument("--run-limit", type=int, default=20)
+    common.add_argument("--compare-limit", type=int, default=100)
 
-    install_parser = subparsers.add_parser("install", parents=[common], help="Write plist and start the launchd service.")
+    install_parser = subparsers.add_parser("install", parents=[common], help="Write plist and start the remote cycle service.")
     install_parser.set_defaults(func=install_agent)
 
-    start_parser = subparsers.add_parser("start", help="Start or restart the installed launchd service.")
+    start_parser = subparsers.add_parser("start", help="Start or restart the installed remote cycle service.")
     start_parser.set_defaults(func=start_agent)
 
-    stop_parser = subparsers.add_parser("stop", help="Stop the launchd service.")
+    stop_parser = subparsers.add_parser("stop", help="Stop the remote cycle service.")
     stop_parser.set_defaults(func=stop_agent)
 
-    restart_parser = subparsers.add_parser("restart", help="Restart the launchd service.")
+    restart_parser = subparsers.add_parser("restart", help="Restart the remote cycle service.")
     restart_parser.set_defaults(func=restart_agent)
 
-    status_parser = subparsers.add_parser("status", help="Show service and state status.")
+    status_parser = subparsers.add_parser("status", help="Show remote cycle service and state status.")
     status_parser.add_argument("--base-dir", default=str(ROOT / "mystic_data"))
     status_parser.set_defaults(func=status_agent)
 
@@ -104,39 +106,42 @@ def launchd_domain() -> str:
 
 
 def daemon_command(args: argparse.Namespace) -> list[str]:
-    command = [
+    return [
         str(ROOT / ".venv-training" / "bin" / "python"),
-        str(ROOT / "scripts" / "run_continuous_training_daemon.py"),
+        str(ROOT / "scripts" / "run_remote_cycle_daemon.py"),
         "--base-dir",
         str(Path(args.base_dir).resolve()),
-        "--backend",
-        args.backend,
-        "--cycle-sleep-seconds",
-        str(args.cycle_sleep_seconds),
+        "--base-model",
+        args.base_model,
+        "--cycle-prefix",
+        args.cycle_prefix,
+        "--adapter-prefix",
+        args.adapter_prefix,
+        "--model-suffix",
+        args.model_suffix,
+        "--sleep-seconds",
+        str(args.sleep_seconds),
         "--error-sleep-seconds",
         str(args.error_sleep_seconds),
-        "--hf-base-rows",
-        str(args.hf_base_rows),
-        "--numina-base-limit",
-        str(args.numina_base_limit),
-        "--public-base-rows-per-agent",
-        str(args.public_base_rows_per_agent),
-        "--epochs",
-        str(args.epochs),
-        "--max-steps",
-        str(args.max_steps),
+        "--poll-seconds",
+        str(args.poll_seconds),
+        "--timeout-minutes",
+        str(args.timeout_minutes),
+        "--limit",
+        str(args.limit),
         "--learning-rate",
         str(args.learning_rate),
-        "--sequence-length",
-        str(args.sequence_length),
-        "--step-timeout-seconds",
-        str(args.step_timeout_seconds),
-        "--cycle-timeout-seconds",
-        str(args.cycle_timeout_seconds),
+        "--epochs",
+        str(args.epochs),
+        "--batch-size",
+        str(args.batch_size),
+        "--max-length",
+        str(args.max_length),
+        "--run-limit",
+        str(args.run_limit),
+        "--compare-limit",
+        str(args.compare_limit),
     ]
-    if args.hf_slugs:
-        command.extend(["--hf-slugs", *args.hf_slugs])
-    return command
 
 
 def plist_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -144,17 +149,18 @@ def plist_payload(args: argparse.Namespace) -> dict[str, Any]:
     logs_dir = base_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     return {
-        "Label": LAUNCHD_LABEL,
+        "Label": REMOTE_LAUNCHD_LABEL,
         "ProgramArguments": daemon_command(args),
         "WorkingDirectory": str(ROOT),
         "EnvironmentVariables": {
             "PYTHONUNBUFFERED": "1",
+            "PATH": "/opt/homebrew/Caskroom/miniforge/base/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         },
         "RunAtLoad": True,
         "KeepAlive": True,
         "ProcessType": "Background",
-        "StandardOutPath": str(logs_dir / "continuous_training.launchd.stdout.log"),
-        "StandardErrorPath": str(logs_dir / "continuous_training.launchd.stderr.log"),
+        "StandardOutPath": str(logs_dir / "remote_cycle.launchd.stdout.log"),
+        "StandardErrorPath": str(logs_dir / "remote_cycle.launchd.stderr.log"),
     }
 
 
@@ -179,7 +185,7 @@ def start_agent(_args: argparse.Namespace) -> int:
     if not PLIST_PATH.exists():
         raise FileNotFoundError(f"Missing plist: {PLIST_PATH}")
     run_launchctl("bootstrap", launchd_domain(), str(PLIST_PATH), check=False)
-    run_launchctl("kickstart", "-k", f"{launchd_domain()}/{LAUNCHD_LABEL}", check=False)
+    run_launchctl("kickstart", "-k", f"{launchd_domain()}/{REMOTE_LAUNCHD_LABEL}", check=False)
     return 0
 
 
@@ -197,10 +203,10 @@ def restart_agent(args: argparse.Namespace) -> int:
 
 def status_agent(args: argparse.Namespace) -> int:
     base_dir = Path(getattr(args, "base_dir", str(ROOT / "mystic_data"))).resolve()
-    state_path = continuous_state_path(base_dir)
-    launchctl_status = run_launchctl("print", f"{launchd_domain()}/{LAUNCHD_LABEL}", check=False)
+    state_path = remote_cycle_state_path(base_dir)
+    launchctl_status = run_launchctl("print", f"{launchd_domain()}/{REMOTE_LAUNCHD_LABEL}", check=False)
     payload: dict[str, Any] = {
-        "label": LAUNCHD_LABEL,
+        "label": REMOTE_LAUNCHD_LABEL,
         "plist_path": str(PLIST_PATH),
         "plist_exists": PLIST_PATH.exists(),
         "launchctl_returncode": launchctl_status.returncode,

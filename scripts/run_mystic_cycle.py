@@ -381,11 +381,23 @@ def latest_cycle_summaries(base_dir: Path, limit: int = 5) -> list[dict[str, Any
 
 def require_kaggle_cli() -> str:
     python_candidates: list[list[str]] = []
-    if importlib.util.find_spec("kaggle") is not None:
-        python_candidates.append([PYTHON_BIN, "-m", "kaggle"])
-    shell_python = shutil.which("python")
-    if shell_python and Path(shell_python).resolve() != Path(PYTHON_BIN).resolve():
-        python_candidates.append([shell_python, "-m", "kaggle"])
+    seen_python: set[str] = set()
+    for candidate in [
+        PYTHON_BIN,
+        shutil.which("python"),
+        shutil.which("python3"),
+        "/opt/homebrew/bin/python3",
+        "/opt/homebrew/Caskroom/miniforge/base/bin/python",
+        "/opt/homebrew/Caskroom/miniforge/base/bin/python3",
+        "/usr/local/bin/python3",
+    ]:
+        if not candidate:
+            continue
+        resolved = str(Path(candidate).expanduser())
+        if resolved in seen_python or not Path(resolved).exists():
+            continue
+        seen_python.add(resolved)
+        python_candidates.append([resolved, "-m", "kaggle"])
 
     for candidate in python_candidates:
         try:
@@ -400,9 +412,31 @@ def require_kaggle_cli() -> str:
         except (subprocess.CalledProcessError, FileNotFoundError):
             continue
 
-    kaggle_path = shutil.which("kaggle")
-    if kaggle_path:
-        return kaggle_path
+    kaggle_candidates = [
+        shutil.which("kaggle"),
+        "/opt/homebrew/bin/kaggle",
+        "/opt/homebrew/Caskroom/miniforge/base/bin/kaggle",
+        "/usr/local/bin/kaggle",
+    ]
+    seen_kaggle: set[str] = set()
+    for kaggle_path in kaggle_candidates:
+        if not kaggle_path:
+            continue
+        resolved = str(Path(kaggle_path).expanduser())
+        if resolved in seen_kaggle or not Path(resolved).exists():
+            continue
+        seen_kaggle.add(resolved)
+        try:
+            subprocess.run(
+                [resolved, "--version"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return resolved
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
     raise FileNotFoundError(
         "Kaggle CLI not found. Install it first, for example: "
         "`python -m pip install kaggle`, then place credentials in ~/.kaggle/kaggle.json."

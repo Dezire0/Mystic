@@ -159,7 +159,8 @@ class ExecutionHistoryTests(unittest.TestCase):
             generated_at="2026-06-24T10:00:00+00:00",
         )
         self.assertIn("Mystic Execution History", html_text)
-        self.assertIn("Continuous Training", html_text)
+        self.assertIn("로컬 연속 학습", html_text)
+        self.assertIn("원격 Kaggle 사이클", html_text)
         self.assertIn("기록이 없습니다", html_text)
         self.assertIn("http-equiv=\"refresh\"", html_text)
 
@@ -226,6 +227,20 @@ class ExecutionHistoryTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+            (state_dir / "remote_cycle_state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "running",
+                        "active_cycle_id": "remote_cycle_0002",
+                        "current_phase": "polling",
+                        "current_kernel_ref": "user/mystic-raven-remote-cycle-0002",
+                        "current_dataset_ref": "user/mystic-cycle-remote-cycle-0002",
+                        "completed_cycles": 1,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
 
             payload = write_execution_history_outputs(base)
 
@@ -233,11 +248,16 @@ class ExecutionHistoryTests(unittest.TestCase):
             json_path = Path(str(payload["output_json"]))
             self.assertTrue(html_path.exists())
             self.assertTrue(json_path.exists())
-            self.assertIn("sshleifer/tiny-gpt2", html_path.read_text(encoding="utf-8"))
-            self.assertIn("Continuous Training", html_path.read_text(encoding="utf-8"))
+            html_text = html_path.read_text(encoding="utf-8")
+            self.assertIn("sshleifer/tiny-gpt2", html_text)
+            self.assertIn("로컬 연속 학습", html_text)
+            self.assertIn("원격 Kaggle 사이클", html_text)
+            self.assertIn("https://www.kaggle.com/code/user/mystic-raven-remote-cycle-0002", html_text)
+            self.assertIn("https://www.kaggle.com/datasets/user/mystic-cycle-remote-cycle-0002", html_text)
             json_payload = json.loads(json_path.read_text(encoding="utf-8"))
             self.assertEqual(json_payload["record_count"], 1)
             self.assertEqual(json_payload["continuous_status"]["status"], "running")
+            self.assertEqual(json_payload["remote_cycle_status"]["status"], "running")
 
     def test_format_duration(self):
         self.assertEqual(format_duration(None), "-")
