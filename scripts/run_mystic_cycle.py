@@ -380,8 +380,26 @@ def latest_cycle_summaries(base_dir: Path, limit: int = 5) -> list[dict[str, Any
 
 
 def require_kaggle_cli() -> str:
+    python_candidates: list[list[str]] = []
     if importlib.util.find_spec("kaggle") is not None:
-        return "python-module"
+        python_candidates.append([PYTHON_BIN, "-m", "kaggle"])
+    shell_python = shutil.which("python")
+    if shell_python and Path(shell_python).resolve() != Path(PYTHON_BIN).resolve():
+        python_candidates.append([shell_python, "-m", "kaggle"])
+
+    for candidate in python_candidates:
+        try:
+            subprocess.run(
+                [*candidate, "--version"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return " ".join(candidate)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
+
     kaggle_path = shutil.which("kaggle")
     if kaggle_path:
         return kaggle_path
@@ -393,8 +411,8 @@ def require_kaggle_cli() -> str:
 
 def kaggle_command_prefix() -> list[str]:
     mode = require_kaggle_cli()
-    if mode == "python-module":
-        return [PYTHON_BIN, "-m", "kaggle"]
+    if mode.startswith(PYTHON_BIN) or mode.endswith("-m kaggle") or " -m kaggle" in mode:
+        return mode.split(" ")
     return ["kaggle"]
 
 
@@ -427,6 +445,11 @@ def parse_kaggle_status_output(stdout: str) -> str:
     if any(token in text for token in ["running", "queued", "pending", "starting"]):
         return "running"
     return "unknown"
+
+
+def kaggle_dataset_create_needs_version(stdout: str, stderr: str) -> bool:
+    combined = f"{stdout}\n{stderr}".lower()
+    return "dataset creation error" in combined and "already in use" in combined
 
 
 def locate_downloaded_adapter_tar(output_dir: Path, expected_name: str) -> Path:
@@ -474,6 +497,7 @@ def build_kaggle_training_script(
             "import subprocess",
             "import sys",
             "import tarfile",
+            "import time",
             "",
             f'DATASET_SLUG = "{dataset_slug}"',
             f'PACKAGE_FILENAME = "{package_filename}"',
@@ -485,13 +509,35 @@ def build_kaggle_training_script(
             '    print("+", " ".join(args), flush=True)',
             "    subprocess.run(args, check=True)",
             "",
-            "dataset_root = Path('/kaggle/input') / DATASET_SLUG",
-            "matches = list(dataset_root.rglob(PACKAGE_FILENAME))",
-            "if not matches:",
+            "def find_package() -> Path:",
+            "    dataset_root = Path('/kaggle/input') / DATASET_SLUG",
+            "    matches = list(dataset_root.rglob(PACKAGE_FILENAME))",
+            "    if matches:",
+            "        return matches[0]",
             "    matches = list(dataset_root.rglob('*.tar.gz'))",
-            "if not matches:",
-            "    raise FileNotFoundError(f'Package tarball not found under {dataset_root}')",
-            "package_path = matches[0]",
+            "    if matches:",
+            "        return matches[0]",
+            "    global_matches = list(Path('/kaggle/input').rglob(PACKAGE_FILENAME))",
+            "    if global_matches:",
+            "        return global_matches[0]",
+            "    global_matches = list(Path('/kaggle/input').rglob('*.tar.gz'))",
+            "    if global_matches:",
+            "        return global_matches[0]",
+            "    raise FileNotFoundError(f'Package tarball not found under {dataset_root} or /kaggle/input')",
+            "",
+            "package_path = None",
+            "last_error = None",
+            "for attempt in range(12):",
+            "    try:",
+            "        package_path = find_package()",
+            "        print(f'Found package on attempt {attempt + 1}: {package_path}', flush=True)",
+            "        break",
+            "    except FileNotFoundError as exc:",
+            "        last_error = exc",
+            "        print(f'Waiting for Kaggle dataset mount ({attempt + 1}/12)...', flush=True)",
+            "        time.sleep(10)",
+            "if package_path is None:",
+            "    raise last_error or FileNotFoundError('Package tarball not found.')",
             "workdir = Path('/kaggle/working/mystic_cycle')",
             "workdir.mkdir(parents=True, exist_ok=True)",
             "with tarfile.open(package_path, 'r:gz') as archive:",
@@ -797,11 +843,22 @@ def run_submit(args: argparse.Namespace) -> int:
 
     try:
         dataset_result = run_raw_command([*kaggle_cmd, "datasets", "create", "-p", str(dataset_dir)], cwd=ROOT)
-        dataset_action = "create"
+        if kaggle_dataset_create_needs_version(dataset_result.stdout, dataset_result.stderr):
+            dataset_result = run_raw_command(
+                [*kaggle_cmd, "datasets", "version", "-p", str(dataset_dir), "-m", f"Mystic cycle {args.cycle_id} package update"],
+                cwd=ROOT,
+            )
+            dataset_action = "version"
+        else:
+            dataset_action = "create"
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").lower()
         stdout = (exc.stdout or "").lower()
-        if "already exists" not in stderr and "already exists" not in stdout:
+        duplicate_markers = [
+            "already exists",
+            "already in use",
+        ]
+        if not any(marker in stderr or marker in stdout for marker in duplicate_markers):
             raise
         dataset_result = run_raw_command(
             [*kaggle_cmd, "datasets", "version", "-p", str(dataset_dir), "-m", f"Mystic cycle {args.cycle_id} package update"],

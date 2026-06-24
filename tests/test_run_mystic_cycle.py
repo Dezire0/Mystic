@@ -16,6 +16,7 @@ from scripts.run_mystic_cycle import (
     current_adapter_status,
     extract_last_json_object,
     locate_downloaded_adapter_tar,
+    kaggle_dataset_create_needs_version,
     parse_kaggle_status_output,
     run_finish,
     run_full,
@@ -40,6 +41,15 @@ class RunMysticCycleTests(unittest.TestCase):
         self.assertEqual(parse_kaggle_status_output("status: running"), "running")
         self.assertEqual(parse_kaggle_status_output("Kernel status: complete"), "complete")
         self.assertEqual(parse_kaggle_status_output("status: failed"), "failed")
+
+    def test_kaggle_dataset_create_needs_version(self):
+        self.assertTrue(
+            kaggle_dataset_create_needs_version(
+                'Dataset creation error: The requested title "Mystic Cycle cycle_1" is already in use by a dataset.',
+                "",
+            )
+        )
+        self.assertFalse(kaggle_dataset_create_needs_version("Upload successful", ""))
 
     def test_validate_adapter_files_rejects_base_model_mismatch(self):
         with tempfile.TemporaryDirectory() as temp_dir:
