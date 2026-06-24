@@ -5,7 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mystic.execution_history import collect_execution_records, format_duration, render_execution_history_html
+from mystic.execution_history import (
+    collect_execution_records,
+    format_duration,
+    render_execution_history_html,
+    write_execution_history_outputs,
+)
 
 
 def append_jsonl(path: Path, payload: dict) -> None:
@@ -155,6 +160,34 @@ class ExecutionHistoryTests(unittest.TestCase):
         )
         self.assertIn("Mystic Execution History", html_text)
         self.assertIn("기록이 없습니다", html_text)
+        self.assertIn("http-equiv=\"refresh\"", html_text)
+
+    def test_write_execution_history_outputs_writes_html_and_json(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir) / "mystic_data"
+            logs = base / "logs"
+            logs.mkdir(parents=True, exist_ok=True)
+            append_jsonl(
+                logs / "training_log.jsonl",
+                {
+                    "event_id": "train-2",
+                    "timestamp": "2026-06-24T10:00:00+00:00",
+                    "status": "TRAIN_OK",
+                    "base_model": "sshleifer/tiny-gpt2",
+                    "output_dir": "mystic_data/adapters/core_router_lora_v0",
+                    "metrics": {"train_runtime": 1.25},
+                },
+            )
+
+            payload = write_execution_history_outputs(base)
+
+            html_path = Path(str(payload["output_html"]))
+            json_path = Path(str(payload["output_json"]))
+            self.assertTrue(html_path.exists())
+            self.assertTrue(json_path.exists())
+            self.assertIn("sshleifer/tiny-gpt2", html_path.read_text(encoding="utf-8"))
+            json_payload = json.loads(json_path.read_text(encoding="utf-8"))
+            self.assertEqual(json_payload["record_count"], 1)
 
     def test_format_duration(self):
         self.assertEqual(format_duration(None), "-")

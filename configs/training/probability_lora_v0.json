@@ -1,0 +1,18 @@
+{
+  "adapter_name": "probability_lora_v0",
+  "agent": "probability",
+  "base_model": "qwen3-14b",
+  "smoke_model": "sshleifer/tiny-gpt2",
+  "method": "qlora",
+  "epochs": 1,
+  "max_steps": 2,
+  "learning_rate": 0.00015,
+  "target_modules": [
+    "c_attn",
+    "c_proj"
+  ],
+  "source_manifest": "mystic_data/metadata/manifests/architecture_training_plan.json",
+  "train_ready_path": "mystic_data/train_ready/probability_train_ready.jsonl",
+  "output_dir": "mystic_data/adapters/probability_lora_v0",
+  "notes": "Bootstrap probability traces with conservative conditioning and expectation reasoning."
+}

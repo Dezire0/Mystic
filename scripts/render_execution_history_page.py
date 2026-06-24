@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
 import json
 from pathlib import Path
 import sys
@@ -10,11 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from mystic.execution_history import collect_execution_records, render_execution_history_html
-
-
-def now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+from mystic.execution_history import write_execution_history_outputs
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,38 +26,22 @@ def main(argv: list[str] | None = None) -> int:
     reports_dir = base_dir / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    output_html = Path(args.output_html) if args.output_html else reports_dir / "execution_history.html"
-    output_json = Path(args.output_json) if args.output_json else reports_dir / "execution_history.json"
-
-    records = collect_execution_records(base_dir)
-    generated_at = now_iso()
-    html_text = render_execution_history_html(records, generated_at=generated_at)
-    output_html.write_text(html_text, encoding="utf-8")
-
-    json_payload = {
-        "generated_at": generated_at,
-        "record_count": len(records),
-        "records": [
-            {
-                "record_id": record.record_id,
-                "timestamp": record.timestamp,
-                "part": record.part,
-                "model_name": record.model_name,
-                "success": record.success,
-                "duration_seconds": record.duration_seconds,
-                "source": record.source,
-                "status": record.status,
-            }
-            for record in records
-        ],
-    }
-    output_json.write_text(json.dumps(json_payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+    payload = write_execution_history_outputs(base_dir)
+    output_html = Path(args.output_html) if args.output_html else Path(str(payload["output_html"]))
+    output_json = Path(args.output_json) if args.output_json else Path(str(payload["output_json"]))
+    if args.output_html or args.output_json:
+        default_html = Path(str(payload["output_html"]))
+        default_json = Path(str(payload["output_json"]))
+        if args.output_html and output_html != default_html:
+            output_html.write_text(default_html.read_text(encoding="utf-8"), encoding="utf-8")
+        if args.output_json and output_json != default_json:
+            output_json.write_text(default_json.read_text(encoding="utf-8"), encoding="utf-8")
 
     print(
         json.dumps(
             {
-                "generated_at": generated_at,
-                "record_count": len(records),
+                "generated_at": payload["generated_at"],
+                "record_count": payload["record_count"],
                 "output_html": str(output_html),
                 "output_json": str(output_json),
             },

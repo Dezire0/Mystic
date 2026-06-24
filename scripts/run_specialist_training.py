@@ -9,10 +9,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from mystic.execution_history import write_execution_history_outputs
 from mystic.training.executor import execute_training_job
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--agent", required=True)
     parser.add_argument("--backend", default="manual", choices=["manual", "unsloth", "axolotl"])
@@ -26,8 +27,12 @@ def main() -> None:
         backend=args.backend,
         dry_run=dry_run,
     )
+    payload["history_outputs"] = write_execution_history_outputs(ROOT / "mystic_data")
     print(json.dumps(payload, indent=2))
+    if payload.get("executed") and int(payload.get("returncode", 0) or 0) != 0:
+        return int(payload["returncode"])
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

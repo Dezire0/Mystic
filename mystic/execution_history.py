@@ -42,6 +42,7 @@ def infer_part(*values: str) -> str:
         ("pattern", "pattern"),
         ("report", "report"),
         ("forge", "forge"),
+        ("conjecture", "conjecture"),
         ("prime", "prime"),
         ("logic", "logic"),
         ("algebra", "algebra"),
@@ -51,7 +52,11 @@ def infer_part(*values: str) -> str:
         ("chem", "chem"),
         ("lean", "lean"),
         ("raven", "raven"),
+        ("simulator", "simulator"),
         ("core", "core"),
+        ("archive", "archive"),
+        ("knowledge_graph", "knowledge_graph"),
+        ("evolution", "evolution"),
         ("adapter", "raven"),
         ("qwen", "raven"),
     ]
@@ -377,6 +382,51 @@ def collect_execution_records(base_dir: str | Path) -> list[ExecutionRecord]:
     return sorted(records, key=lambda item: parse_timestamp(item.timestamp), reverse=True)
 
 
+def write_execution_history_outputs(base_dir: str | Path) -> dict[str, str | int]:
+    base = Path(base_dir)
+    reports_dir = base / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    output_html = reports_dir / "execution_history.html"
+    output_json = reports_dir / "execution_history.json"
+    records = collect_execution_records(base)
+    generated_at = datetime.now(UTC).isoformat()
+    output_html.write_text(
+        render_execution_history_html(records, generated_at=generated_at) + "\n",
+        encoding="utf-8",
+    )
+    output_json.write_text(
+        json.dumps(
+            {
+                "generated_at": generated_at,
+                "record_count": len(records),
+                "records": [
+                    {
+                        "record_id": record.record_id,
+                        "timestamp": record.timestamp,
+                        "part": record.part,
+                        "model_name": record.model_name,
+                        "success": record.success,
+                        "duration_seconds": record.duration_seconds,
+                        "source": record.source,
+                        "status": record.status,
+                    }
+                    for record in records
+                ],
+            },
+            indent=2,
+            ensure_ascii=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "generated_at": generated_at,
+        "record_count": len(records),
+        "output_html": str(output_html),
+        "output_json": str(output_json),
+    }
+
+
 def render_execution_history_html(records: list[ExecutionRecord], *, generated_at: str) -> str:
     rows: list[str] = []
     for index, record in enumerate(records, start=1):
@@ -402,6 +452,7 @@ def render_execution_history_html(records: list[ExecutionRecord], *, generated_a
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="5">
   <title>Mystic Execution History</title>
   <style>
     :root {{
