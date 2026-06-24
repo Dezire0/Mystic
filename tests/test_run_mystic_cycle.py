@@ -101,9 +101,13 @@ class RunMysticCycleTests(unittest.TestCase):
         text = build_kaggle_commands_md(
             cycle_id="cycle_1",
             package_path=Path("/tmp/mystic_gpu_train_package_cycle_1.tar.gz"),
+            adapter_path="mystic_data/adapters/raven_lora_v1",
+            output_tar_name="raven_lora_v1_qwen.tar.gz",
+            learning_rate=0.00015,
         )
         self.assertIn("run_mystic_cycle.py full", text)
-        self.assertIn("raven_lora_v0_qwen.tar.gz", text)
+        self.assertIn("raven_lora_v1_qwen.tar.gz", text)
+        self.assertIn("--learning-rate 0.00015", text)
 
     def test_build_kaggle_training_script_contains_expected_steps(self):
         script = build_kaggle_training_script(
@@ -112,6 +116,10 @@ class RunMysticCycleTests(unittest.TestCase):
             base_model="Qwen/Qwen2.5-0.5B-Instruct",
             adapter_dirname="raven_lora_v0",
             output_tar_name="raven_lora_v0_qwen.tar.gz",
+            learning_rate=0.00015,
+            epochs=1,
+            batch_size=1,
+            max_length=2048,
         )
         self.assertIn("scripts/train_raven_lora.py", script)
         self.assertIn("scripts/evaluate_raven_lora.py", script)
@@ -277,6 +285,14 @@ class RunMysticCycleTests(unittest.TestCase):
                 package_out="",
                 run_prepare_data=False,
                 limit=0,
+                train_limit=1000,
+                eval_limit=100,
+                base_model="Qwen/Qwen2.5-0.5B-Instruct",
+                adapter_path="mystic_data/adapters/raven_lora_v1",
+                learning_rate=0.00015,
+                epochs=1,
+                batch_size=1,
+                max_length=2048,
             )
 
             with patch("scripts.run_mystic_cycle.ROOT", repo_root), patch(
@@ -288,6 +304,9 @@ class RunMysticCycleTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertTrue((base_dir / "cycles" / "cycle_1" / "prepare_summary.json").exists())
             self.assertTrue((base_dir / "cycles" / "cycle_1" / "kaggle_commands.md").exists())
+            payload = json.loads((base_dir / "cycles" / "cycle_1" / "prepare_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["requested_split"]["train_limit"], 1000)
+            self.assertEqual(payload["requested_split"]["eval_limit"], 100)
 
     def test_run_full_chains_prepare_submit_poll_download_and_finish(self):
         args = argparse.Namespace(
@@ -295,6 +314,8 @@ class RunMysticCycleTests(unittest.TestCase):
             base_dir="/tmp/mystic_data",
             run_prepare_data=True,
             limit=500,
+            train_limit=1000,
+            eval_limit=100,
             package_out="",
             kaggle_username="tester",
             dataset_slug="mystic-cycle-cycle-1",
@@ -303,6 +324,10 @@ class RunMysticCycleTests(unittest.TestCase):
             adapter_path="mystic_data/adapters/raven_lora_v0",
             model_id="raven_lora_v0_qwen_auto",
             output_tar_name="raven_lora_v0_qwen.tar.gz",
+            learning_rate=0.00015,
+            epochs=1,
+            batch_size=1,
+            max_length=2048,
             run_limit=20,
             compare_limit=10,
             poll_seconds=1,

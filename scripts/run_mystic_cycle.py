@@ -30,6 +30,27 @@ def slugify(text: str) -> str:
     return slug
 
 
+def default_output_tar_name(adapter_path: str) -> str:
+    adapter_name = Path(adapter_path).name or "raven_lora"
+    return f"{adapter_name}_qwen.tar.gz"
+
+
+def resolve_prepare_targets(*, limit: int, train_limit: int, eval_limit: int) -> dict[str, float | int]:
+    total_limit = int(limit)
+    eval_ratio = 0.1
+    if train_limit > 0 and eval_limit > 0:
+        total_limit = train_limit + eval_limit
+        eval_ratio = eval_limit / total_limit
+    elif total_limit > 0 and eval_limit > 0:
+        eval_ratio = eval_limit / total_limit
+    return {
+        "total_limit": total_limit,
+        "train_limit": train_limit,
+        "eval_limit": eval_limit,
+        "eval_ratio": eval_ratio,
+    }
+
+
 def verify_project_root(root: Path) -> None:
     required = [
         root / "scripts" / "mystic_loop.py",
@@ -202,7 +223,19 @@ def create_kaggle_package(root_dir: Path, output_tar: Path) -> Path:
     return output_tar
 
 
-def build_kaggle_commands_md(*, cycle_id: str, package_path: Path) -> str:
+def build_kaggle_commands_md(
+    *,
+    cycle_id: str,
+    package_path: Path,
+    base_model: str = "Qwen/Qwen2.5-0.5B-Instruct",
+    adapter_path: str = "mystic_data/adapters/raven_lora_v0",
+    output_tar_name: str = "raven_lora_v0_qwen.tar.gz",
+    learning_rate: float = 0.0002,
+    epochs: int = 1,
+    batch_size: int = 1,
+    max_length: int = 2048,
+) -> str:
+    adapter_name = Path(adapter_path).name
     return "\n".join(
         [
             f"# Kaggle Commands for {cycle_id}",
@@ -215,27 +248,27 @@ def build_kaggle_commands_md(*, cycle_id: str, package_path: Path) -> str:
             "python -m pip install -r requirements-training.txt",
             "python -m pip install bitsandbytes peft accelerate datasets safetensors",
             "python scripts/train_raven_lora.py \\",
-            "  --base-model Qwen/Qwen2.5-0.5B-Instruct \\",
+            f"  --base-model {base_model} \\",
             "  --train-file mystic_data/train_ready/raven_train.jsonl \\",
             "  --eval-file mystic_data/eval_holdout/raven_eval.jsonl \\",
-            "  --output-dir mystic_data/adapters/raven_lora_v0 \\",
-            "  --epochs 1 \\",
-            "  --batch-size 1 \\",
-            "  --learning-rate 0.0002 \\",
-            "  --max-length 2048 \\",
+            f"  --output-dir {adapter_path} \\",
+            f"  --epochs {epochs} \\",
+            f"  --batch-size {batch_size} \\",
+            f"  --learning-rate {learning_rate} \\",
+            f"  --max-length {max_length} \\",
             "  --qlora",
             "python scripts/evaluate_raven_lora.py \\",
-            "  --base-model Qwen/Qwen2.5-0.5B-Instruct \\",
-            "  --adapter-path mystic_data/adapters/raven_lora_v0 \\",
+            f"  --base-model {base_model} \\",
+            f"  --adapter-path {adapter_path} \\",
             "  --eval-file mystic_data/eval_holdout/raven_eval.jsonl \\",
             "  --limit 10",
-            "tar -czf raven_lora_v0_qwen.tar.gz mystic_data/adapters/raven_lora_v0 mystic_data/logs",
+            f"tar -czf {output_tar_name} mystic_data/adapters/{adapter_name} mystic_data/logs",
             "```",
             "",
             "For full automation use:",
             "",
             "```bash",
-            f"python scripts/run_mystic_cycle.py full --cycle-id {cycle_id} --run-prepare-data --base-model Qwen/Qwen2.5-0.5B-Instruct --model-id raven_lora_v0_qwen_auto",
+            f"python scripts/run_mystic_cycle.py full --cycle-id {cycle_id} --run-prepare-data --base-model {base_model} --adapter-path {adapter_path} --model-id {adapter_name}_auto",
             "```",
             "",
         ]
@@ -427,6 +460,10 @@ def build_kaggle_training_script(
     base_model: str,
     adapter_dirname: str,
     output_tar_name: str,
+    learning_rate: float,
+    epochs: int,
+    batch_size: int,
+    max_length: int,
 ) -> str:
     return "\n".join(
         [
@@ -471,10 +508,10 @@ def build_kaggle_training_script(
             "    '--train-file', 'mystic_data/train_ready/raven_train.jsonl',",
             "    '--eval-file', 'mystic_data/eval_holdout/raven_eval.jsonl',",
             "    '--output-dir', f'mystic_data/adapters/{ADAPTER_DIRNAME}',",
-            "    '--epochs', '1',",
-            "    '--batch-size', '1',",
-            "    '--learning-rate', '0.0002',",
-            "    '--max-length', '2048',",
+            f"    '--epochs', '{epochs}',",
+            f"    '--batch-size', '{batch_size}',",
+            f"    '--learning-rate', '{learning_rate}',",
+            f"    '--max-length', '{max_length}',",
             "    '--qlora',",
             "])",
             "run([",
@@ -541,7 +578,15 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--base-dir", default=str(ROOT / "mystic_data"))
     prepare.add_argument("--package-out", default="")
     prepare.add_argument("--run-prepare-data", action="store_true", help="Run prepare_raven_training_data.py before packaging.")
-    prepare.add_argument("--limit", type=int, default=0, help="Optional row limit for prepare_raven_training_data.py.")
+    prepare.add_argument("--limit", type=int, default=0, help="Optional total row limit for prepare_raven_training_data.py.")
+    prepare.add_argument("--train-limit", type=int, default=0, help="Requested train row target for larger cycles.")
+    prepare.add_argument("--eval-limit", type=int, default=0, help="Requested eval row target for larger cycles.")
+    prepare.add_argument("--base-model", default="Qwen/Qwen2.5-0.5B-Instruct")
+    prepare.add_argument("--adapter-path", default="mystic_data/adapters/raven_lora_v0")
+    prepare.add_argument("--learning-rate", type=float, default=0.0002)
+    prepare.add_argument("--epochs", type=int, default=1)
+    prepare.add_argument("--batch-size", type=int, default=1)
+    prepare.add_argument("--max-length", type=int, default=2048)
 
     submit = subparsers.add_parser("submit", help="Upload the cycle package to Kaggle and push a GPU kernel.")
     submit.add_argument("--cycle-id", required=True)
@@ -552,7 +597,11 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--package-path", default="")
     submit.add_argument("--base-model", default="Qwen/Qwen2.5-0.5B-Instruct")
     submit.add_argument("--adapter-path", default="mystic_data/adapters/raven_lora_v0")
-    submit.add_argument("--output-tar-name", default="raven_lora_v0_qwen.tar.gz")
+    submit.add_argument("--output-tar-name", default="")
+    submit.add_argument("--learning-rate", type=float, default=0.0002)
+    submit.add_argument("--epochs", type=int, default=1)
+    submit.add_argument("--batch-size", type=int, default=1)
+    submit.add_argument("--max-length", type=int, default=2048)
 
     poll = subparsers.add_parser("poll", help="Poll Kaggle kernel status until completion or failure.")
     poll.add_argument("--cycle-id", required=True)
@@ -584,6 +633,8 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--base-dir", default=str(ROOT / "mystic_data"))
     full.add_argument("--run-prepare-data", action="store_true")
     full.add_argument("--limit", type=int, default=0)
+    full.add_argument("--train-limit", type=int, default=0)
+    full.add_argument("--eval-limit", type=int, default=0)
     full.add_argument("--package-out", default="")
     full.add_argument("--kaggle-username", default="")
     full.add_argument("--dataset-slug", default="")
@@ -591,7 +642,11 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--base-model", default="Qwen/Qwen2.5-0.5B-Instruct")
     full.add_argument("--adapter-path", default="mystic_data/adapters/raven_lora_v0")
     full.add_argument("--model-id", default="raven_lora_v0_qwen_auto")
-    full.add_argument("--output-tar-name", default="raven_lora_v0_qwen.tar.gz")
+    full.add_argument("--output-tar-name", default="")
+    full.add_argument("--learning-rate", type=float, default=0.0002)
+    full.add_argument("--epochs", type=int, default=1)
+    full.add_argument("--batch-size", type=int, default=1)
+    full.add_argument("--max-length", type=int, default=2048)
     full.add_argument("--run-limit", type=int, default=20)
     full.add_argument("--compare-limit", type=int, default=100)
     full.add_argument("--poll-seconds", type=int, default=60)
@@ -611,6 +666,7 @@ def run_prepare(args: argparse.Namespace) -> int:
     base_dir.mkdir(parents=True, exist_ok=True)
     cycle_root = cycle_dir(base_dir, args.cycle_id)
     cycle_root.mkdir(parents=True, exist_ok=True)
+    targets = resolve_prepare_targets(limit=args.limit, train_limit=args.train_limit, eval_limit=args.eval_limit)
 
     export_payload, export_stdout = run_command(
         [PYTHON_BIN, "scripts/export_raven_lora.py", "--base-dir", str(base_dir)],
@@ -629,16 +685,28 @@ def run_prepare(args: argparse.Namespace) -> int:
             str(base_dir / "train_ready" / "raven_train.jsonl"),
             "--eval-out",
             str(base_dir / "eval_holdout" / "raven_eval.jsonl"),
+            "--eval-ratio",
+            str(targets["eval_ratio"]),
         ]
-        if args.limit > 0:
-            command.extend(["--limit", str(args.limit)])
+        if int(targets["total_limit"]) > 0:
+            command.extend(["--limit", str(int(targets["total_limit"]))])
         prepare_payload, prepare_stdout = run_command(command, cwd=ROOT)
 
     export_file = verify_export_file(base_dir)
     training_files = verify_training_eval_files(base_dir)
     package_out = Path(args.package_out) if args.package_out else ROOT / f"mystic_gpu_train_package_{args.cycle_id}.tar.gz"
     package_path = create_kaggle_package(ROOT, package_out)
-    kaggle_commands = build_kaggle_commands_md(cycle_id=args.cycle_id, package_path=package_path)
+    kaggle_commands = build_kaggle_commands_md(
+        cycle_id=args.cycle_id,
+        package_path=package_path,
+        base_model=args.base_model,
+        adapter_path=args.adapter_path,
+        output_tar_name=default_output_tar_name(args.adapter_path),
+        learning_rate=args.learning_rate,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        max_length=args.max_length,
+    )
     write_text(kaggle_commands_path(base_dir, args.cycle_id), kaggle_commands)
 
     payload = {
@@ -647,6 +715,9 @@ def run_prepare(args: argparse.Namespace) -> int:
         "cycle_id": args.cycle_id,
         "project_root": str(ROOT),
         "base_dir": str(base_dir),
+        "base_model": args.base_model,
+        "adapter_path": args.adapter_path,
+        "requested_split": targets,
         "export_file": str(export_file),
         "training_files": training_files,
         "package_path": str(package_path),
@@ -685,6 +756,7 @@ def run_submit(args: argparse.Namespace) -> int:
     kernel_ref = f"{username}/{kernel_slug}"
     adapter_dirname = Path(args.adapter_path).name
     kaggle_cmd = kaggle_command_prefix()
+    output_tar_name = args.output_tar_name or default_output_tar_name(args.adapter_path)
 
     dataset_dir = kaggle_dataset_dir(base_dir, args.cycle_id)
     kernel_dir = kaggle_kernel_dir(base_dir, args.cycle_id)
@@ -709,7 +781,11 @@ def run_submit(args: argparse.Namespace) -> int:
             package_filename=package_path.name,
             base_model=args.base_model,
             adapter_dirname=adapter_dirname,
-            output_tar_name=args.output_tar_name,
+            output_tar_name=output_tar_name,
+            learning_rate=args.learning_rate,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            max_length=args.max_length,
         ),
     )
     write_kaggle_kernel_metadata(
@@ -744,7 +820,7 @@ def run_submit(args: argparse.Namespace) -> int:
         "package_path": str(package_path),
         "dataset_dir": str(dataset_dir),
         "kernel_dir": str(kernel_dir),
-        "output_tar_name": args.output_tar_name,
+        "output_tar_name": output_tar_name,
         "dataset_action": dataset_action,
         "dataset_stdout": dataset_result.stdout.strip(),
         "kernel_stdout": kernel_result.stdout.strip(),
@@ -814,8 +890,9 @@ def run_download(args: argparse.Namespace) -> int:
     shutil.rmtree(output_dir, ignore_errors=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    expected_tar_name = args.output_tar_name or str(submit_summary.get("output_tar_name", "")).strip() or default_output_tar_name("mystic_data/adapters/raven_lora_v0")
     result = run_raw_command([*kaggle_cmd, "kernels", "output", kernel_ref, "-p", str(output_dir)], cwd=ROOT)
-    adapter_tar = locate_downloaded_adapter_tar(output_dir, args.output_tar_name)
+    adapter_tar = locate_downloaded_adapter_tar(output_dir, expected_tar_name)
     payload = {
         "timestamp": now_iso(),
         "command": "download",
@@ -823,6 +900,7 @@ def run_download(args: argparse.Namespace) -> int:
         "kernel_ref": kernel_ref,
         "output_dir": str(output_dir),
         "adapter_tar": str(adapter_tar),
+        "output_tar_name": expected_tar_name,
         "stdout": result.stdout.strip(),
     }
     write_json(kaggle_download_summary_path(base_dir, args.cycle_id), payload)
@@ -945,6 +1023,14 @@ def run_full(args: argparse.Namespace) -> int:
         package_out=args.package_out,
         run_prepare_data=args.run_prepare_data,
         limit=args.limit,
+        train_limit=args.train_limit,
+        eval_limit=args.eval_limit,
+        base_model=args.base_model,
+        adapter_path=args.adapter_path,
+        learning_rate=args.learning_rate,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        max_length=args.max_length,
     )
     run_prepare(prepare_args)
 
@@ -958,6 +1044,10 @@ def run_full(args: argparse.Namespace) -> int:
         base_model=args.base_model,
         adapter_path=args.adapter_path,
         output_tar_name=args.output_tar_name,
+        learning_rate=args.learning_rate,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        max_length=args.max_length,
     )
     run_submit(submit_args)
 
@@ -974,7 +1064,7 @@ def run_full(args: argparse.Namespace) -> int:
         cycle_id=args.cycle_id,
         base_dir=args.base_dir,
         kernel_ref="",
-        output_tar_name=args.output_tar_name,
+        output_tar_name=args.output_tar_name or default_output_tar_name(args.adapter_path),
     )
     run_download(download_args)
     download_summary = read_json(kaggle_download_summary_path(Path(args.base_dir), args.cycle_id))

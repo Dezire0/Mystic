@@ -240,7 +240,11 @@ Prepare a cycle and build the GPU upload package:
 .venv-training/bin/python scripts/run_mystic_cycle.py prepare \
   --cycle-id cycle_1 \
   --run-prepare-data \
-  --limit 500
+  --train-limit 1000 \
+  --eval-limit 100 \
+  --base-model Qwen/Qwen2.5-0.5B-Instruct \
+  --adapter-path mystic_data/adapters/raven_lora_v1 \
+  --learning-rate 0.00015
 ```
 
 This writes a tarball like `mystic_gpu_train_package_cycle_1.tar.gz` at the repo root and stores cycle artifacts under `mystic_data/cycles/cycle_1/`.
@@ -263,10 +267,10 @@ python scripts/train_raven_lora.py \
   --base-model Qwen/Qwen2.5-0.5B-Instruct \
   --train-file mystic_data/train_ready/raven_train.jsonl \
   --eval-file mystic_data/eval_holdout/raven_eval.jsonl \
-  --output-dir mystic_data/adapters/raven_lora_v0 \
+  --output-dir mystic_data/adapters/raven_lora_v1 \
   --epochs 1 \
   --batch-size 1 \
-  --learning-rate 0.0002 \
+  --learning-rate 0.00015 \
   --max-length 2048 \
   --qlora
 ```
@@ -279,7 +283,7 @@ Finish a cycle after downloading the adapter tarball:
   --base-model Qwen/Qwen2.5-0.5B-Instruct \
   --adapter-tar ~/Downloads/raven_lora_v1_qwen.tar.gz \
   --adapter-path mystic_data/adapters/raven_lora_v1 \
-  --model-id raven_lora_v1 \
+  --model-id raven_lora_v1_qwen_0_5b \
   --run-limit 20 \
   --compare-limit 10
 ```
@@ -341,7 +345,11 @@ Prepare the package and train/eval data:
 python scripts/run_mystic_cycle.py prepare \
   --cycle-id cycle_1 \
   --run-prepare-data \
-  --limit 500
+  --train-limit 1000 \
+  --eval-limit 100 \
+  --base-model Qwen/Qwen2.5-0.5B-Instruct \
+  --adapter-path mystic_data/adapters/raven_lora_v1 \
+  --learning-rate 0.00015
 ```
 
 Submit the prepared package to Kaggle:
@@ -350,7 +358,8 @@ Submit the prepared package to Kaggle:
 python scripts/run_mystic_cycle.py submit \
   --cycle-id cycle_1 \
   --base-model Qwen/Qwen2.5-0.5B-Instruct \
-  --adapter-path mystic_data/adapters/raven_lora_v0
+  --adapter-path mystic_data/adapters/raven_lora_v1 \
+  --learning-rate 0.00015
 ```
 
 Poll the Kaggle kernel until it finishes:
@@ -374,9 +383,12 @@ Run the full Kaggle-backed cycle automatically:
 python scripts/run_mystic_cycle.py full \
   --cycle-id cycle_1 \
   --run-prepare-data \
+  --train-limit 1000 \
+  --eval-limit 100 \
   --base-model Qwen/Qwen2.5-0.5B-Instruct \
-  --adapter-path mystic_data/adapters/raven_lora_v0 \
-  --model-id raven_lora_v0_qwen_auto \
+  --adapter-path mystic_data/adapters/raven_lora_v1 \
+  --model-id raven_lora_v1_qwen_0_5b \
+  --learning-rate 0.00015 \
   --run-limit 20 \
   --compare-limit 10
 ```
