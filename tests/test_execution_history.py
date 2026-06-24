@@ -159,14 +159,48 @@ class ExecutionHistoryTests(unittest.TestCase):
             generated_at="2026-06-24T10:00:00+00:00",
         )
         self.assertIn("Mystic Execution History", html_text)
+        self.assertIn("Continuous Training", html_text)
         self.assertIn("기록이 없습니다", html_text)
         self.assertIn("http-equiv=\"refresh\"", html_text)
+
+    def test_collect_execution_records_prefers_append_only_specialist_history(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir) / "mystic_data"
+            logs = base / "logs"
+            logs.mkdir(parents=True, exist_ok=True)
+
+            append_jsonl(
+                logs / "specialist_training_history.jsonl",
+                {
+                    "event_id": "spec-1",
+                    "timestamp": "2026-06-24T11:00:00+00:00",
+                    "agent": "physics",
+                    "division": "applied",
+                    "model_name": "sshleifer/tiny-gpt2",
+                    "base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+                    "duration_seconds": 9.5,
+                    "returncode": 0,
+                    "success": True,
+                    "status": "TRAIN_OK",
+                },
+            )
+
+            records = collect_execution_records(base)
+            self.assertEqual(len(records), 1)
+            record = records[0]
+            self.assertEqual(record.source, "specialist_training_history")
+            self.assertEqual(record.part, "physics")
+            self.assertEqual(record.model_name, "sshleifer/tiny-gpt2")
+            self.assertTrue(record.success)
+            self.assertAlmostEqual(record.duration_seconds or 0.0, 9.5, places=2)
 
     def test_write_execution_history_outputs_writes_html_and_json(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir) / "mystic_data"
             logs = base / "logs"
             logs.mkdir(parents=True, exist_ok=True)
+            state_dir = base / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
             append_jsonl(
                 logs / "training_log.jsonl",
                 {
@@ -178,6 +212,20 @@ class ExecutionHistoryTests(unittest.TestCase):
                     "metrics": {"train_runtime": 1.25},
                 },
             )
+            (state_dir / "continuous_training_state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "running",
+                        "current_cycle": 3,
+                        "completed_cycles": 2,
+                        "active_slug": "proofnet",
+                        "next_slug": "openthoughts",
+                        "last_heartbeat": "2026-06-24T10:00:05+00:00",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
 
             payload = write_execution_history_outputs(base)
 
@@ -186,8 +234,10 @@ class ExecutionHistoryTests(unittest.TestCase):
             self.assertTrue(html_path.exists())
             self.assertTrue(json_path.exists())
             self.assertIn("sshleifer/tiny-gpt2", html_path.read_text(encoding="utf-8"))
+            self.assertIn("Continuous Training", html_path.read_text(encoding="utf-8"))
             json_payload = json.loads(json_path.read_text(encoding="utf-8"))
             self.assertEqual(json_payload["record_count"], 1)
+            self.assertEqual(json_payload["continuous_status"]["status"], "running")
 
     def test_format_duration(self):
         self.assertEqual(format_duration(None), "-")

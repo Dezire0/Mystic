@@ -46,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sequence-length", type=int, default=512)
     parser.add_argument("--step-timeout-seconds", type=int, default=1800)
     parser.add_argument("--continue-on-error", action="store_true")
+    parser.add_argument(
+        "--run-label",
+        default="",
+        help="Optional label propagated into append-only specialist training history.",
+    )
     return parser
 
 
@@ -96,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
 
     summary: dict[str, Any] = {
         "run_id": args.run_id,
+        "run_label": args.run_label or args.run_id,
         "started_at": now_iso(),
         "options": {
             "iterations": args.iterations,
@@ -111,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             "sequence_length": args.sequence_length,
             "step_timeout_seconds": args.step_timeout_seconds,
             "continue_on_error": args.continue_on_error,
+            "run_label": args.run_label or args.run_id,
         },
         "iterations": [],
     }
@@ -157,6 +164,8 @@ def main(argv: list[str] | None = None) -> int:
                 str(args.learning_rate),
                 "--sequence-length",
                 str(args.sequence_length),
+                "--run-label",
+                args.run_label or args.run_id,
             ],
         ]
         for slug in args.hf_slugs:

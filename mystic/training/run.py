@@ -41,6 +41,8 @@ def main(argv: list[str] | None = None) -> int:
         "local_training": local_training,
     }
     print(json.dumps(payload, indent=2))
+    if wants_execute:
+        return 0
     return 0 if plan["ready"] or dry_run else 1
 
 

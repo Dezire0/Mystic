@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from mystic.jsonl_loop import ensure_data_dirs, read_jsonl
+from mystic.training.continuous import continuous_state_path, read_json, specialist_history_log_path
 
 
 @dataclass(slots=True)
@@ -113,6 +114,19 @@ def _build_record(
         status=status,
         details=details or {},
     )
+
+
+def extract_last_json_object(text: str) -> dict[str, Any]:
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    for index in range(len(lines)):
+        candidate = "\n".join(lines[index:])
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
 
 
 def collect_training_records(base_dir: str | Path) -> list[ExecutionRecord]:
@@ -305,6 +319,35 @@ def collect_cycle_records(base_dir: str | Path) -> list[ExecutionRecord]:
 
 def collect_batch_training_records(base_dir: str | Path) -> list[ExecutionRecord]:
     base = Path(base_dir)
+    specialist_history_path = specialist_history_log_path(base)
+    if specialist_history_path.exists():
+        records: list[ExecutionRecord] = []
+        for index, row in enumerate(read_jsonl(specialist_history_path)):
+            timestamp = str(row.get("timestamp", ""))
+            if not timestamp:
+                continue
+            duration_value = row.get("duration_seconds")
+            returncode_value = row.get("returncode", 1)
+            returncode = 1 if returncode_value is None else int(returncode_value)
+            success = bool(row.get("success", returncode == 0))
+            agent = str(row.get("agent", "") or f"specialist-{index}")
+            model_name = str(row.get("model_name", "") or row.get("base_model", "") or "-")
+            status = str(row.get("status", "TRAIN_OK" if success else "TRAIN_ERROR"))
+            records.append(
+                _build_record(
+                    record_id=str(row.get("event_id", f"specialist_training_history:{agent}:{index}")),
+                    timestamp=timestamp,
+                    part=infer_part(agent, model_name, str(row.get("division", ""))),
+                    model_name=model_name,
+                    success=success,
+                    duration_seconds=float(duration_value) if duration_value is not None else None,
+                    source="specialist_training_history",
+                    status=status,
+                    details=row,
+                )
+            )
+        return records
+
     summary_path = base / "reports" / "specialist_training_batch_run.json"
     if not summary_path.exists():
         return []
@@ -313,25 +356,19 @@ def collect_batch_training_records(base_dir: str | Path) -> list[ExecutionRecord
     records: list[ExecutionRecord] = []
     for index, row in enumerate(payload):
         stdout = str(row.get("stdout", "") or "")
-        parsed: dict[str, Any] = {}
-        if stdout.strip():
-            lines = [line.rstrip() for line in stdout.splitlines() if line.strip()]
-            for start in range(len(lines)):
-                candidate = "\n".join(lines[start:])
-                try:
-                    maybe = json.loads(candidate)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(maybe, dict):
-                    parsed = maybe
-                    break
-
-        local_training = parsed.get("local_training", {}) if isinstance(parsed, dict) else {}
+        parsed = extract_last_json_object(stdout)
+        nested = extract_last_json_object(str(parsed.get("stdout", "") or "")) if isinstance(parsed, dict) else {}
+        local_training = {}
+        if isinstance(parsed.get("local_training"), dict):
+            local_training = parsed["local_training"]
+        elif isinstance(nested.get("local_training"), dict):
+            local_training = nested["local_training"]
         plan = local_training.get("plan", {}) if isinstance(local_training, dict) else {}
         result = local_training.get("result", {}) if isinstance(local_training, dict) else {}
         metrics = result.get("metrics", {}) if isinstance(result, dict) else {}
         top_level_plan = parsed.get("plan", {}) if isinstance(parsed, dict) else {}
-        job_manifest = parsed.get("job_manifest", "")
+        nested_top_plan = nested.get("plan", {}) if isinstance(nested, dict) else {}
+        job_manifest = str(parsed.get("job_manifest", "") or "")
         manifest_path = Path(job_manifest) if job_manifest else None
         timestamp = ""
         if manifest_path and manifest_path.exists():
@@ -347,6 +384,7 @@ def collect_batch_training_records(base_dir: str | Path) -> list[ExecutionRecord
             plan.get("model_name", "")
             or top_level_plan.get("smoke_model", "")
             or top_level_plan.get("base_model", "")
+            or nested_top_plan.get("base_model", "")
             or plan.get("base_model", "")
             or "-"
         )
@@ -382,6 +420,13 @@ def collect_execution_records(base_dir: str | Path) -> list[ExecutionRecord]:
     return sorted(records, key=lambda item: parse_timestamp(item.timestamp), reverse=True)
 
 
+def load_continuous_status(base_dir: str | Path) -> dict[str, Any]:
+    path = continuous_state_path(base_dir)
+    if not path.exists():
+        return {}
+    return read_json(path)
+
+
 def write_execution_history_outputs(base_dir: str | Path) -> dict[str, str | int]:
     base = Path(base_dir)
     reports_dir = base / "reports"
@@ -389,15 +434,22 @@ def write_execution_history_outputs(base_dir: str | Path) -> dict[str, str | int
     output_html = reports_dir / "execution_history.html"
     output_json = reports_dir / "execution_history.json"
     records = collect_execution_records(base)
+    continuous_status = load_continuous_status(base)
     generated_at = datetime.now(UTC).isoformat()
     output_html.write_text(
-        render_execution_history_html(records, generated_at=generated_at) + "\n",
+        render_execution_history_html(
+            records,
+            generated_at=generated_at,
+            continuous_status=continuous_status,
+        )
+        + "\n",
         encoding="utf-8",
     )
     output_json.write_text(
         json.dumps(
             {
                 "generated_at": generated_at,
+                "continuous_status": continuous_status,
                 "record_count": len(records),
                 "records": [
                     {
@@ -427,7 +479,13 @@ def write_execution_history_outputs(base_dir: str | Path) -> dict[str, str | int
     }
 
 
-def render_execution_history_html(records: list[ExecutionRecord], *, generated_at: str) -> str:
+def render_execution_history_html(
+    records: list[ExecutionRecord],
+    *,
+    generated_at: str,
+    continuous_status: dict[str, Any] | None = None,
+) -> str:
+    status_payload = continuous_status or {}
     rows: list[str] = []
     for index, record in enumerate(records, start=1):
         timestamp = html.escape(record.timestamp)
@@ -447,6 +505,13 @@ def render_execution_history_html(records: list[ExecutionRecord], *, generated_a
         )
 
     body_rows = "\n".join(rows) if rows else "<tr><td colspan=\"6\">기록이 없습니다.</td></tr>"
+    status_value = html.escape(str(status_payload.get("status", "inactive")))
+    current_cycle = html.escape(str(status_payload.get("current_cycle", "-")))
+    active_slug = html.escape(str(status_payload.get("active_slug", "-")))
+    next_slug = html.escape(str(status_payload.get("next_slug", "-")))
+    completed_cycles = html.escape(str(status_payload.get("completed_cycles", "-")))
+    last_heartbeat = html.escape(str(status_payload.get("last_heartbeat", "-")))
+    last_error = html.escape(str(status_payload.get("last_error", "")))
     return f"""<!doctype html>
 <html lang="ko">
 <head>
@@ -487,6 +552,27 @@ def render_execution_history_html(records: list[ExecutionRecord], *, generated_a
     .meta {{
       color: var(--muted);
       margin-bottom: 20px;
+    }}
+    .status-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }}
+    .status-card {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px 18px;
+      box-shadow: 0 10px 30px rgba(42, 29, 18, 0.08);
+    }}
+    .status-card h2 {{
+      margin: 0 0 8px;
+      font-size: 18px;
+    }}
+    .status-card p {{
+      margin: 6px 0;
+      font-size: 14px;
     }}
     .panel {{
       background: var(--panel);
@@ -539,6 +625,18 @@ def render_execution_history_html(records: list[ExecutionRecord], *, generated_a
   <div class="wrap">
     <h1>Mystic Execution History</h1>
     <div class="meta">생성 시각: {html.escape(generated_at)} · 총 {len(records)}개 실행 기록</div>
+    <div class="status-grid">
+      <div class="status-card">
+        <h2>Continuous Training</h2>
+        <p>status: {status_value}</p>
+        <p>current_cycle: {current_cycle}</p>
+        <p>completed_cycles: {completed_cycles}</p>
+        <p>active_slug: {active_slug}</p>
+        <p>next_slug: {next_slug}</p>
+        <p>last_heartbeat: {last_heartbeat}</p>
+        <p>last_error: {last_error or "-"}</p>
+      </div>
+    </div>
     <div class="panel">
       <table>
         <thead>
