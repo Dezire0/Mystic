@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import html
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from mystic.jsonl_loop import ensure_data_dirs, read_jsonl
@@ -297,8 +298,77 @@ def collect_cycle_records(base_dir: str | Path) -> list[ExecutionRecord]:
     return records
 
 
+def collect_batch_training_records(base_dir: str | Path) -> list[ExecutionRecord]:
+    base = Path(base_dir)
+    summary_path = base / "reports" / "specialist_training_batch_run.json"
+    if not summary_path.exists():
+        return []
+
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    records: list[ExecutionRecord] = []
+    for index, row in enumerate(payload):
+        stdout = str(row.get("stdout", "") or "")
+        parsed: dict[str, Any] = {}
+        if stdout.strip():
+            lines = [line.rstrip() for line in stdout.splitlines() if line.strip()]
+            for start in range(len(lines)):
+                candidate = "\n".join(lines[start:])
+                try:
+                    maybe = json.loads(candidate)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(maybe, dict):
+                    parsed = maybe
+                    break
+
+        local_training = parsed.get("local_training", {}) if isinstance(parsed, dict) else {}
+        plan = local_training.get("plan", {}) if isinstance(local_training, dict) else {}
+        result = local_training.get("result", {}) if isinstance(local_training, dict) else {}
+        metrics = result.get("metrics", {}) if isinstance(result, dict) else {}
+        top_level_plan = parsed.get("plan", {}) if isinstance(parsed, dict) else {}
+        job_manifest = parsed.get("job_manifest", "")
+        manifest_path = Path(job_manifest) if job_manifest else None
+        timestamp = ""
+        if manifest_path and manifest_path.exists():
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            timestamp = str(manifest_payload.get("created_at", ""))
+            if timestamp and len(timestamp) == 16 and "T" in timestamp and timestamp.endswith("Z"):
+                timestamp = timestamp[:4] + "-" + timestamp[4:6] + "-" + timestamp[6:8] + "T" + timestamp[9:11] + ":" + timestamp[11:13] + ":" + timestamp[13:15] + "+00:00"
+        if not timestamp:
+            timestamp = datetime.now(UTC).isoformat()
+
+        agent = str(row.get("agent", "") or plan.get("agent", "") or f"batch-{index}")
+        model_name = str(
+            plan.get("model_name", "")
+            or top_level_plan.get("smoke_model", "")
+            or top_level_plan.get("base_model", "")
+            or plan.get("base_model", "")
+            or "-"
+        )
+        duration_value = metrics.get("train_runtime")
+        if duration_value is None and stdout:
+            match = re.search(r"'train_runtime': '([0-9.]+)'", stdout)
+            if match:
+                duration_value = float(match.group(1))
+        records.append(
+            _build_record(
+                record_id=f"batch_training:{agent}:{index}",
+                timestamp=timestamp,
+                part=infer_part(agent, model_name),
+                model_name=model_name,
+                success=int(row.get("returncode", 1)) == 0,
+                duration_seconds=float(duration_value) if duration_value is not None else None,
+                source="specialist_training_batch",
+                status="TRAIN_OK" if int(row.get("returncode", 1)) == 0 else "TRAIN_ERROR",
+                details=row,
+            )
+        )
+    return records
+
+
 def collect_execution_records(base_dir: str | Path) -> list[ExecutionRecord]:
     records = []
+    records.extend(collect_batch_training_records(base_dir))
     records.extend(collect_training_records(base_dir))
     records.extend(collect_eval_records(base_dir))
     records.extend(collect_compare_records(base_dir))

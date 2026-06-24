@@ -101,6 +101,53 @@ class ExecutionHistoryTests(unittest.TestCase):
             self.assertEqual(loop.status, "LOOP_OK")
             self.assertAlmostEqual(loop.duration_seconds or 0.0, 5.0, places=2)
 
+    def test_collect_execution_records_includes_specialist_batch_summary(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir) / "mystic_data"
+            reports = base / "reports"
+            logs = base / "logs" / "training_jobs"
+            reports.mkdir(parents=True, exist_ok=True)
+            logs.mkdir(parents=True, exist_ok=True)
+
+            manifest_path = logs / "core-manual-20260624T141701Z.json"
+            manifest_path.write_text(
+                json.dumps({"created_at": "20260624T141701Z"}),
+                encoding="utf-8",
+            )
+            batch_payload = [
+                {
+                    "agent": "core",
+                    "returncode": 0,
+                    "stdout": json.dumps(
+                        {
+                            "job_manifest": str(manifest_path),
+                            "local_training": {
+                                "plan": {
+                                    "agent": "core",
+                                    "model_name": "sshleifer/tiny-gpt2",
+                                },
+                                "result": {
+                                    "metrics": {
+                                        "train_runtime": 1.52,
+                                    }
+                                },
+                            },
+                        }
+                    ),
+                }
+            ]
+            (reports / "specialist_training_batch_run.json").write_text(
+                json.dumps(batch_payload, indent=2),
+                encoding="utf-8",
+            )
+
+            records = collect_execution_records(base)
+            batch_record = next(record for record in records if record.source == "specialist_training_batch")
+            self.assertEqual(batch_record.part, "core")
+            self.assertEqual(batch_record.model_name, "sshleifer/tiny-gpt2")
+            self.assertTrue(batch_record.success)
+            self.assertAlmostEqual(batch_record.duration_seconds or 0.0, 1.52, places=2)
+
     def test_render_execution_history_html_contains_table_rows(self):
         html_text = render_execution_history_html(
             records=[],
