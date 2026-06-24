@@ -562,7 +562,7 @@ def build_kaggle_training_script(
             "try:",
             "    package_path = None",
             "    last_error = None",
-            "    for attempt in range(12):",
+            "    for attempt in range(30):",
             "        try:",
             "            package_path = find_package()",
             "            print(f'Found package on attempt {attempt + 1}: {package_path}', flush=True)",
@@ -570,7 +570,7 @@ def build_kaggle_training_script(
             "            break",
             "        except FileNotFoundError as exc:",
             "            last_error = exc",
-            "            print(f'Waiting for Kaggle dataset mount ({attempt + 1}/12)...', flush=True)",
+            "            print(f'Waiting for Kaggle dataset mount ({attempt + 1}/30)...', flush=True)",
             "            time.sleep(10)",
             "    if package_path is None:",
             "        raise last_error or FileNotFoundError('Package tarball not found.')",
@@ -683,6 +683,11 @@ def wait_for_kaggle_dataset_ready(
         if elapsed_minutes > timeout_minutes:
             raise TimeoutError(f"Kaggle dataset polling timed out after {timeout_minutes} minutes.")
         time.sleep(poll_seconds)
+
+
+def wait_for_dataset_visibility_stabilization(seconds: int = 60) -> None:
+    if seconds > 0:
+        time.sleep(seconds)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -940,6 +945,7 @@ def run_submit(args: argparse.Namespace) -> int:
         dataset_ref=dataset_ref,
         cwd=ROOT,
     )
+    wait_for_dataset_visibility_stabilization(60)
     kernel_result = run_raw_command([*kaggle_cmd, "kernels", "push", "-p", str(kernel_dir)], cwd=ROOT)
 
     payload = {
