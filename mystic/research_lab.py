@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
@@ -37,7 +37,85 @@ Rules:
 """
 
 
-SOLVER_PROMPT_TEMPLATE = """You are {specialist_name}, a Mystic specialist.
+CRITIC_PROMPT_TEMPLATE = """You are {critic_name}.
+
+You will receive:
+1. The original user problem.
+2. The current primary specialist.
+3. The support specialists.
+4. The current plan.
+
+Your focus:
+{focus}
+
+Return JSON only:
+{{
+  "summary": "...",
+  "findings": ["..."],
+  "revision": "..."
+}}
+
+Rules:
+- Be concrete and concise.
+- Write in Korean.
+- Output JSON only.
+"""
+
+
+METHOD_PROPOSAL_PROMPT = """You are a Mystic specialist.
+
+Given the user problem and the current Core plan, propose what your specialty can contribute.
+
+Return JSON only:
+{
+  "method_summary": "...",
+  "task_candidate": "...",
+  "dependencies": ["..."],
+  "deliverable": "..."
+}
+
+Rules:
+- Think from your own specialty only.
+- Propose one concrete method and one concrete task candidate.
+- Write in Korean.
+- Output JSON only.
+"""
+
+
+TASK_ASSIGNMENT_PROMPT = """You are Mystic-Core-Task-Orchestrator.
+
+You will receive:
+1. The original problem.
+2. The primary specialist and support specialists.
+3. Core critic outputs.
+4. Specialist method proposals.
+
+Your job:
+1. Combine the strongest methods.
+2. Redistribute concrete tasks across the selected specialists.
+3. Keep the plan realistic and non-redundant.
+
+Return JSON only:
+{
+  "combined_strategy": "...",
+  "handoff_notes": ["..."],
+  "task_assignments": [
+    {
+      "agent": "prime",
+      "task": "...",
+      "deliverable": "..."
+    }
+  ]
+}
+
+Rules:
+- Assign a task to every selected specialist.
+- Write in Korean.
+- Output JSON only.
+"""
+
+
+TASK_EXECUTION_PROMPT_TEMPLATE = """You are {specialist_name}, a Mystic specialist.
 
 Current specialist context:
 - specialist: {specialist_name}
@@ -48,16 +126,90 @@ Current specialist context:
 - dashboard status: {status_text}
 - status detail: {status_detail}
 
-You are running inside Mystic's local research lab.
+You are executing your assigned role inside Mystic's local research lab.
+
+Assigned task:
+{assigned_task}
+
+Expected deliverable:
+{deliverable}
+
+Method proposal:
+{method_summary}
+
+Dependencies:
+{dependencies}
 
 Task:
-1. Understand the user's question.
-2. State a strategy before solving.
-3. Execute the approach carefully.
-4. Give a conclusion.
-5. Do not bluff. If something is uncertain, say so.
+1. State what your assigned role is solving.
+2. Explain your local strategy.
+3. Execute only your assigned task carefully.
+4. Give the local conclusion.
+5. Mention what must be handed off to the next step.
 6. Write every section in Korean.
-7. Keep the answer readable and stepwise, like a math tutor explaining the work.
+
+Output plain text with exactly these section headers:
+UNDERSTANDING:
+STRATEGY:
+EXECUTION:
+CONCLUSION:
+UNCERTAINTIES:
+"""
+
+
+OBJECTION_PROMPT = """You are a Mystic specialist reviewer in a debate phase.
+
+You will receive:
+1. The original problem.
+2. The current combined strategy.
+3. Another selected specialist's assigned task and execution.
+
+Your job:
+1. Raise one concrete objection or risk from your specialty.
+2. Identify what could break or what case may be missing.
+3. Request one concrete fix.
+
+Return JSON only:
+{
+  "objection": "...",
+  "risk": "...",
+  "requested_fix": "..."
+}
+
+Rules:
+- This debate is only among the selected specialists.
+- Write in Korean.
+- Output JSON only.
+"""
+
+
+REVISION_PROMPT_TEMPLATE = """You are {specialist_name}, a Mystic specialist.
+
+You previously executed an assigned task. Now you must revise it after objections from other selected specialists.
+
+Assigned task:
+{assigned_task}
+
+Previous draft:
+UNDERSTANDING:
+{understanding}
+STRATEGY:
+{strategy}
+EXECUTION:
+{execution}
+CONCLUSION:
+{conclusion}
+UNCERTAINTIES:
+{uncertainties}
+
+Objections received:
+{objections_text}
+
+Task:
+1. Keep valid parts.
+2. Patch the draft where objections are legitimate.
+3. Explicitly note if an objection does not apply.
+4. Write every section in Korean.
 
 Output plain text with exactly these section headers:
 UNDERSTANDING:
@@ -72,15 +224,19 @@ SYNTHESIS_PROMPT = """You are Mystic-Core-Synthesizer.
 
 You will receive:
 1. The user's original problem.
-2. The Core routing strategy.
-3. Several specialist drafts.
+2. The selected specialists.
+3. Core critic outputs.
+4. Method proposals.
+5. Task assignments.
+6. Revised specialist task results.
+7. Pairwise objections among the selected specialists.
 
 Your job:
-1. Compare the drafts.
-2. Keep the strongest useful ideas.
-3. Remove contradictions and unjustified leaps.
+1. Combine the strongest arguments.
+2. Remove contradictions and unsupported claims.
+3. Keep useful objections in mind.
 4. Produce one integrated solution draft in Korean.
-5. If the drafts disagree, say so explicitly in UNCERTAINTIES.
+5. If uncertainty remains, state it explicitly.
 
 Output plain text with exactly these section headers:
 UNDERSTANDING:
@@ -91,48 +247,35 @@ UNCERTAINTIES:
 """
 
 
-PLAN_CRITIC_PROMPT = """You are Mystic-Core-Plan-Critic.
-
-You will receive a problem and a proposed Core routing plan.
-Attack the plan before execution.
-
-Return JSON only:
-{
-  "risk_summary": "...",
-  "missing_specialists": ["..."],
-  "weak_assumptions": ["..."],
-  "revised_strategy": "..."
-}
-
-Rules:
-- Be concise and concrete.
-- Write in Korean.
-- Output JSON only.
-"""
+ProgressCallback = Callable[[str, dict[str, Any]], None]
 
 
-CROSS_REVIEW_PROMPT = """You are a Mystic specialist reviewer.
+@dataclass(slots=True)
+class CriticReview:
+    critic_key: str
+    critic_name: str
+    summary: str
+    findings: list[str]
+    revision: str
 
-You will receive:
-1. The original problem.
-2. The Core strategy.
-3. Another specialist's draft.
 
-Your job:
-1. Point out hidden assumptions, logical gaps, or missing cases.
-2. Mention any useful improvement.
-3. Keep it concise.
-4. Write in Korean.
+@dataclass(slots=True)
+class MethodProposal:
+    agent: str
+    specialist_name: str
+    method_summary: str
+    task_candidate: str
+    dependencies: list[str]
+    deliverable: str
+    raw_text: str
 
-Output plain text with exactly these section headers:
-UNDERSTANDING:
-STRATEGY:
-EXECUTION:
-CONCLUSION:
-UNCERTAINTIES:
-"""
 
-ProgressCallback = Callable[[str, dict[str, str]], None]
+@dataclass(slots=True)
+class TaskAssignment:
+    agent: str
+    specialist_name: str
+    task: str
+    deliverable: str
 
 
 @dataclass(slots=True)
@@ -142,21 +285,9 @@ class ResearchPlan:
     reason: str
     strategy: str
     critic_summary: str = ""
-
-
-@dataclass(slots=True)
-class SpecialistDraft:
-    agent: str
-    specialist_name: str
-    sections: ResearchSections
-
-
-@dataclass(slots=True)
-class CrossReviewNote:
-    reviewer_agent: str
-    reviewer_name: str
-    target_agent: str
-    sections: ResearchSections
+    critic_reviews: list[CriticReview] = field(default_factory=list)
+    handoff_notes: list[str] = field(default_factory=list)
+    task_assignments: list[TaskAssignment] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -166,6 +297,26 @@ class ResearchSections:
     execution: str
     conclusion: str
     uncertainties: str
+    raw_text: str
+
+
+@dataclass(slots=True)
+class TaskExecution:
+    agent: str
+    specialist_name: str
+    assignment: TaskAssignment
+    sections: ResearchSections
+
+
+@dataclass(slots=True)
+class DebateNote:
+    reviewer_agent: str
+    reviewer_name: str
+    target_agent: str
+    target_name: str
+    objection: str
+    risk: str
+    requested_fix: str
     raw_text: str
 
 
@@ -216,19 +367,12 @@ def run_research_lab(
         client=generator_client,
         model=generator_model,
     )
-    plan = critique_plan(
+    plan = run_core_critics(
         question=question,
         plan=plan,
         client=generator_client,
         model=generator_model,
-    )
-    emit_progress(
-        progress_callback,
-        "plan_critic_complete",
-        {
-            "critic_summary": plan.critic_summary,
-            "strategy": plan.strategy,
-        },
+        progress_callback=progress_callback,
     )
     emit_progress(
         progress_callback,
@@ -238,47 +382,67 @@ def run_research_lab(
             "support_specialists": ", ".join(plan.support_specialists),
             "reason": plan.reason,
             "strategy": plan.strategy,
+            "lines": [
+                f"주 전문가: {plan.specialist}",
+                f"보조 전문가: {', '.join(plan.support_specialists) or '-'}",
+                f"선정 이유: {plan.reason}",
+                f"통합 전략: {plan.strategy}",
+            ],
         },
     )
+
     selected_agents = [plan.specialist, *plan.support_specialists]
-    drafts: list[SpecialistDraft] = []
-    for agent in selected_agents:
-        expert = get_expert_snapshot(snapshot, agent)
-        agent_backend, agent_model, agent_client = resolve_reasoning_backend(
-            agent=agent,
-            config_path=config_path,
-            defaults=defaults,
-            fallback_client=generator_client,
-            fallback_backend=generator_backend,
-            fallback_model=generator_model,
-        )
-        sections = solve_question(
-            question=question,
-            plan=plan,
-            expert=expert,
-            client=agent_client,
-            model=agent_model,
-        )
-        drafts.append(SpecialistDraft(agent=agent, specialist_name=expert.name, sections=sections))
-        emit_progress(
-            progress_callback,
-            "specialist_complete",
-            {
-                "agent": agent,
-                "specialist_name": expert.name,
-                "backend": agent_backend,
-                "model": agent_model,
-                "understanding": sections.understanding,
-                "strategy": sections.strategy,
-                "execution": sections.execution,
-                "conclusion": sections.conclusion,
-                "uncertainties": sections.uncertainties,
-            },
-        )
-    cross_reviews = build_cross_reviews(
+    proposals = build_method_proposals(
         question=question,
         plan=plan,
-        drafts=drafts,
+        selected_agents=selected_agents,
+        snapshot=snapshot,
+        defaults=defaults,
+        config_path=config_path,
+        fallback_client=generator_client,
+        fallback_backend=generator_backend,
+        fallback_model=generator_model,
+        progress_callback=progress_callback,
+    )
+    plan = assign_tasks(
+        question=question,
+        plan=plan,
+        proposals=proposals,
+        client=generator_client,
+        model=generator_model,
+        snapshot=snapshot,
+        progress_callback=progress_callback,
+    )
+    executions = execute_assigned_tasks(
+        question=question,
+        plan=plan,
+        proposals=proposals,
+        snapshot=snapshot,
+        defaults=defaults,
+        config_path=config_path,
+        fallback_client=generator_client,
+        fallback_backend=generator_backend,
+        fallback_model=generator_model,
+        progress_callback=progress_callback,
+    )
+    objections = build_pairwise_objections(
+        question=question,
+        plan=plan,
+        executions=executions,
+        snapshot=snapshot,
+        defaults=defaults,
+        config_path=config_path,
+        fallback_client=generator_client,
+        fallback_backend=generator_backend,
+        fallback_model=generator_model,
+        progress_callback=progress_callback,
+    )
+    executions = revise_executions(
+        question=question,
+        plan=plan,
+        executions=executions,
+        objections=objections,
+        proposals=proposals,
         snapshot=snapshot,
         defaults=defaults,
         config_path=config_path,
@@ -291,8 +455,9 @@ def run_research_lab(
     sections = synthesize_solution(
         question=question,
         plan=plan,
-        drafts=drafts,
-        cross_reviews=cross_reviews,
+        proposals=proposals,
+        executions=executions,
+        objections=objections,
         client=generator_client,
         model=generator_model,
     )
@@ -306,6 +471,11 @@ def run_research_lab(
             "execution": sections.execution,
             "conclusion": sections.conclusion,
             "uncertainties": sections.uncertainties,
+            "lines": [
+                f"Core 통합 이해: {compact_line(sections.understanding, 240)}",
+                f"Core 통합 전략: {compact_line(sections.strategy, 240)}",
+                f"Core 통합 결론: {compact_line(sections.conclusion, 240)}",
+            ],
         },
     )
     critique = critique_solution(
@@ -322,6 +492,11 @@ def run_research_lab(
             "verdict": str(critique_value(critique, "verdict", "NEEDS_MORE_DETAIL")),
             "first_fatal_error": str(critique_value(critique, "first_fatal_error", "") or ""),
             "confidence": str(critique_value(critique, "confidence", 0.0) or 0.0),
+            "lines": [
+                f"Raven 판정: {critique_value(critique, 'verdict', 'NEEDS_MORE_DETAIL')}",
+                f"신뢰도: {critique_value(critique, 'confidence', 0.0)}",
+                f"치명 오류: {str(critique_value(critique, 'first_fatal_error', '') or '-')}",
+            ],
         },
     )
     final_answer = build_final_answer(plan=plan, sections=sections, critique=critique)
@@ -331,6 +506,10 @@ def run_research_lab(
         {
             "specialist_name": expert.name,
             "final_answer": final_answer,
+            "lines": [
+                f"최종 주 전문가: {expert.name}",
+                f"최종 결론: {compact_line(sections.conclusion, 240)}",
+            ],
         },
     )
     return ResearchResult(
@@ -352,7 +531,7 @@ def run_research_lab(
     )
 
 
-def emit_progress(progress_callback: ProgressCallback | None, stage: str, payload: dict[str, str]) -> None:
+def emit_progress(progress_callback: ProgressCallback | None, stage: str, payload: dict[str, Any]) -> None:
     if progress_callback is None:
         return
     progress_callback(stage, payload)
@@ -415,7 +594,6 @@ def resolve_reasoning_backend(
 def route_question(*, question: str, snapshot: dict[str, Any], client: LLMClient, model: str) -> ResearchPlan:
     expert_lines = []
     for expert in snapshot["experts"]:
-        expert = expert  # type: ignore[assignment]
         expert_lines.append(
             f"- {expert.agent}: {expert.name}, division={expert.division}, "
             f"status={expert.status_text}, coverage={expert.dataset_progress_text}"
@@ -447,100 +625,97 @@ def route_question(*, question: str, snapshot: dict[str, Any], client: LLMClient
     )
 
 
-def critique_plan(*, question: str, plan: ResearchPlan, client: LLMClient, model: str) -> ResearchPlan:
-    user_prompt = (
-        f"Problem:\n{question.strip()}\n\n"
-        f"Primary specialist: {plan.specialist}\n"
-        f"Support specialists: {', '.join(plan.support_specialists) or '-'}\n"
-        f"Reason: {plan.reason}\n"
-        f"Strategy: {plan.strategy}"
-    )
-    raw = client.generate_text(model=model, system_prompt=PLAN_CRITIC_PROMPT, user_prompt=user_prompt)
-    payload = parse_json_object(raw)
-    critic_summary = str(payload.get("risk_summary", "")).strip()
-    revised_strategy = str(payload.get("revised_strategy", "")).strip()
+def run_core_critics(
+    *,
+    question: str,
+    plan: ResearchPlan,
+    client: LLMClient,
+    model: str,
+    progress_callback: ProgressCallback | None,
+) -> ResearchPlan:
+    critic_specs = [
+        (
+            "plan",
+            "Mystic-CorePlan-Critic",
+            "Attack whether the routing and plan are coherent, domain-appropriate, and well sequenced.",
+            "plan_critic_complete",
+        ),
+        (
+            "completeness",
+            "Mystic-Completeness-Critic",
+            "Attack missing cases, unclassified branches, and proof completeness failures.",
+            "completeness_critic_complete",
+        ),
+        (
+            "counterexample",
+            "Mystic-Counterexample-Critic",
+            "Attack the plan by searching for likely counterexamples, boundary cases, and failure modes.",
+            "counterexample_critic_complete",
+        ),
+        (
+            "cost_latency",
+            "Mystic-Cost-Latency-Critic",
+            "Attack the plan from execution cost, redundancy, and latency. Keep quality while reducing wasted work.",
+            "cost_latency_critic_complete",
+        ),
+    ]
+    reviews: list[CriticReview] = []
+    strategy = plan.strategy
+    all_notes: list[str] = []
+    for critic_key, critic_name, focus, stage_name in critic_specs:
+        prompt = CRITIC_PROMPT_TEMPLATE.format(critic_name=critic_name, focus=focus)
+        user_prompt = (
+            f"Problem:\n{question.strip()}\n\n"
+            f"Primary specialist: {plan.specialist}\n"
+            f"Support specialists: {', '.join(plan.support_specialists) or '-'}\n"
+            f"Reason: {plan.reason}\n"
+            f"Strategy: {strategy}\n"
+        )
+        raw = client.generate_text(model=model, system_prompt=prompt, user_prompt=user_prompt)
+        payload = parse_json_object(raw)
+        review = CriticReview(
+            critic_key=critic_key,
+            critic_name=critic_name,
+            summary=str(payload.get("summary", "")).strip() or "요약 없음",
+            findings=parse_string_list(payload.get("findings")),
+            revision=str(payload.get("revision", "")).strip() or strategy,
+        )
+        reviews.append(review)
+        all_notes.append(f"{critic_name}: {review.summary}")
+        if review.revision and review.revision != strategy:
+            strategy = review.revision
+        emit_progress(
+            progress_callback,
+            stage_name,
+            {
+                "critic_name": critic_name,
+                "critic_summary": review.summary,
+                "findings": review.findings,
+                "strategy": strategy,
+                "lines": [
+                    f"{critic_name} 요약: {review.summary}",
+                    *[f"{critic_name} 지적: {item}" for item in review.findings[:3]],
+                    f"{critic_name} 반영 전략: {strategy}",
+                ],
+            },
+        )
     return ResearchPlan(
         specialist=plan.specialist,
         support_specialists=plan.support_specialists,
         reason=plan.reason,
-        strategy=revised_strategy or plan.strategy,
-        critic_summary=critic_summary,
+        strategy=strategy,
+        critic_summary=" | ".join(all_notes),
+        critic_reviews=reviews,
+        handoff_notes=plan.handoff_notes,
+        task_assignments=plan.task_assignments,
     )
 
 
-def solve_question(
+def build_method_proposals(
     *,
     question: str,
     plan: ResearchPlan,
-    expert: ExpertSnapshot,
-    client: LLMClient,
-    model: str,
-) -> ResearchSections:
-    system_prompt = SOLVER_PROMPT_TEMPLATE.format(
-        specialist_name=expert.name,
-        division=expert.division,
-        model_name=expert.model,
-        adapter_name=expert.adapter,
-        dataset_progress=expert.dataset_progress_text,
-        status_text=expert.status_text,
-        status_detail=expert.status_detail,
-    )
-    user_prompt = (
-        f"Chosen specialist: {plan.specialist}\n"
-        f"Routing reason: {plan.reason}\n"
-        f"Initial strategy: {plan.strategy}\n\n"
-        f"Question:\n{question.strip()}"
-    )
-    raw = client.generate_text(model=model, system_prompt=system_prompt, user_prompt=user_prompt)
-    return parse_sections(raw)
-
-
-def synthesize_solution(
-    *,
-    question: str,
-    plan: ResearchPlan,
-    drafts: list[SpecialistDraft],
-    cross_reviews: list[CrossReviewNote],
-    client: LLMClient,
-    model: str,
-) -> ResearchSections:
-    draft_chunks = []
-    for draft in drafts:
-        draft_chunks.append(
-            f"[{draft.specialist_name} / {draft.agent}]\n"
-            f"UNDERSTANDING:\n{draft.sections.understanding}\n"
-            f"STRATEGY:\n{draft.sections.strategy}\n"
-            f"EXECUTION:\n{draft.sections.execution}\n"
-            f"CONCLUSION:\n{draft.sections.conclusion}\n"
-            f"UNCERTAINTIES:\n{draft.sections.uncertainties}"
-        )
-    user_prompt = (
-        f"Primary specialist: {plan.specialist}\n"
-        f"Support specialists: {', '.join(plan.support_specialists) or '-'}\n"
-        f"Core strategy: {plan.strategy}\n\n"
-        f"Problem:\n{question.strip()}\n\n"
-        f"Specialist drafts:\n\n"
-        + "\n\n".join(draft_chunks)
-        + "\n\nCross reviews:\n\n"
-        + "\n\n".join(
-            f"[{note.reviewer_name} -> {note.target_agent}]\n"
-            f"UNDERSTANDING:\n{note.sections.understanding}\n"
-            f"STRATEGY:\n{note.sections.strategy}\n"
-            f"EXECUTION:\n{note.sections.execution}\n"
-            f"CONCLUSION:\n{note.sections.conclusion}\n"
-            f"UNCERTAINTIES:\n{note.sections.uncertainties}"
-            for note in cross_reviews
-        )
-    )
-    raw = client.generate_text(model=model, system_prompt=SYNTHESIS_PROMPT, user_prompt=user_prompt)
-    return parse_sections(raw)
-
-
-def build_cross_reviews(
-    *,
-    question: str,
-    plan: ResearchPlan,
-    drafts: list[SpecialistDraft],
+    selected_agents: list[str],
     snapshot: dict[str, Any],
     defaults: dict[str, Any],
     config_path: str | Path,
@@ -548,73 +723,431 @@ def build_cross_reviews(
     fallback_backend: str,
     fallback_model: str,
     progress_callback: ProgressCallback | None,
-) -> list[CrossReviewNote]:
-    if len(drafts) < 2:
-        return []
-    notes: list[CrossReviewNote] = []
-    for index, reviewer_draft in enumerate(drafts[1:], start=1):
-        target = drafts[index - 1]
-        reviewer = get_expert_snapshot(snapshot, reviewer_draft.agent)
+) -> list[MethodProposal]:
+    proposals: list[MethodProposal] = []
+    for agent in selected_agents:
+        expert = get_expert_snapshot(snapshot, agent)
         backend, model, client = resolve_reasoning_backend(
-            agent=reviewer_draft.agent,
+            agent=agent,
             config_path=config_path,
             defaults=defaults,
             fallback_client=fallback_client,
             fallback_backend=fallback_backend,
             fallback_model=fallback_model,
         )
-        sections = cross_review_draft(
-            question=question,
-            plan=plan,
-            reviewer=reviewer,
-            target=target,
-            client=client,
-            model=model,
+        user_prompt = (
+            f"Problem:\n{question.strip()}\n\n"
+            f"Primary specialist: {plan.specialist}\n"
+            f"Support specialists: {', '.join(plan.support_specialists) or '-'}\n"
+            f"Current strategy: {plan.strategy}\n"
+            f"Your specialist: {expert.name} / {expert.agent}\n"
+            f"Division: {expert.division}\n"
         )
-        note = CrossReviewNote(
-            reviewer_agent=reviewer_draft.agent,
-            reviewer_name=reviewer.name,
-            target_agent=target.agent,
-            sections=sections,
+        raw = client.generate_text(model=model, system_prompt=METHOD_PROPOSAL_PROMPT, user_prompt=user_prompt)
+        payload = parse_json_object(raw)
+        proposal = MethodProposal(
+            agent=agent,
+            specialist_name=expert.name,
+            method_summary=str(payload.get("method_summary", "")).strip() or f"{expert.name} 관점 분해",
+            task_candidate=str(payload.get("task_candidate", "")).strip() or f"{expert.name} 관점 핵심 부분 검토",
+            dependencies=parse_string_list(payload.get("dependencies")),
+            deliverable=str(payload.get("deliverable", "")).strip() or "국소 결론과 다음 handoff",
+            raw_text=raw,
         )
-        notes.append(note)
+        proposals.append(proposal)
         emit_progress(
             progress_callback,
-            "cross_review_complete",
+            "method_proposal_complete",
             {
-                "reviewer_agent": reviewer_draft.agent,
-                "reviewer_name": reviewer.name,
-                "target_agent": target.agent,
+                "agent": agent,
+                "specialist_name": expert.name,
                 "backend": backend,
                 "model": model,
-                "conclusion": sections.conclusion,
+                "method_summary": proposal.method_summary,
+                "task_candidate": proposal.task_candidate,
+                "deliverable": proposal.deliverable,
+                "lines": [
+                    f"{expert.name} 방법: {proposal.method_summary}",
+                    f"{expert.name} 제안 태스크: {proposal.task_candidate}",
+                    f"{expert.name} 산출물: {proposal.deliverable}",
+                ],
             },
         )
-    return notes
+    return proposals
 
 
-def cross_review_draft(
+def assign_tasks(
     *,
     question: str,
     plan: ResearchPlan,
-    reviewer: ExpertSnapshot,
-    target: SpecialistDraft,
+    proposals: list[MethodProposal],
+    client: LLMClient,
+    model: str,
+    snapshot: dict[str, Any],
+    progress_callback: ProgressCallback | None,
+) -> ResearchPlan:
+    critic_blocks = "\n".join(
+        f"- {review.critic_name}: {review.summary} / {', '.join(review.findings) or '-'} / revision={review.revision}"
+        for review in plan.critic_reviews
+    )
+    proposal_blocks = "\n".join(
+        f"- {proposal.agent} ({proposal.specialist_name})\n"
+        f"  method={proposal.method_summary}\n"
+        f"  task_candidate={proposal.task_candidate}\n"
+        f"  dependencies={', '.join(proposal.dependencies) or '-'}\n"
+        f"  deliverable={proposal.deliverable}"
+        for proposal in proposals
+    )
+    user_prompt = (
+        f"Problem:\n{question.strip()}\n\n"
+        f"Primary specialist: {plan.specialist}\n"
+        f"Support specialists: {', '.join(plan.support_specialists) or '-'}\n"
+        f"Current strategy: {plan.strategy}\n\n"
+        f"Core critics:\n{critic_blocks}\n\n"
+        f"Method proposals:\n{proposal_blocks}"
+    )
+    raw = client.generate_text(model=model, system_prompt=TASK_ASSIGNMENT_PROMPT, user_prompt=user_prompt)
+    payload = parse_json_object(raw)
+    combined_strategy = str(payload.get("combined_strategy", "")).strip() or plan.strategy
+    handoff_notes = parse_string_list(payload.get("handoff_notes"))
+    assignment_map = {str(item.get("agent", "")).strip().lower(): item for item in ensure_list(payload.get("task_assignments"))}
+    assignments: list[TaskAssignment] = []
+    for proposal in proposals:
+        assignment_payload = assignment_map.get(proposal.agent, {})
+        specialist_name = get_expert_snapshot(snapshot, proposal.agent).name
+        assignments.append(
+            TaskAssignment(
+                agent=proposal.agent,
+                specialist_name=specialist_name,
+                task=str(assignment_payload.get("task", "")).strip() or proposal.task_candidate,
+                deliverable=str(assignment_payload.get("deliverable", "")).strip() or proposal.deliverable,
+            )
+        )
+    emit_progress(
+        progress_callback,
+        "task_assignment_complete",
+        {
+            "strategy": combined_strategy,
+            "handoff_notes": handoff_notes,
+            "lines": [
+                f"Core 재배분 전략: {combined_strategy}",
+                *[f"{assignment.specialist_name} 담당: {assignment.task}" for assignment in assignments],
+            ],
+        },
+    )
+    return ResearchPlan(
+        specialist=plan.specialist,
+        support_specialists=plan.support_specialists,
+        reason=plan.reason,
+        strategy=combined_strategy,
+        critic_summary=plan.critic_summary,
+        critic_reviews=plan.critic_reviews,
+        handoff_notes=handoff_notes,
+        task_assignments=assignments,
+    )
+
+
+def execute_assigned_tasks(
+    *,
+    question: str,
+    plan: ResearchPlan,
+    proposals: list[MethodProposal],
+    snapshot: dict[str, Any],
+    defaults: dict[str, Any],
+    config_path: str | Path,
+    fallback_client: LLMClient,
+    fallback_backend: str,
+    fallback_model: str,
+    progress_callback: ProgressCallback | None,
+) -> list[TaskExecution]:
+    proposal_map = {proposal.agent: proposal for proposal in proposals}
+    executions: list[TaskExecution] = []
+    for assignment in plan.task_assignments:
+        expert = get_expert_snapshot(snapshot, assignment.agent)
+        proposal = proposal_map[assignment.agent]
+        backend, model, client = resolve_reasoning_backend(
+            agent=assignment.agent,
+            config_path=config_path,
+            defaults=defaults,
+            fallback_client=fallback_client,
+            fallback_backend=fallback_backend,
+            fallback_model=fallback_model,
+        )
+        system_prompt = TASK_EXECUTION_PROMPT_TEMPLATE.format(
+            specialist_name=expert.name,
+            division=expert.division,
+            model_name=expert.model,
+            adapter_name=expert.adapter,
+            dataset_progress=expert.dataset_progress_text,
+            status_text=expert.status_text,
+            status_detail=expert.status_detail,
+            assigned_task=assignment.task,
+            deliverable=assignment.deliverable,
+            method_summary=proposal.method_summary,
+            dependencies=", ".join(proposal.dependencies) or "-",
+        )
+        user_prompt = (
+            f"Problem:\n{question.strip()}\n\n"
+            f"Combined strategy:\n{plan.strategy}\n\n"
+            f"All selected specialists: {', '.join([plan.specialist, *plan.support_specialists])}\n"
+        )
+        raw = client.generate_text(model=model, system_prompt=system_prompt, user_prompt=user_prompt)
+        sections = parse_sections(raw)
+        execution = TaskExecution(
+            agent=assignment.agent,
+            specialist_name=expert.name,
+            assignment=assignment,
+            sections=sections,
+        )
+        executions.append(execution)
+        emit_progress(
+            progress_callback,
+            "task_execution_complete",
+            {
+                "agent": assignment.agent,
+                "specialist_name": expert.name,
+                "backend": backend,
+                "model": model,
+                "task": assignment.task,
+                "deliverable": assignment.deliverable,
+                "understanding": sections.understanding,
+                "strategy": sections.strategy,
+                "execution": sections.execution,
+                "conclusion": sections.conclusion,
+                "uncertainties": sections.uncertainties,
+                "lines": [
+                    f"{expert.name} 담당 태스크: {assignment.task}",
+                    f"{expert.name} 작업 전략: {compact_line(sections.strategy, 220)}",
+                    f"{expert.name} 작업 결론: {compact_line(sections.conclusion, 220)}",
+                ],
+            },
+        )
+    return executions
+
+
+def build_pairwise_objections(
+    *,
+    question: str,
+    plan: ResearchPlan,
+    executions: list[TaskExecution],
+    snapshot: dict[str, Any],
+    defaults: dict[str, Any],
+    config_path: str | Path,
+    fallback_client: LLMClient,
+    fallback_backend: str,
+    fallback_model: str,
+    progress_callback: ProgressCallback | None,
+) -> list[DebateNote]:
+    notes: list[DebateNote] = []
+    if len(executions) < 2:
+        return notes
+    for reviewer_execution in executions:
+        reviewer = get_expert_snapshot(snapshot, reviewer_execution.agent)
+        backend, model, client = resolve_reasoning_backend(
+            agent=reviewer_execution.agent,
+            config_path=config_path,
+            defaults=defaults,
+            fallback_client=fallback_client,
+            fallback_backend=fallback_backend,
+            fallback_model=fallback_model,
+        )
+        for target_execution in executions:
+            if target_execution.agent == reviewer_execution.agent:
+                continue
+            user_prompt = (
+                f"Problem:\n{question.strip()}\n\n"
+                f"Combined strategy:\n{plan.strategy}\n\n"
+                f"Target specialist: {target_execution.specialist_name} / {target_execution.agent}\n"
+                f"Assigned task: {target_execution.assignment.task}\n"
+                f"Deliverable: {target_execution.assignment.deliverable}\n"
+                f"UNDERSTANDING:\n{target_execution.sections.understanding}\n"
+                f"STRATEGY:\n{target_execution.sections.strategy}\n"
+                f"EXECUTION:\n{target_execution.sections.execution}\n"
+                f"CONCLUSION:\n{target_execution.sections.conclusion}\n"
+                f"UNCERTAINTIES:\n{target_execution.sections.uncertainties}\n\n"
+                f"Reviewer specialist: {reviewer.name} / {reviewer.agent}"
+            )
+            raw = client.generate_text(model=model, system_prompt=OBJECTION_PROMPT, user_prompt=user_prompt)
+            payload = parse_json_object(raw)
+            note = DebateNote(
+                reviewer_agent=reviewer_execution.agent,
+                reviewer_name=reviewer.name,
+                target_agent=target_execution.agent,
+                target_name=target_execution.specialist_name,
+                objection=str(payload.get("objection", "")).strip() or "구체 objection 없음",
+                risk=str(payload.get("risk", "")).strip() or "잠재 위험 설명 없음",
+                requested_fix=str(payload.get("requested_fix", "")).strip() or "추가 보완 요청 없음",
+                raw_text=raw,
+            )
+            notes.append(note)
+            emit_progress(
+                progress_callback,
+                "debate_objection_complete",
+                {
+                    "reviewer_agent": note.reviewer_agent,
+                    "reviewer_name": note.reviewer_name,
+                    "target_agent": note.target_agent,
+                    "target_name": note.target_name,
+                    "backend": backend,
+                    "model": model,
+                    "objection": note.objection,
+                    "risk": note.risk,
+                    "requested_fix": note.requested_fix,
+                    "lines": [
+                        f"{note.reviewer_name} -> {note.target_name} objection: {note.objection}",
+                        f"위험: {note.risk}",
+                        f"수정 요청: {note.requested_fix}",
+                    ],
+                },
+            )
+    return notes
+
+
+def revise_executions(
+    *,
+    question: str,
+    plan: ResearchPlan,
+    executions: list[TaskExecution],
+    objections: list[DebateNote],
+    proposals: list[MethodProposal],
+    snapshot: dict[str, Any],
+    defaults: dict[str, Any],
+    config_path: str | Path,
+    fallback_client: LLMClient,
+    fallback_backend: str,
+    fallback_model: str,
+    progress_callback: ProgressCallback | None,
+) -> list[TaskExecution]:
+    proposal_map = {proposal.agent: proposal for proposal in proposals}
+    objection_map: dict[str, list[DebateNote]] = {}
+    for note in objections:
+        objection_map.setdefault(note.target_agent, []).append(note)
+    revised: list[TaskExecution] = []
+    for execution in executions:
+        received = objection_map.get(execution.agent, [])
+        if not received:
+            revised.append(execution)
+            emit_progress(
+                progress_callback,
+                "revision_complete",
+                {
+                    "agent": execution.agent,
+                    "specialist_name": execution.specialist_name,
+                    "lines": [f"{execution.specialist_name} revision: 수신 objection 없음, 기존 초안 유지"],
+                },
+            )
+            continue
+        expert = get_expert_snapshot(snapshot, execution.agent)
+        proposal = proposal_map[execution.agent]
+        backend, model, client = resolve_reasoning_backend(
+            agent=execution.agent,
+            config_path=config_path,
+            defaults=defaults,
+            fallback_client=fallback_client,
+            fallback_backend=fallback_backend,
+            fallback_model=fallback_model,
+        )
+        objections_text = "\n".join(
+            f"- {note.reviewer_name}: objection={note.objection}; risk={note.risk}; requested_fix={note.requested_fix}"
+            for note in received
+        )
+        system_prompt = REVISION_PROMPT_TEMPLATE.format(
+            specialist_name=expert.name,
+            assigned_task=execution.assignment.task,
+            understanding=execution.sections.understanding,
+            strategy=execution.sections.strategy,
+            execution=execution.sections.execution,
+            conclusion=execution.sections.conclusion,
+            uncertainties=execution.sections.uncertainties,
+            objections_text=objections_text,
+        )
+        user_prompt = (
+            f"Problem:\n{question.strip()}\n\n"
+            f"Combined strategy:\n{plan.strategy}\n\n"
+            f"Method proposal:\n{proposal.method_summary}\n"
+            f"Expected deliverable:\n{execution.assignment.deliverable}\n"
+        )
+        raw = client.generate_text(model=model, system_prompt=system_prompt, user_prompt=user_prompt)
+        sections = parse_sections(raw)
+        revised_execution = TaskExecution(
+            agent=execution.agent,
+            specialist_name=execution.specialist_name,
+            assignment=execution.assignment,
+            sections=sections,
+        )
+        revised.append(revised_execution)
+        emit_progress(
+            progress_callback,
+            "revision_complete",
+            {
+                "agent": execution.agent,
+                "specialist_name": execution.specialist_name,
+                "backend": backend,
+                "model": model,
+                "lines": [
+                    f"{execution.specialist_name} revision 반영 수: {len(received)}",
+                    f"{execution.specialist_name} 수정 전략: {compact_line(sections.strategy, 220)}",
+                    f"{execution.specialist_name} 수정 결론: {compact_line(sections.conclusion, 220)}",
+                ],
+            },
+        )
+    return revised
+
+
+def synthesize_solution(
+    *,
+    question: str,
+    plan: ResearchPlan,
+    proposals: list[MethodProposal],
+    executions: list[TaskExecution],
+    objections: list[DebateNote],
     client: LLMClient,
     model: str,
 ) -> ResearchSections:
-    system_prompt = CROSS_REVIEW_PROMPT
-    user_prompt = (
-        f"Problem:\n{question.strip()}\n\n"
-        f"Core strategy:\n{plan.strategy}\n\n"
-        f"Target specialist: {target.specialist_name} / {target.agent}\n"
-        f"UNDERSTANDING:\n{target.sections.understanding}\n"
-        f"STRATEGY:\n{target.sections.strategy}\n"
-        f"EXECUTION:\n{target.sections.execution}\n"
-        f"CONCLUSION:\n{target.sections.conclusion}\n"
-        f"UNCERTAINTIES:\n{target.sections.uncertainties}\n\n"
-        f"Reviewer specialist: {reviewer.name} / {reviewer.agent}"
+    critic_blocks = "\n".join(
+        f"[{review.critic_name}]\nsummary={review.summary}\nfindings={', '.join(review.findings) or '-'}\nrevision={review.revision}"
+        for review in plan.critic_reviews
     )
-    raw = client.generate_text(model=model, system_prompt=system_prompt, user_prompt=user_prompt)
+    proposal_blocks = "\n".join(
+        f"[{proposal.specialist_name} / {proposal.agent}]\n"
+        f"method={proposal.method_summary}\n"
+        f"task_candidate={proposal.task_candidate}\n"
+        f"dependencies={', '.join(proposal.dependencies) or '-'}\n"
+        f"deliverable={proposal.deliverable}"
+        for proposal in proposals
+    )
+    execution_blocks = "\n\n".join(
+        f"[{execution.specialist_name} / {execution.agent}]\n"
+        f"Assigned task: {execution.assignment.task}\n"
+        f"Deliverable: {execution.assignment.deliverable}\n"
+        f"UNDERSTANDING:\n{execution.sections.understanding}\n"
+        f"STRATEGY:\n{execution.sections.strategy}\n"
+        f"EXECUTION:\n{execution.sections.execution}\n"
+        f"CONCLUSION:\n{execution.sections.conclusion}\n"
+        f"UNCERTAINTIES:\n{execution.sections.uncertainties}"
+        for execution in executions
+    )
+    objection_blocks = "\n".join(
+        f"[{note.reviewer_name} -> {note.target_name}] objection={note.objection}; risk={note.risk}; requested_fix={note.requested_fix}"
+        for note in objections
+    )
+    assignment_blocks = "\n".join(
+        f"- {assignment.specialist_name} ({assignment.agent}): task={assignment.task}; deliverable={assignment.deliverable}"
+        for assignment in plan.task_assignments
+    )
+    user_prompt = (
+        f"Primary specialist: {plan.specialist}\n"
+        f"Support specialists: {', '.join(plan.support_specialists) or '-'}\n"
+        f"Combined strategy: {plan.strategy}\n"
+        f"Handoff notes: {', '.join(plan.handoff_notes) or '-'}\n\n"
+        f"Problem:\n{question.strip()}\n\n"
+        f"Core critics:\n{critic_blocks}\n\n"
+        f"Method proposals:\n{proposal_blocks}\n\n"
+        f"Task assignments:\n{assignment_blocks}\n\n"
+        f"Revised task results:\n{execution_blocks}\n\n"
+        f"Pairwise objections:\n{objection_blocks or '-'}"
+    )
+    raw = client.generate_text(model=model, system_prompt=SYNTHESIS_PROMPT, user_prompt=user_prompt)
     return parse_sections(raw)
 
 
@@ -662,6 +1195,15 @@ def build_final_answer(*, plan: ResearchPlan, sections: ResearchSections, critiq
         f"선택 전문가: {plan.specialist}",
         f"참여 전문가: {', '.join([plan.specialist, *support_specialists])}",
         "",
+        "Core 비평:",
+        plan.critic_summary or "-",
+        "",
+        "태스크 배분:",
+        *(
+            [f"- {assignment.specialist_name}: {assignment.task}" for assignment in getattr(plan, "task_assignments", [])]
+            or ["- 태스크 배분 정보 없음"]
+        ),
+        "",
         "이해:",
         sections.understanding.strip() or "-",
         "",
@@ -696,7 +1238,7 @@ def parse_json_object(raw: str) -> dict[str, Any]:
         if char != "{":
             continue
         try:
-            payload, end = decoder.raw_decode(stripped[index:])
+            payload, _ = decoder.raw_decode(stripped[index:])
         except json.JSONDecodeError:
             continue
         if isinstance(payload, dict):
@@ -788,7 +1330,7 @@ def default_support_specialists(specialist: str, question: str) -> list[str]:
         "chem": ["analysis", "simulator", "forge", "raven"],
         "core": ["logic", "pattern", "forge", "raven"],
     }
-    support = defaults.get(specialist, ["logic", "forge", "raven"])
+    support = list(defaults.get(specialist, ["logic", "forge", "raven"]))
     if "counterexample" in lowered or "classify" in lowered or "all solutions" in lowered:
         for extra in ["pattern", "forge", "simulator"]:
             if extra not in support:
@@ -832,3 +1374,24 @@ def parse_sections(raw: str) -> ResearchSections:
         uncertainties=sections["UNCERTAINTIES"].strip(),
         raw_text=raw,
     )
+
+
+def parse_string_list(raw_value: Any) -> list[str]:
+    if isinstance(raw_value, list):
+        return [str(item).strip() for item in raw_value if str(item).strip()]
+    if isinstance(raw_value, str) and raw_value.strip():
+        return [raw_value.strip()]
+    return []
+
+
+def ensure_list(raw_value: Any) -> list[dict[str, Any]]:
+    if isinstance(raw_value, list):
+        return [item for item in raw_value if isinstance(item, dict)]
+    return []
+
+
+def compact_line(value: str, limit: int = 220) -> str:
+    text = " ".join(value.strip().split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"

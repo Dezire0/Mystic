@@ -84,6 +84,54 @@ def compact_line(value: str, limit: int = 220) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
+def stage_title(stage: str) -> str:
+    titles = {
+        "routing_complete": "2. 라우팅 완료",
+        "plan_critic_complete": "2-1. CorePlan Critic 완료",
+        "completeness_critic_complete": "2-2. Completeness Critic 완료",
+        "counterexample_critic_complete": "2-3. Counterexample Critic 완료",
+        "cost_latency_critic_complete": "2-4. Cost/Latency Critic 완료",
+        "method_proposal_complete": "3. 방법 제안 도착",
+        "task_assignment_complete": "4. Core 태스크 배분 완료",
+        "task_execution_complete": "5. 담당 태스크 실행 완료",
+        "debate_objection_complete": "6. selected specialist objection",
+        "revision_complete": "7. objection 반영 revision",
+        "synthesis_complete": "8. Core 통합 완료",
+        "critique_complete": "9. Raven 검증 완료",
+        "final_answer_ready": "10. 최종 답 준비 완료",
+    }
+    return titles.get(stage, stage)
+
+
+def progress_message_chunks(stage: str, payload: dict[str, Any]) -> list[str]:
+    messages = [stage_title(stage)]
+    raw_lines = payload.get("lines", [])
+    if isinstance(raw_lines, list):
+        for line in raw_lines:
+            text = compact_line(str(line), 500)
+            if text:
+                messages.append(text)
+    if len(messages) > 1:
+        return messages
+
+    fallback_map = {
+        "routing_complete": [
+            payload.get("specialist", "-"),
+            payload.get("support_specialists", "-"),
+            payload.get("strategy", "-"),
+        ],
+        "critique_complete": [
+            payload.get("verdict", "-"),
+            payload.get("first_fatal_error", "-"),
+        ],
+    }
+    for item in fallback_map.get(stage, []):
+        text = compact_line(str(item), 500)
+        if text and text != "-":
+            messages.append(text)
+    return messages
+
+
 def research_embed(result: ResearchResult) -> discord.Embed:
     embed = discord.Embed(
         title=f"Mystic 연구실 · {result.specialist_name}",
@@ -130,12 +178,13 @@ async def send_research_response(
     question: str,
     base_dir: Path,
 ) -> None:
-    await destination.send(f"1. 질문 이해 중\n질문: {compact_line(question, 260)}")
+    await destination.send("1. 질문 접수")
+    await destination.send(f"질문: {compact_line(question, 260)}")
 
-    progress_queue: asyncio.Queue[tuple[str, dict[str, str]] | None] = asyncio.Queue()
+    progress_queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
     loop = asyncio.get_running_loop()
 
-    def progress_callback(stage: str, payload: dict[str, str]) -> None:
+    def progress_callback(stage: str, payload: dict[str, Any]) -> None:
         loop.call_soon_threadsafe(progress_queue.put_nowait, (stage, payload))
 
     async def run_and_report() -> ResearchResult:
@@ -157,57 +206,8 @@ async def send_research_response(
         if item is None:
             continue
         stage, payload = item
-        if stage == "routing_complete":
-            await destination.send(
-                "2. 전략 수립 완료\n"
-                f"전문가: {payload.get('specialist', '-')}\n"
-                f"지원 전문가: {payload.get('support_specialists', '-')}\n"
-                f"이유: {compact_line(payload.get('reason', '-'))}\n"
-                f"전략: {compact_line(payload.get('strategy', '-'), 320)}"
-            )
-        elif stage == "plan_critic_complete":
-            await destination.send(
-                "2-1. Core 계획 비평 완료\n"
-                f"비평 요약: {compact_line(payload.get('critic_summary', '-') or '-', 320)}\n"
-                f"수정 전략: {compact_line(payload.get('strategy', '-'), 320)}"
-            )
-        elif stage == "specialist_complete":
-            await destination.send(
-                "3. specialist 초안 생성 완료\n"
-                f"전문가 이름: {payload.get('specialist_name', '-')}\n"
-                f"전문가 코드: {payload.get('agent', '-')}\n"
-                f"백엔드: {payload.get('backend', '-')}\n"
-                f"모델: {payload.get('model', '-')}\n"
-                f"이해: {compact_line(payload.get('understanding', '-'), 240)}\n"
-                f"전략: {compact_line(payload.get('strategy', '-'), 240)}\n"
-                f"결론 초안: {compact_line(payload.get('conclusion', '-'), 220)}"
-            )
-        elif stage == "cross_review_complete":
-            await destination.send(
-                "3-1. specialist 교차검토 완료\n"
-                f"검토자: {payload.get('reviewer_name', '-')} ({payload.get('reviewer_agent', '-')})\n"
-                f"대상: {payload.get('target_agent', '-')}\n"
-                f"백엔드: {payload.get('backend', '-')}\n"
-                f"모델: {payload.get('model', '-')}\n"
-                f"핵심 의견: {compact_line(payload.get('conclusion', '-'), 320)}"
-            )
-        elif stage == "synthesis_complete":
-            await destination.send(
-                "4. Core 종합 초안 생성 완료\n"
-                f"전문가 이름: {payload.get('specialist_name', '-')}\n"
-                f"이해: {compact_line(payload.get('understanding', '-'), 320)}\n"
-                f"전략: {compact_line(payload.get('strategy', '-'), 320)}\n"
-                f"풀이: {compact_line(payload.get('execution', '-'), 500)}\n"
-                f"결론 초안: {compact_line(payload.get('conclusion', '-'), 240)}"
-            )
-        elif stage == "critique_complete":
-            warning = payload.get("first_fatal_error", "").strip() or "치명적 오류는 바로 잡히지 않음"
-            await destination.send(
-                "5. Raven 검증 완료\n"
-                f"판정: {payload.get('verdict', '-')}\n"
-                f"신뢰도: {payload.get('confidence', '0.0')}\n"
-                f"메모: {compact_line(warning, 320)}"
-            )
+        for message in progress_message_chunks(stage, payload):
+            await destination.send(message)
 
     result = await task
     chunks = chunk_text(result.final_answer)
