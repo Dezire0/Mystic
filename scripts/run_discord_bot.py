@@ -77,6 +77,13 @@ def chunk_text(value: str, limit: int = 3900) -> list[str]:
     return chunks
 
 
+def compact_line(value: str, limit: int = 220) -> str:
+    text = " ".join(value.strip().split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
 def research_embed(result: ResearchResult) -> discord.Embed:
     embed = discord.Embed(
         title=f"Mystic 연구실 · {result.specialist_name}",
@@ -118,7 +125,59 @@ async def send_research_response(
     question: str,
     base_dir: Path,
 ) -> None:
-    result = await asyncio.to_thread(run_research_lab, question, base_dir=base_dir)
+    await destination.send(f"1. 질문 이해 중\n질문: {compact_line(question, 260)}")
+
+    progress_queue: asyncio.Queue[tuple[str, dict[str, str]] | None] = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def progress_callback(stage: str, payload: dict[str, str]) -> None:
+        loop.call_soon_threadsafe(progress_queue.put_nowait, (stage, payload))
+
+    async def run_and_report() -> ResearchResult:
+        return await asyncio.to_thread(
+            run_research_lab,
+            question,
+            base_dir=base_dir,
+            progress_callback=progress_callback,
+        )
+
+    task = asyncio.create_task(run_and_report())
+    while True:
+        if task.done() and progress_queue.empty():
+            break
+        try:
+            item = await asyncio.wait_for(progress_queue.get(), timeout=0.2)
+        except asyncio.TimeoutError:
+            continue
+        if item is None:
+            continue
+        stage, payload = item
+        if stage == "routing_complete":
+            await destination.send(
+                "2. 전략 수립 완료\n"
+                f"전문가: {payload.get('specialist', '-')}\n"
+                f"이유: {compact_line(payload.get('reason', '-'))}\n"
+                f"전략: {compact_line(payload.get('strategy', '-'), 320)}"
+            )
+        elif stage == "solution_complete":
+            await destination.send(
+                "3. 풀이 초안 생성 완료\n"
+                f"전문가 이름: {payload.get('specialist_name', '-')}\n"
+                f"이해: {compact_line(payload.get('understanding', '-'), 320)}\n"
+                f"전략: {compact_line(payload.get('strategy', '-'), 320)}\n"
+                f"풀이: {compact_line(payload.get('execution', '-'), 500)}\n"
+                f"결론 초안: {compact_line(payload.get('conclusion', '-'), 240)}"
+            )
+        elif stage == "critique_complete":
+            warning = payload.get("first_fatal_error", "").strip() or "치명적 오류는 바로 잡히지 않음"
+            await destination.send(
+                "4. Raven 검증 완료\n"
+                f"판정: {payload.get('verdict', '-')}\n"
+                f"신뢰도: {payload.get('confidence', '0.0')}\n"
+                f"메모: {compact_line(warning, 320)}"
+            )
+
+    result = await task
     chunks = chunk_text(result.final_answer)
     await destination.send(embed=research_embed(result))
     for extra in chunks[1:]:

@@ -129,8 +129,8 @@ class ResearchLabTests(unittest.TestCase):
         client_builder.side_effect = [
             FakeClient(
                 [
-                    '{"specialist":"prime","reason":"number theory","strategy":"break problem down"}',
-                    "UNDERSTANDING:\nquestion\nSTRATEGY:\nplan\nEXECUTION:\nsteps\nCONCLUSION:\nresult\nUNCERTAINTIES:\nnone",
+                    '{"specialist":"prime","reason":"정수론 문제로 보인다","strategy":"문제를 작은 단계로 쪼개 확인한다"}',
+                    "UNDERSTANDING:\n질문 파악\nSTRATEGY:\n계획 정리\nEXECUTION:\n단계별 풀이\nCONCLUSION:\n최종 결과\nUNCERTAINTIES:\n없음",
                 ]
             ),
             FakeClient(
@@ -140,10 +140,20 @@ class ResearchLabTests(unittest.TestCase):
             ),
         ]
 
-        result = run_research_lab("Prove something about primes.", base_dir="mystic_data")
+        progress_events: list[tuple[str, dict[str, str]]] = []
+
+        result = run_research_lab(
+            "Prove something about primes.",
+            base_dir="mystic_data",
+            progress_callback=lambda stage, payload: progress_events.append((stage, payload)),
+        )
         self.assertEqual(result.specialist, "prime")
         self.assertEqual(result.critic_verdict, "VALID")
         self.assertIn("결론", result.final_answer)
+        self.assertEqual(
+            [stage for stage, _ in progress_events],
+            ["routing_complete", "solution_complete", "critique_complete", "final_answer_ready"],
+        )
 
 
 if __name__ == "__main__":

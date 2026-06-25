@@ -117,6 +117,7 @@ Use `/mystic` in Discord. The bot opens a DM and sends:
 - an expert detail page with progress bar, dataset, ETA, and latest failure log
 - `/mystic_lab` runs the local research lab for a natural-language math question
 - you can also send a plain DM to the bot, or mention the bot in a guild message, and it will answer without a slash command
+- DM/mention research replies now send stepwise progress updates before the final answer: question understanding, strategy, draft solution, and Raven critique
 
 `/mystic_lab` flow:
 

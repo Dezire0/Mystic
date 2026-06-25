@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from mystic.discord_dashboard import ExpertSnapshot, load_dashboard_snapshot
 from mystic.llm_client import LLMClient, build_client, load_model_defaults
@@ -29,6 +29,7 @@ Rules:
 - Pick exactly one specialist.
 - Prefer a concrete domain specialist over core when possible.
 - Use core only when the question is broad or ambiguous.
+- Write reason and strategy in Korean.
 - Output JSON only.
 """
 
@@ -52,6 +53,8 @@ Task:
 3. Execute the approach carefully.
 4. Give a conclusion.
 5. Do not bluff. If something is uncertain, say so.
+6. Write every section in Korean.
+7. Keep the answer readable and stepwise, like a math tutor explaining the work.
 
 Output plain text with exactly these section headers:
 UNDERSTANDING:
@@ -60,6 +63,8 @@ EXECUTION:
 CONCLUSION:
 UNCERTAINTIES:
 """
+
+ProgressCallback = Callable[[str, dict[str, str]], None]
 
 
 @dataclass(slots=True)
@@ -103,7 +108,13 @@ def critique_value(critique: Any, key: str, default: Any = "") -> Any:
     return getattr(critique, key, default)
 
 
-def run_research_lab(question: str, *, base_dir: str | Path, config_path: str | Path = DEFAULT_CONFIG_PATH) -> ResearchResult:
+def run_research_lab(
+    question: str,
+    *,
+    base_dir: str | Path,
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+    progress_callback: ProgressCallback | None = None,
+) -> ResearchResult:
     snapshot = load_dashboard_snapshot(base_dir)
     defaults = load_model_defaults(config_path)
 
@@ -119,6 +130,15 @@ def run_research_lab(question: str, *, base_dir: str | Path, config_path: str | 
         client=generator_client,
         model=generator_model,
     )
+    emit_progress(
+        progress_callback,
+        "routing_complete",
+        {
+            "specialist": plan.specialist,
+            "reason": plan.reason,
+            "strategy": plan.strategy,
+        },
+    )
     expert = get_expert_snapshot(snapshot, plan.specialist)
     sections = solve_question(
         question=question,
@@ -127,6 +147,18 @@ def run_research_lab(question: str, *, base_dir: str | Path, config_path: str | 
         client=generator_client,
         model=generator_model,
     )
+    emit_progress(
+        progress_callback,
+        "solution_complete",
+        {
+            "specialist_name": expert.name,
+            "understanding": sections.understanding,
+            "strategy": sections.strategy,
+            "execution": sections.execution,
+            "conclusion": sections.conclusion,
+            "uncertainties": sections.uncertainties,
+        },
+    )
     critique = critique_solution(
         question=question,
         sections=sections,
@@ -134,7 +166,24 @@ def run_research_lab(question: str, *, base_dir: str | Path, config_path: str | 
         backend=critic_backend,
         model=critic_model,
     )
+    emit_progress(
+        progress_callback,
+        "critique_complete",
+        {
+            "verdict": str(critique_value(critique, "verdict", "NEEDS_MORE_DETAIL")),
+            "first_fatal_error": str(critique_value(critique, "first_fatal_error", "") or ""),
+            "confidence": str(critique_value(critique, "confidence", 0.0) or 0.0),
+        },
+    )
     final_answer = build_final_answer(plan=plan, sections=sections, critique=critique)
+    emit_progress(
+        progress_callback,
+        "final_answer_ready",
+        {
+            "specialist_name": expert.name,
+            "final_answer": final_answer,
+        },
+    )
     return ResearchResult(
         question=question,
         specialist=plan.specialist,
@@ -151,6 +200,12 @@ def run_research_lab(question: str, *, base_dir: str | Path, config_path: str | 
         critic_first_fatal_error=str(critique_value(critique, "first_fatal_error", "") or ""),
         final_answer=final_answer,
     )
+
+
+def emit_progress(progress_callback: ProgressCallback | None, stage: str, payload: dict[str, str]) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(stage, payload)
 
 
 def build_critic_client(*, config_path: str | Path) -> tuple[str, str, LLMClient]:
