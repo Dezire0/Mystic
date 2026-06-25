@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import unittest
 
+from mystic.final_answer_verifier import (
+    enumerate_egyptian_fraction_solutions,
+    extract_candidate_tuples,
+    verify_final_answer,
+)
 from mystic.parsers import parse_raven_output
-from mystic.final_answer_verifier import extract_candidate_tuples, enumerate_egyptian_fraction_solutions
 
 
 class ParserTests(unittest.TestCase):
@@ -41,6 +45,23 @@ class ParserTests(unittest.TestCase):
             extract_candidate_tuples("(2,4,8), (2,3,6), (3,3,3)"),
             [(2, 4, 8), (2, 3, 6), (3, 3, 3)],
         )
+
+    def test_generic_substitution_verifier_accepts_valid_tuple(self):
+        verification = verify_final_answer(
+            problem="positive integers x, y satisfy x + y = 5",
+            answer_text="Candidate solution: (2,3)",
+        )
+        assert verification is not None
+        self.assertEqual(verification["verdict"], "VALID")
+
+    def test_generic_substitution_verifier_rejects_invalid_tuple(self):
+        verification = verify_final_answer(
+            problem="positive integers x, y satisfy x + y = 5",
+            answer_text="Candidate solution: (2,2)",
+        )
+        assert verification is not None
+        self.assertEqual(verification["verdict"], "INVALID")
+        self.assertIn("(2, 2)", verification["first_fatal_error"])
 
     def test_parse_raven_output_marks_invalid_when_candidate_fails_substitution(self):
         problem = "1/x + 1/y + 1/z = 1, x <= y <= z, positive integers"
