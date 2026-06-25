@@ -85,15 +85,19 @@ class DiscordDashboardTests(unittest.TestCase):
 
             algebra = next(item for item in snapshot["experts"] if item.agent == "algebra")
             raven = next(item for item in snapshot["experts"] if item.agent == "raven")
-            self.assertEqual(algebra.status_kind, YELLOW)
+            self.assertEqual(algebra.status_kind, GREEN)
+            self.assertEqual(algebra.status_text, "대기")
             self.assertLess(algebra.progress_percent, 100)
             self.assertEqual(algebra.dataset_progress_text, "0/13 datasets")
-            self.assertEqual(raven.status_kind, GREEN)
+            self.assertEqual(raven.status_kind, YELLOW)
+            self.assertEqual(raven.status_text, "학습 중")
             self.assertGreaterEqual(raven.progress_percent, 70)
 
             overview = overview_page(snapshot, 0)
             self.assertIn("Mystic 학습 개요", overview["title"])
             self.assertIn("표시 규칙", [field["name"] for field in overview["fields"]])
+            self.assertNotIn("100%", overview["description"])
+            self.assertIn("학습 중", overview["description"])
 
             detail = expert_detail_page(snapshot, "raven")
             self.assertIn("실패 로그", [field["name"] for field in detail["fields"]])
@@ -142,7 +146,8 @@ class DiscordDashboardTests(unittest.TestCase):
 
             snapshot = load_dashboard_snapshot(base)
             report = next(item for item in snapshot["experts"] if item.agent == "report")
-            self.assertEqual(report.status_kind, YELLOW)
+            self.assertEqual(report.status_kind, GREEN)
+            self.assertEqual(report.status_text, "대기")
 
     def test_progress_uses_dataset_metadata_coverage(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -190,7 +195,8 @@ class DiscordDashboardTests(unittest.TestCase):
             prime = next(item for item in snapshot["experts"] if item.agent == "prime")
             self.assertEqual(prime.dataset_progress_text, "3/19 datasets")
             self.assertLess(prime.progress_percent, 100)
-            self.assertEqual(prime.status_kind, YELLOW)
+            self.assertEqual(prime.status_kind, GREEN)
+            self.assertEqual(prime.status_text, "대기")
 
 
 if __name__ == "__main__":

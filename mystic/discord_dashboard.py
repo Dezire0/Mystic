@@ -15,7 +15,6 @@ from mystic.execution_history import (
     load_remote_cycle_status,
     parse_timestamp,
     source_agents_by_slug,
-    status_label,
 )
 from mystic.training.blueprints import ARCHITECTURE_TRAINING_TARGETS
 
@@ -38,13 +37,23 @@ STATUS_COLOR = {
 }
 
 REMOTE_PHASE_PROGRESS = {
-    "starting": 8,
-    "prepared": 18,
-    "submitted": 32,
-    "polling": 72,
-    "poll_complete": 84,
-    "download_complete": 92,
+    "starting": 10,
+    "prepared": 25,
+    "submitted": 50,
+    "polling": 75,
+    "poll_complete": 85,
+    "download_complete": 95,
     "finish_complete": 100,
+}
+
+PHASE_LABELS = {
+    "starting": "시작 중",
+    "prepared": "준비 완료",
+    "submitted": "제출 완료",
+    "polling": "실행 확인 중",
+    "poll_complete": "실행 완료",
+    "download_complete": "결과 다운로드 완료",
+    "finish_complete": "반영 완료",
 }
 
 
@@ -71,6 +80,8 @@ class ExpertSnapshot:
     error_excerpt: str
     stage: str
     dataset_progress_text: str
+    status_detail: str
+    progress_reason: str
 
 
 def subscribers_path(base_dir: str | Path) -> Path:
@@ -138,6 +149,17 @@ def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
             dataset_progress=dataset_progress,
         )
         status_text = infer_status_text(status_kind, latest=latest, remote_status=remote_status)
+        if status_kind == GREEN and not is_cycle_complete(stage=stage, dataset_progress=dataset_progress):
+            status_text = "대기"
+        status_detail = infer_status_detail(
+            agent=agent,
+            status_kind=status_kind,
+            is_active=is_active,
+            dataset=dataset,
+            dataset_progress=dataset_progress,
+            stage=stage,
+            remote_status=remote_status,
+        )
         progress_percent = infer_progress_percent(
             agent=agent,
             stage=stage,
@@ -178,6 +200,8 @@ def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
                 error_excerpt=extract_error_excerpt(latest_failure),
                 stage=stage,
                 dataset_progress_text=f"{dataset_progress['covered']}/{dataset_progress['expected']} datasets",
+                status_detail=status_detail,
+                progress_reason=infer_progress_reason(agent=agent, is_active=is_active),
             )
         )
 
@@ -250,29 +274,48 @@ def infer_status_kind(
     dataset_progress: dict[str, int],
 ) -> str:
     if is_active:
-        return GREEN
+        return YELLOW
     if latest is not None and not latest.success:
         return RED
-    if latest is not None and latest.success and dataset_progress["covered"] >= dataset_progress["expected"]:
-        return GREEN
-    if stage == "tool_only":
-        return GREEN
-    if train_ready_rows > 0:
-        return YELLOW
-    return YELLOW
+    return GREEN
 
 
 def infer_status_text(status_kind: str, *, latest: Any, remote_status: dict[str, Any]) -> str:
-    if latest is not None and latest.success and status_kind == GREEN:
-        return status_label(latest.status)
-    if latest is not None and not latest.success:
-        return status_label(latest.status)
-    if status_kind == GREEN and str(remote_status.get("status", "")) == "running":
-        phase = str(remote_status.get("current_phase", "") or "running")
-        return f"학습 중 ({phase})"
     if status_kind == YELLOW:
-        return "사이클 완료 후 데이터 대기중"
-    return "실패"
+        return "학습 중"
+    if status_kind == RED:
+        return "오류"
+    if latest is not None and latest.success:
+        return "완료"
+    return "대기"
+
+
+def is_cycle_complete(*, stage: str, dataset_progress: dict[str, int]) -> bool:
+    if stage == "tool_only":
+        return True
+    return dataset_progress["covered"] >= dataset_progress["expected"]
+
+
+def infer_status_detail(
+    *,
+    agent: str,
+    status_kind: str,
+    is_active: bool,
+    dataset: str,
+    dataset_progress: dict[str, int],
+    stage: str,
+    remote_status: dict[str, Any],
+) -> str:
+    if status_kind == RED:
+        return "최근 실행 실패"
+    if is_active and agent == "raven":
+        phase = str(remote_status.get("current_phase", "") or "")
+        return PHASE_LABELS.get(phase, phase or "원격 실행 중")
+    if is_active:
+        return dataset or "로컬 학습 실행 중"
+    if stage == "tool_only":
+        return "도구 준비"
+    return f"{dataset_progress['covered']}/{dataset_progress['expected']} 데이터셋"
 
 
 def infer_progress_percent(
@@ -297,16 +340,24 @@ def infer_progress_percent(
     if latest is not None and latest.success and dataset_progress["covered"] >= dataset_progress["expected"]:
         progress = max(progress, 100)
     elif latest is not None and latest.success:
-        progress = max(progress, 70)
+        progress = max(progress, 60)
     elif is_active:
         progress = max(progress, 72)
     elif latest is not None and not latest.success:
         progress = max(progress, 35 if train_ready_rows > 0 else 10)
     elif train_ready_rows > 0:
-        progress = max(progress, 55)
+        progress = max(progress, 45)
     else:
         progress = max(progress, 5)
     return min(progress, 100)
+
+
+def infer_progress_reason(*, agent: str, is_active: bool) -> str:
+    if is_active and agent == "raven":
+        return "원격 사이클 단계 기준"
+    if is_active:
+        return "현재 로컬 학습 기준"
+    return "데이터셋 커버리지 기준"
 
 
 def infer_eta_text(
@@ -399,12 +450,12 @@ def overview_page(snapshot: dict[str, Any], page: int) -> dict[str, Any]:
     lines = []
     for expert in page_experts:
         lines.append(
-            f"{expert.status_emoji} `{expert.progress_percent:>3}%` {expert.name}  "
-            f"`{expert.status_text}`"
+            f"{expert.status_emoji} **{expert.name}** · {expert.status_text}\n"
+            f"{expert.status_detail}"
         )
     continuous = snapshot["continuous_status"]
     remote = snapshot["remote_status"]
-    description = "\n".join(lines) if lines else "표시할 전문가가 없습니다."
+    description = "\n\n".join(lines) if lines else "표시할 전문가가 없습니다."
     return {
         "title": f"Mystic 학습 개요 ({current_page + 1}/{total_pages})",
         "description": description,
@@ -413,24 +464,24 @@ def overview_page(snapshot: dict[str, Any], page: int) -> dict[str, Any]:
             {
                 "name": "로컬 학습",
                 "value": (
-                    f"status: `{continuous.get('status', '-')}`\n"
-                    f"cycle: `{continuous.get('current_cycle', '-')}`\n"
-                    f"dataset: `{continuous.get('active_slug', '-')}`"
+                    f"현재: `{local_status_label(continuous)}`\n"
+                    f"사이클: `{continuous.get('current_cycle', '-')}`\n"
+                    f"데이터셋: `{continuous.get('active_slug', '-') or '-'}`"
                 ),
                 "inline": True,
             },
             {
                 "name": "원격 Raven",
                 "value": (
-                    f"status: `{remote.get('status', '-')}`\n"
-                    f"cycle: `{remote.get('active_cycle_id', '-')}`\n"
-                    f"phase: `{remote.get('current_phase', '-')}`"
+                    f"현재: `{remote_status_label(remote)}`\n"
+                    f"사이클: `{remote.get('active_cycle_id', '-')}`\n"
+                    f"단계: `{PHASE_LABELS.get(str(remote.get('current_phase', '') or ''), str(remote.get('current_phase', '-') or '-'))}`"
                 ),
                 "inline": True,
             },
             {
                 "name": "표시 규칙",
-                "value": "🟢 학습 중/성공\n🟡 데이터 대기중\n🔴 실패/오류",
+                "value": "🟡 학습 중\n🟢 대기/완료\n🔴 실패/오류",
                 "inline": True,
             },
         ],
@@ -447,12 +498,14 @@ def expert_detail_page(snapshot: dict[str, Any], agent: str) -> dict[str, Any]:
     return {
         "author": expert.name,
         "title": f"{expert.status_emoji} {expert.status_text}",
-        "description": render_progress_bar(expert.progress_percent),
+        "description": f"{render_progress_bar(expert.progress_percent)}\n기준: {expert.progress_reason}",
         "color": expert.status_color,
         "fields": [
-            {"name": "학습 현황", "value": f"`{expert.progress_percent}%`", "inline": True},
+            {"name": "학습 현황", "value": f"`{expert.status_text}`", "inline": True},
+            {"name": "진행률", "value": f"`{expert.progress_percent}%`", "inline": True},
             {"name": "학습 데이터", "value": expert.dataset or "-", "inline": True},
             {"name": "예상 시간", "value": expert.eta_text, "inline": True},
+            {"name": "현재 상태", "value": expert.status_detail, "inline": True},
             {"name": "모델", "value": expert.model or "-", "inline": True},
             {"name": "어댑터", "value": expert.adapter or "-", "inline": True},
             {"name": "train_ready rows", "value": str(expert.train_ready_rows), "inline": True},
@@ -474,3 +527,21 @@ def expert_detail_page(snapshot: dict[str, Any], agent: str) -> dict[str, Any]:
 def render_progress_bar(percent: int, *, width: int = 20) -> str:
     filled = int(round((max(0, min(percent, 100)) / 100.0) * width))
     return "█" * filled + "░" * (width - filled) + f" {percent}%"
+
+
+def local_status_label(payload: dict[str, Any]) -> str:
+    status = str(payload.get("status", "")).lower()
+    if status == "running":
+        return "학습 중"
+    if status == "error":
+        return "오류"
+    return "대기"
+
+
+def remote_status_label(payload: dict[str, Any]) -> str:
+    status = str(payload.get("status", "")).lower()
+    if status == "running":
+        return "학습 중"
+    if status == "error":
+        return "오류"
+    return "대기"
