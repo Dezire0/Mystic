@@ -4,6 +4,7 @@ import argparse
 import asyncio
 from pathlib import Path
 import sys
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -94,6 +95,34 @@ def research_embed(result: ResearchResult) -> discord.Embed:
     if result.critic_first_fatal_error:
         embed.add_field(name="검증 메모", value=result.critic_first_fatal_error[:1024], inline=False)
     return embed
+
+
+def is_dm_message(message: Any) -> bool:
+    return isinstance(getattr(message, "channel", None), discord.DMChannel)
+
+
+def normalize_message_question(*, content: str, bot_user_id: int, is_dm: bool) -> str:
+    text = content.strip()
+    if not text:
+        return ""
+    if is_dm:
+        return text
+    for mention in (f"<@{bot_user_id}>", f"<@!{bot_user_id}>"):
+        text = text.replace(mention, " ")
+    return " ".join(text.split()).strip()
+
+
+async def send_research_response(
+    destination: discord.abc.Messageable,
+    *,
+    question: str,
+    base_dir: Path,
+) -> None:
+    result = await asyncio.to_thread(run_research_lab, question, base_dir=base_dir)
+    chunks = chunk_text(result.final_answer)
+    await destination.send(embed=research_embed(result))
+    for extra in chunks[1:]:
+        await destination.send(extra[:1900])
 
 
 class ExpertSelect(discord.ui.Select["MysticOverviewView"]):
@@ -247,6 +276,7 @@ class DetailRefreshButton(discord.ui.Button["MysticExpertDetailView"]):
 class MysticDiscordBot(commands.Bot):
     def __init__(self, *, base_dir: Path, guild_id: int = 0):
         intents = discord.Intents.default()
+        intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
         self.base_dir = base_dir
         self.guild_id = guild_id
@@ -258,6 +288,32 @@ class MysticDiscordBot(commands.Bot):
             await self.tree.sync(guild=guild)
         else:
             await self.tree.sync()
+
+    async def on_message(self, message: discord.Message) -> None:
+        if message.author.bot or self.user is None:
+            return
+
+        in_dm = is_dm_message(message)
+        if not in_dm and not self.user.mentioned_in(message):
+            await self.process_commands(message)
+            return
+
+        question = normalize_message_question(
+            content=message.content,
+            bot_user_id=self.user.id,
+            is_dm=in_dm,
+        )
+        if not question:
+            await message.channel.send("질문 내용을 함께 보내 주세요.")
+            await self.process_commands(message)
+            return
+
+        async with message.channel.typing():
+            try:
+                await send_research_response(message.channel, question=question, base_dir=self.base_dir)
+            except Exception as exc:
+                await message.channel.send(f"연구실 실행 실패: {exc}")
+        await self.process_commands(message)
 
 
 def register_commands(bot: MysticDiscordBot) -> None:

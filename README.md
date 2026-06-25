@@ -116,6 +116,7 @@ Use `/mystic` in Discord. The bot opens a DM and sends:
 - 1-3 overview pages with all experts, progress percent, and running/waiting/failure status
 - an expert detail page with progress bar, dataset, ETA, and latest failure log
 - `/mystic_lab` runs the local research lab for a natural-language math question
+- you can also send a plain DM to the bot, or mention the bot in a guild message, and it will answer without a slash command
 
 `/mystic_lab` flow:
 
@@ -124,6 +125,8 @@ Use `/mystic` in Discord. The bot opens a DM and sends:
 - approach execution
 - conclusion drafting
 - Raven critique to reduce unsupported claims
+
+For plain-message replies, enable `MESSAGE CONTENT INTENT` in the Discord Developer Portal for the bot application. The runtime now enables `message_content` in code, but Discord must also allow it in the bot settings.
 
 Run it persistently with launchd:
 
