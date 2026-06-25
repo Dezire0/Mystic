@@ -86,6 +86,23 @@ def download_hf_samples(base_dir: str | Path, slugs: list[str] | None = None, ma
 def _download_dataset_sample(sample_root: Path, slug: str, repo_id: str, max_rows: int) -> dict[str, object]:
     from datasets import load_dataset
 
+    raw_dir = sample_root / slug
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    sample_path = raw_dir / "sample.jsonl"
+    if sample_path.exists():
+        existing_rows = _count_jsonl_rows(sample_path)
+        if existing_rows >= max(max_rows, 1):
+            manifest = {
+                "repo_id": repo_id,
+                "config": None,
+                "split": "cached",
+                "rows": existing_rows,
+                "sample_path": str(sample_path),
+                "cached": True,
+            }
+            write_json(raw_dir / "sample_manifest.json", manifest)
+            return manifest
+
     config = _first_config(repo_id)
     split = _first_split(repo_id, config)
     kwargs = {"path": repo_id, "split": split, "streaming": True}
@@ -98,9 +115,6 @@ def _download_dataset_sample(sample_root: Path, slug: str, repo_id: str, max_row
             break
         rows.append(row)
 
-    raw_dir = sample_root / slug
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    sample_path = raw_dir / "sample.jsonl"
     sample_path.write_text(
         "\n".join(json.dumps(row, ensure_ascii=True) for row in rows) + ("\n" if rows else ""),
         encoding="utf-8",
@@ -159,6 +173,15 @@ def _try_snapshot_fallback(sample_root: Path, slug: str, repo_id: str, exc: Exce
     }
     write_json(sample_root / slug / "snapshot_manifest.json", manifest)
     return manifest
+
+
+def _count_jsonl_rows(path: Path) -> int:
+    count = 0
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                count += 1
+    return count
 
 
 def _make_hf_api(token: str | None = None):

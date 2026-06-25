@@ -35,11 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cycle-prefix", default="remote_cycle")
     parser.add_argument("--adapter-prefix", default="raven_lora_remote")
     parser.add_argument("--model-suffix", default="qwen_0_5b")
-    parser.add_argument("--sleep-seconds", type=int, default=300)
-    parser.add_argument("--error-sleep-seconds", type=int, default=600)
+    parser.add_argument("--sleep-seconds", type=int, default=0)
+    parser.add_argument("--error-sleep-seconds", type=int, default=180)
     parser.add_argument("--poll-seconds", type=int, default=60)
     parser.add_argument("--timeout-minutes", type=int, default=240)
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--train-limit", type=int, default=1000)
+    parser.add_argument("--eval-limit", type=int, default=100)
     parser.add_argument("--learning-rate", type=float, default=0.00015)
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=1)
@@ -182,6 +184,10 @@ def build_cycle_command(args: argparse.Namespace, spec: dict[str, str], base_dir
     ]
     if int(args.limit) > 0:
         command.extend(["--limit", str(args.limit)])
+    if int(args.train_limit) > 0:
+        command.extend(["--train-limit", str(args.train_limit)])
+    if int(args.eval_limit) > 0:
+        command.extend(["--eval-limit", str(args.eval_limit)])
     return command
 
 

@@ -573,6 +573,27 @@ def locate_cycle_signal_file(output_dir: Path) -> Path | None:
     return matches[0] if matches else None
 
 
+def probe_kernel_output_signal(
+    *,
+    kaggle_cmd: list[str],
+    kernel_ref: str,
+    output_dir: Path,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any] | None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        run_raw_command([*kaggle_cmd, "kernels", "output", kernel_ref, "-p", str(output_dir), "-o"], cwd=ROOT, env=env)
+    except subprocess.CalledProcessError:
+        return None
+    signal_file = locate_cycle_signal_file(output_dir)
+    if signal_file is None:
+        return None
+    return {
+        "signal_file": str(signal_file),
+        "signal_payload": read_json(signal_file),
+    }
+
+
 def load_prepare_summary(base_dir: Path, cycle_id: str) -> dict[str, Any]:
     summary_path = prepare_summary_path(base_dir, cycle_id)
     if not summary_path.exists():
@@ -663,13 +684,14 @@ def build_kaggle_training_script(
             "    global_matches = list(Path('/kaggle/input').rglob('*.tar.gz'))",
             "    if global_matches:",
             "        return global_matches[0]",
-            "    raise FileNotFoundError(f'Package tarball not found under {dataset_root} or /kaggle/input')",
+            "    input_listing = [str(path) for path in Path('/kaggle/input').glob('*')]",
+            "    raise FileNotFoundError(f'Package tarball not found under {dataset_root} or /kaggle/input; available={input_listing}')",
             "",
             "write_signal('starting', dataset_slug=DATASET_SLUG, base_model=BASE_MODEL, adapter_dirname=ADAPTER_DIRNAME)",
             "try:",
             "    package_path = None",
             "    last_error = None",
-            "    for attempt in range(30):",
+            "    for attempt in range(60):",
             "        try:",
             "            package_path = find_package()",
             "            print(f'Found package on attempt {attempt + 1}: {package_path}', flush=True)",
@@ -677,7 +699,7 @@ def build_kaggle_training_script(
             "            break",
             "        except FileNotFoundError as exc:",
             "            last_error = exc",
-            "            print(f'Waiting for Kaggle dataset mount ({attempt + 1}/30)...', flush=True)",
+            "            print(f'Waiting for Kaggle dataset mount ({attempt + 1}/60)...', flush=True)",
             "            time.sleep(10)",
             "    if package_path is None:",
             "        raise last_error or FileNotFoundError('Package tarball not found.')",
@@ -759,6 +781,7 @@ def write_kaggle_kernel_metadata(
         "enable_gpu": True,
         "enable_internet": True,
         "dataset_data_sources": [dataset_ref],
+        "dataset_sources": [dataset_ref],
         "competition_sources": [],
         "kernel_sources": [],
         "model_sources": [],
@@ -801,7 +824,7 @@ def wait_for_kaggle_dataset_ready(
         time.sleep(poll_seconds)
 
 
-def wait_for_dataset_visibility_stabilization(seconds: int = 60) -> None:
+def wait_for_dataset_visibility_stabilization(seconds: int = 180) -> None:
     if seconds > 0:
         time.sleep(seconds)
 
@@ -905,10 +928,10 @@ def run_prepare(args: argparse.Namespace) -> int:
     cycle_root.mkdir(parents=True, exist_ok=True)
     targets = resolve_prepare_targets(limit=args.limit, train_limit=args.train_limit, eval_limit=args.eval_limit)
 
-    export_payload, export_stdout = run_command(
-        [PYTHON_BIN, "scripts/export_raven_lora.py", "--base-dir", str(base_dir)],
-        cwd=ROOT,
-    )
+    export_command = [PYTHON_BIN, "scripts/export_raven_lora.py", "--base-dir", str(base_dir)]
+    if int(targets["total_limit"]) > 0:
+        export_command.extend(["--target-rows", str(int(targets["total_limit"]))])
+    export_payload, export_stdout = run_command(export_command, cwd=ROOT)
 
     prepare_payload: dict[str, Any] | None = None
     prepare_stdout = ""
@@ -1122,11 +1145,58 @@ def run_poll(args: argparse.Namespace) -> int:
 
     with kaggle_runtime_env() as kaggle_env:
         while True:
-            result = run_raw_command([*kaggle_cmd, "kernels", "status", kernel_ref], cwd=ROOT, env=kaggle_env)
-            stdout = result.stdout.strip() or result.stderr.strip()
-            status = parse_kaggle_status_output(stdout)
+            try:
+                result = run_raw_command([*kaggle_cmd, "kernels", "status", kernel_ref], cwd=ROOT, env=kaggle_env)
+                stdout = result.stdout.strip() or result.stderr.strip()
+                status = parse_kaggle_status_output(stdout)
+            except subprocess.CalledProcessError as exc:
+                stdout = (exc.stdout or "").strip() or (exc.stderr or "").strip()
+                lowered = stdout.lower()
+                if "permission 'kernels.get'" in lowered or "cannot access kernel" in lowered:
+                    status = "running"
+                else:
+                    raise RuntimeError(f"Kaggle kernel status failed: {stdout}") from exc
             snapshot = {"timestamp": now_iso(), "status": status, "raw": stdout}
             statuses.append(snapshot)
+
+            probe_dir = kaggle_output_dir(base_dir, args.cycle_id) / "probe"
+            signal_probe = probe_kernel_output_signal(
+                kaggle_cmd=kaggle_cmd,
+                kernel_ref=kernel_ref,
+                output_dir=probe_dir,
+                env=kaggle_env,
+            )
+            if signal_probe is not None:
+                signal_payload = signal_probe.get("signal_payload", {})
+                signal_status = str(signal_payload.get("status", "")).lower()
+                if signal_status == "cycle_done":
+                    payload = {
+                        "timestamp": now_iso(),
+                        "command": "poll",
+                        "cycle_id": args.cycle_id,
+                        "kernel_ref": kernel_ref,
+                        "final_status": "complete",
+                        "checks": statuses,
+                        "signal_probe": signal_probe,
+                    }
+                    write_json(kaggle_poll_summary_path(base_dir, args.cycle_id), payload)
+                    print(json.dumps(payload, indent=2))
+                    return 0
+                if signal_status == "cycle_error":
+                    write_json(
+                        kaggle_poll_summary_path(base_dir, args.cycle_id),
+                        {
+                            "timestamp": now_iso(),
+                            "command": "poll",
+                            "cycle_id": args.cycle_id,
+                            "kernel_ref": kernel_ref,
+                            "final_status": "failed",
+                            "checks": statuses,
+                            "failure_output": signal_probe,
+                        },
+                    )
+                    raise RuntimeError(f"Kaggle kernel failed via signal: {signal_payload}")
+
             if status == "complete":
                 break
             if status == "failed":

@@ -27,6 +27,7 @@ from scripts.run_mystic_cycle import (
     slugify,
     validate_adapter_files,
     wait_for_kaggle_dataset_ready,
+    write_kaggle_kernel_metadata,
     write_json,
 )
 
@@ -147,6 +148,21 @@ class RunMysticCycleTests(unittest.TestCase):
         self.assertIn("cycle_error", script)
         self.assertIn("Path(__file__).resolve().parent / PACKAGE_FILENAME", script)
         self.assertIn("Path('/kaggle/src') / PACKAGE_FILENAME", script)
+        self.assertIn("available={input_listing}", script)
+        self.assertIn("range(60)", script)
+
+    def test_write_kaggle_kernel_metadata_includes_dataset_sources(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            kernel_dir = Path(temp_dir)
+            path = write_kaggle_kernel_metadata(
+                kernel_dir,
+                kernel_ref="dyrakd/mystic-raven-cycle-1",
+                title="Mystic Raven cycle_1",
+                dataset_ref="dyrakd/mystic-cycle-cycle-1",
+            )
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["dataset_data_sources"], ["dyrakd/mystic-cycle-cycle-1"])
+            self.assertEqual(payload["dataset_sources"], ["dyrakd/mystic-cycle-cycle-1"])
 
     def test_safe_extract_adapter_tar_ignores_appledouble(self):
         with tempfile.TemporaryDirectory() as temp_dir:

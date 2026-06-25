@@ -9,8 +9,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from datasets import load_dataset
-
 from mystic.jsonl_loop import NUMINA_REPO_ID, append_jsonl, ensure_data_dirs, normalize_numina_row, read_jsonl
 
 
@@ -44,6 +42,8 @@ def main(argv: list[str] | None = None) -> int:
 
     downloaded = 0
     if needed > 0:
+        from datasets import load_dataset
+
         dataset = load_dataset(NUMINA_REPO_ID, split=args.split, streaming=True)
         seen_index = 0
         for row in dataset:

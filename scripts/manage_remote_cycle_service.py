@@ -68,11 +68,13 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--cycle-prefix", default="remote_cycle")
     common.add_argument("--adapter-prefix", default="raven_lora_remote")
     common.add_argument("--model-suffix", default="qwen_0_5b")
-    common.add_argument("--sleep-seconds", type=int, default=300)
-    common.add_argument("--error-sleep-seconds", type=int, default=600)
+    common.add_argument("--sleep-seconds", type=int, default=0)
+    common.add_argument("--error-sleep-seconds", type=int, default=180)
     common.add_argument("--poll-seconds", type=int, default=60)
     common.add_argument("--timeout-minutes", type=int, default=240)
     common.add_argument("--limit", type=int, default=0)
+    common.add_argument("--train-limit", type=int, default=1000)
+    common.add_argument("--eval-limit", type=int, default=100)
     common.add_argument("--learning-rate", type=float, default=0.00015)
     common.add_argument("--epochs", type=int, default=1)
     common.add_argument("--batch-size", type=int, default=1)
@@ -129,6 +131,10 @@ def daemon_command(args: argparse.Namespace) -> list[str]:
         str(args.timeout_minutes),
         "--limit",
         str(args.limit),
+        "--train-limit",
+        str(args.train_limit),
+        "--eval-limit",
+        str(args.eval_limit),
         "--learning-rate",
         str(args.learning_rate),
         "--epochs",

@@ -24,6 +24,15 @@ DEFAULT_SLUGS = [
     "proofnet",
 ]
 
+RAW_SAMPLE_PATHS = {
+    "openmathinstruct_1": "raw/openmathinstruct_1/sample.jsonl",
+    "openmathinstruct_2": "raw/openmathinstruct_2/sample.jsonl",
+    "openr1_mixture_of_thoughts": "raw/openr1_mixture_of_thoughts/sample.jsonl",
+    "openthoughts": "raw/openthoughts/sample.jsonl",
+    "proofnet": "raw/proofnet/sample.jsonl",
+    "leandojo": "raw/leandojo/sample.jsonl",
+}
+
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
@@ -93,6 +102,34 @@ def write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def decode_process_stream(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value or "")
+
+
+def count_jsonl_rows(path: Path) -> int:
+    if not path.exists():
+        return 0
+    count = 0
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                count += 1
+    return count
+
+
+def has_cached_numina_rows(base_dir: Path, requested_rows: int) -> bool:
+    return count_jsonl_rows(base_dir / "raw" / "numina_math_cot_100.jsonl") >= requested_rows
+
+
+def has_cached_hf_rows(base_dir: Path, slug: str) -> bool:
+    relative = RAW_SAMPLE_PATHS.get(slug)
+    if not relative:
+        return False
+    return count_jsonl_rows(base_dir / relative) > 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     base_dir = Path(args.base_dir)
@@ -134,43 +171,39 @@ def main(argv: list[str] | None = None) -> int:
             "effective_hf_rows": effective_hf_rows,
             "effective_public_max_rows_per_agent": effective_public_rows,
             "steps": [],
+            "skipped_steps": [],
         }
 
-        commands = [
-            [
-                sys.executable,
-                "scripts/download_numina_sample.py",
-                "--limit",
-                str(effective_numina_limit),
-            ],
-            [
-                sys.executable,
-                "scripts/prepare_public_train_ready.py",
-                "--max-rows-per-agent",
-                str(effective_public_rows),
-                "--overwrite",
-            ],
-            [
-                sys.executable,
-                "scripts/run_all_specialists.py",
-                "--backend",
-                args.backend,
-                "--skip-bootstrap",
-                "--epochs",
-                str(args.epochs),
-                "--max-steps",
-                str(args.max_steps),
-                "--learning-rate",
-                str(args.learning_rate),
-                "--sequence-length",
-                str(args.sequence_length),
-                "--run-label",
-                args.run_label or args.run_id,
-            ],
-        ]
+        commands: list[list[str]] = []
+        if has_cached_numina_rows(base_dir, effective_numina_limit):
+            iteration_payload["skipped_steps"].append(
+                {
+                    "command": "download_numina_sample.py",
+                    "reason": "cached_rows_sufficient",
+                    "cached_rows": count_jsonl_rows(base_dir / "raw" / "numina_math_cot_100.jsonl"),
+                }
+            )
+        else:
+            commands.append(
+                [
+                    sys.executable,
+                    "scripts/download_numina_sample.py",
+                    "--limit",
+                    str(effective_numina_limit),
+                ]
+            )
         for slug in args.hf_slugs:
-            commands.insert(
-                1,
+            if has_cached_hf_rows(base_dir, slug):
+                iteration_payload["skipped_steps"].append(
+                    {
+                        "command": "download_hf_samples.py",
+                        "slug": slug,
+                        "reason": "cached_rows_present",
+                        "cached_rows": count_jsonl_rows(base_dir / RAW_SAMPLE_PATHS[slug]),
+                    }
+                )
+                continue
+            commands.append(
                 [
                     sys.executable,
                     "scripts/download_hf_samples.py",
@@ -178,8 +211,36 @@ def main(argv: list[str] | None = None) -> int:
                     str(effective_hf_rows),
                     "--slugs",
                     slug,
-                ],
+                ]
             )
+        commands.extend(
+            [
+                [
+                    sys.executable,
+                    "scripts/prepare_public_train_ready.py",
+                    "--max-rows-per-agent",
+                    str(effective_public_rows),
+                    "--overwrite",
+                ],
+                [
+                    sys.executable,
+                    "scripts/run_all_specialists.py",
+                    "--backend",
+                    args.backend,
+                    "--skip-bootstrap",
+                    "--epochs",
+                    str(args.epochs),
+                    "--max-steps",
+                    str(args.max_steps),
+                    "--learning-rate",
+                    str(args.learning_rate),
+                    "--sequence-length",
+                    str(args.sequence_length),
+                    "--run-label",
+                    args.run_label or args.run_id,
+                ],
+            ]
+        )
 
         for step_index, command in enumerate(commands, start=1):
             stdout_log = run_dir / "logs" / f"iteration_{iteration:03d}_step_{step_index:02d}.stdout.log"
@@ -187,8 +248,8 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 result = run_json_command(command, timeout=args.step_timeout_seconds)
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-                stdout = getattr(exc, "stdout", "") or ""
-                stderr = getattr(exc, "stderr", "") or ""
+                stdout = decode_process_stream(getattr(exc, "stdout", "") or "")
+                stderr = decode_process_stream(getattr(exc, "stderr", "") or "")
                 write_text(stdout_log, stdout)
                 write_text(stderr_log, stderr)
                 step_payload = {
