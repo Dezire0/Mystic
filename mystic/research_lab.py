@@ -50,16 +50,24 @@ Your job:
 1. Write the first executable solving strategy.
 2. Break the work into a small number of concrete phases.
 3. Keep the plan realistic before critic review.
+4. Decide the execution budget yourself from the problem, without hardcoded problem-type rules.
 
 Return JSON only:
 {
   "strategy": "...",
-  "phases": ["..."]
+  "phases": ["..."],
+  "execution_mode": "fast | medium | full",
+  "selected_count_cap": 3,
+  "debate_rounds": 1,
+  "require_revision": true,
+  "early_stop_if_closed": true
 }
 
 Rules:
 - Write in Korean.
 - Keep the plan concrete.
+- `selected_count_cap` means total selected specialists including the primary specialist.
+- Use smaller budgets only when the problem seems sufficiently narrow or quickly closable.
 - Output JSON only.
 """
 
@@ -312,6 +320,11 @@ class ResearchPlan:
     reason: str
     strategy: str
     phases: list[str] = field(default_factory=list)
+    execution_mode: str = "medium"
+    selected_count_cap: int = 4
+    debate_rounds: int = 1
+    require_revision: bool = True
+    early_stop_if_closed: bool = False
     critic_summary: str = ""
     critic_reviews: list[CriticReview] = field(default_factory=list)
     handoff_notes: list[str] = field(default_factory=list)
@@ -371,6 +384,33 @@ def critique_value(critique: Any, key: str, default: Any = "") -> Any:
     if isinstance(critique, dict):
         return critique.get(key, default)
     return getattr(critique, key, default)
+
+
+def normalize_execution_mode(value: Any) -> str:
+    mode = str(value or "").strip().lower()
+    if mode in {"fast", "medium", "full"}:
+        return mode
+    return "medium"
+
+
+def normalize_positive_int(value: Any, default: int, *, minimum: int = 1, maximum: int = 12) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, normalized))
+
+
+def normalize_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return default
 
 
 def remote_reasoning_state(*, fallback_model: str) -> tuple[bool, str, str]:
@@ -444,9 +484,19 @@ def run_research_lab(
             "remote_enabled": remote_enabled,
             "remote_backend": remote_backend,
             "remote_model": remote_model,
+            "execution_mode": plan.execution_mode,
+            "selected_count_cap": plan.selected_count_cap,
+            "debate_rounds": plan.debate_rounds,
+            "require_revision": plan.require_revision,
+            "early_stop_if_closed": plan.early_stop_if_closed,
             "lines": [
                 f"Core 초기 전략: {plan.strategy}",
                 *[f"초기 단계: {phase}" for phase in plan.phases[:4]],
+                f"실행 모드: {plan.execution_mode}",
+                f"선택 인원 상한: {plan.selected_count_cap}",
+                f"objection 라운드: {plan.debate_rounds}",
+                f"revision 필요: {'yes' if plan.require_revision else 'no'}",
+                f"조기 종료 가능: {'yes' if plan.early_stop_if_closed else 'no'}",
                 f"원격 reasoning 사용 가능: {'yes' if remote_enabled else 'no'}",
                 f"원격 backend/model: {remote_backend} / {remote_model}",
                 f"병렬 reasoning 사용: {'yes' if parallel_enabled else 'no'}",
@@ -461,7 +511,7 @@ def run_research_lab(
         progress_callback=progress_callback,
     )
 
-    selected_agents = [plan.specialist, *plan.support_specialists]
+    selected_agents = apply_selected_count_cap(plan)
     proposals = build_method_proposals(
         question=question,
         plan=plan,
@@ -497,34 +547,59 @@ def run_research_lab(
         parallel_enabled=parallel_enabled,
         progress_callback=progress_callback,
     )
-    objections = build_pairwise_objections(
-        question=question,
-        plan=plan,
-        executions=executions,
-        snapshot=snapshot,
-        defaults=defaults,
-        config_path=config_path,
-        fallback_client=generator_client,
-        fallback_backend=generator_backend,
-        fallback_model=generator_model,
-        parallel_enabled=parallel_enabled,
-        progress_callback=progress_callback,
-    )
-    executions = revise_executions(
-        question=question,
-        plan=plan,
-        executions=executions,
-        objections=objections,
-        proposals=proposals,
-        snapshot=snapshot,
-        defaults=defaults,
-        config_path=config_path,
-        fallback_client=generator_client,
-        fallback_backend=generator_backend,
-        fallback_model=generator_model,
-        parallel_enabled=parallel_enabled,
-        progress_callback=progress_callback,
-    )
+    objections: list[DebateNote] = []
+    if should_early_stop(plan=plan, executions=executions):
+        emit_progress(
+            progress_callback,
+            "early_stop_triggered",
+            {
+                "lines": [
+                    "Core 종료 규칙 발동",
+                    "분기와 불확실성이 충분히 닫혔다고 판단하여 objection/revision을 생략",
+                ]
+            },
+        )
+    else:
+        objections = build_pairwise_objections(
+            question=question,
+            plan=plan,
+            executions=executions,
+            snapshot=snapshot,
+            defaults=defaults,
+            config_path=config_path,
+            fallback_client=generator_client,
+            fallback_backend=generator_backend,
+            fallback_model=generator_model,
+            parallel_enabled=parallel_enabled,
+            progress_callback=progress_callback,
+        )
+        if plan.require_revision:
+            executions = revise_executions(
+                question=question,
+                plan=plan,
+                executions=executions,
+                objections=objections,
+                proposals=proposals,
+                snapshot=snapshot,
+                defaults=defaults,
+                config_path=config_path,
+                fallback_client=generator_client,
+                fallback_backend=generator_backend,
+                fallback_model=generator_model,
+                parallel_enabled=parallel_enabled,
+                progress_callback=progress_callback,
+            )
+        else:
+            emit_progress(
+                progress_callback,
+                "revision_skipped",
+                {
+                    "lines": [
+                        "Core revision 생략",
+                        "planner가 현재 실행 예산에서는 revision 없이 synthesis로 진행하도록 결정",
+                    ]
+                },
+            )
     expert = get_expert_snapshot(snapshot, plan.specialist)
     sections = synthesize_solution(
         question=question,
@@ -707,12 +782,22 @@ def plan_question(*, question: str, plan: ResearchPlan, client: LLMClient, model
     phases = parse_string_list(payload.get("phases"))
     if not phases:
         phases = ["문제 구조 파악", "필요한 경우 분기", "검산 및 완전성 확인"]
+    execution_mode = normalize_execution_mode(payload.get("execution_mode"))
+    selected_count_cap = normalize_positive_int(payload.get("selected_count_cap"), 4, minimum=1, maximum=8)
+    debate_rounds = normalize_positive_int(payload.get("debate_rounds"), 1, minimum=0, maximum=3)
+    require_revision = normalize_bool(payload.get("require_revision"), True)
+    early_stop_if_closed = normalize_bool(payload.get("early_stop_if_closed"), execution_mode != "full")
     return ResearchPlan(
         specialist=plan.specialist,
         support_specialists=plan.support_specialists,
         reason=plan.reason,
         strategy=strategy,
         phases=phases,
+        execution_mode=execution_mode,
+        selected_count_cap=selected_count_cap,
+        debate_rounds=debate_rounds,
+        require_revision=require_revision,
+        early_stop_if_closed=early_stop_if_closed,
         critic_summary=plan.critic_summary,
         critic_reviews=plan.critic_reviews,
         handoff_notes=plan.handoff_notes,
@@ -800,6 +885,11 @@ def run_core_critics(
         reason=plan.reason,
         strategy=strategy,
         phases=plan.phases,
+        execution_mode=plan.execution_mode,
+        selected_count_cap=plan.selected_count_cap,
+        debate_rounds=plan.debate_rounds,
+        require_revision=plan.require_revision,
+        early_stop_if_closed=plan.early_stop_if_closed,
         critic_summary=" | ".join(all_notes),
         critic_reviews=reviews,
         handoff_notes=plan.handoff_notes,
@@ -949,6 +1039,11 @@ def assign_tasks(
         reason=plan.reason,
         strategy=combined_strategy,
         phases=plan.phases,
+        execution_mode=plan.execution_mode,
+        selected_count_cap=plan.selected_count_cap,
+        debate_rounds=plan.debate_rounds,
+        require_revision=plan.require_revision,
+        early_stop_if_closed=plan.early_stop_if_closed,
         critic_summary=plan.critic_summary,
         critic_reviews=plan.critic_reviews,
         handoff_notes=handoff_notes,
@@ -1061,7 +1156,7 @@ def build_pairwise_objections(
     progress_callback: ProgressCallback | None,
 ) -> list[DebateNote]:
     notes: list[DebateNote] = []
-    if len(executions) < 2:
+    if len(executions) < 2 or plan.debate_rounds <= 0:
         return notes
     work_items: list[tuple[int, TaskExecution, TaskExecution]] = []
     position = 0
@@ -1327,6 +1422,11 @@ def build_final_answer(*, plan: ResearchPlan, sections: ResearchSections, critiq
     verdict = str(critique_value(critique, "verdict", "NEEDS_MORE_DETAIL"))
     first_fatal_error = str(critique_value(critique, "first_fatal_error", "") or "")
     support_specialists = list(getattr(plan, "support_specialists", []) or [])
+    execution_mode = str(getattr(plan, "execution_mode", "medium"))
+    selected_count_cap = int(getattr(plan, "selected_count_cap", len([plan.specialist, *support_specialists]) or 1))
+    debate_rounds = int(getattr(plan, "debate_rounds", 1))
+    require_revision = bool(getattr(plan, "require_revision", True))
+    early_stop_if_closed = bool(getattr(plan, "early_stop_if_closed", False))
     if verdict != "VALID":
         caution_lines.append(f"검증 판정: {verdict}")
         if first_fatal_error:
@@ -1353,6 +1453,13 @@ def build_final_answer(*, plan: ResearchPlan, sections: ResearchSections, critiq
         "전략:",
         sections.strategy.strip() or plan.strategy,
         "",
+        "실행 예산:",
+        (
+            f"mode={execution_mode}, selected_cap={selected_count_cap}, "
+            f"debate_rounds={debate_rounds}, revision={'yes' if require_revision else 'no'}, "
+            f"early_stop={'yes' if early_stop_if_closed else 'no'}"
+        ),
+        "",
         "풀이:",
         sections.execution.strip() or "-",
         "",
@@ -1366,6 +1473,54 @@ def build_final_answer(*, plan: ResearchPlan, sections: ResearchSections, critiq
 
 def get_expert_snapshot(snapshot: dict[str, Any], agent: str) -> ExpertSnapshot:
     return next(item for item in snapshot["experts"] if item.agent == agent)
+
+
+def apply_selected_count_cap(plan: ResearchPlan) -> list[str]:
+    selected = [plan.specialist, *plan.support_specialists]
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for agent in selected:
+        if agent in seen:
+            continue
+        seen.add(agent)
+        ordered.append(agent)
+    cap = max(1, plan.selected_count_cap)
+    return ordered[:cap]
+
+
+def should_early_stop(*, plan: ResearchPlan, executions: list[TaskExecution]) -> bool:
+    if not plan.early_stop_if_closed or len(executions) < 2:
+        return False
+    suspicious_terms = (
+        "불확실",
+        "추가",
+        "가정",
+        "추정",
+        "미확인",
+        "검토 필요",
+        "TODO",
+        "unknown",
+        "uncertain",
+        "needs more",
+    )
+    for execution in executions:
+        conclusion = execution.sections.conclusion.strip()
+        uncertainties = execution.sections.uncertainties.strip()
+        if not conclusion:
+            return False
+        if uncertainties and uncertainties not in {"없음", "none", "-", "n/a"}:
+            return False
+        merged = " ".join(
+            [
+                execution.sections.strategy,
+                execution.sections.execution,
+                execution.sections.conclusion,
+                execution.sections.uncertainties,
+            ]
+        ).lower()
+        if any(term.lower() in merged for term in suspicious_terms):
+            return False
+    return True
 
 
 def parse_json_object(raw: str) -> dict[str, Any]:

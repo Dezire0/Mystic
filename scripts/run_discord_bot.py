@@ -97,6 +97,8 @@ def stage_title(stage: str) -> str:
         "task_execution_complete": "7. 담당 태스크 실행 완료",
         "debate_objection_complete": "8. selected specialist objection",
         "revision_complete": "9. objection 반영 revision",
+        "early_stop_triggered": "8. Core 조기 종료",
+        "revision_skipped": "9. revision 생략",
         "synthesis_complete": "10. Core 통합 완료",
         "critique_complete": "11. Raven 검증 완료",
         "final_answer_ready": "12. 최종 답 준비 완료",

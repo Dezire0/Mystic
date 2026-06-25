@@ -12,6 +12,7 @@ class DiscordBotMessageTests(unittest.TestCase):
         self.assertEqual(stage_title("planning_complete"), "3. Core 초기 계획 완료")
         self.assertEqual(stage_title("completeness_critic_complete"), "4-2. Completeness Critic 완료")
         self.assertEqual(stage_title("debate_objection_complete"), "8. selected specialist objection")
+        self.assertEqual(stage_title("early_stop_triggered"), "8. Core 조기 종료")
 
     def test_progress_message_chunks_expands_lines(self):
         messages = progress_message_chunks(
