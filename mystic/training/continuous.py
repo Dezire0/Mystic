@@ -56,13 +56,34 @@ def default_rotation_slugs() -> list[str]:
         "openmathinstruct_2",
         "openr1_mixture_of_thoughts",
         "openthoughts",
-        "proofnet",
         "openmathinstruct_1",
         "leandojo",
+        "proofnet",
     ]
     ordered = [slug for slug in preferred_order if slug in slugs]
     remaining = [slug for slug in slugs if slug not in ordered]
     return ordered + remaining
+
+
+def normalize_rotation_slugs(base_dir: str | Path, requested_slugs: list[str]) -> list[str]:
+    root = Path(base_dir) / "raw"
+    normalized: list[str] = []
+    deferred: list[str] = []
+    seen: set[str] = set()
+    for slug in requested_slugs:
+        if slug in seen:
+            continue
+        seen.add(slug)
+        sample_path = root / slug / "sample.jsonl"
+        snapshot_manifest = root / slug / "snapshot_manifest.json"
+        if sample_path.exists():
+            normalized.append(slug)
+            continue
+        if snapshot_manifest.exists():
+            deferred.append(slug)
+            continue
+        normalized.append(slug)
+    return normalized + deferred
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:

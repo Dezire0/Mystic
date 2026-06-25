@@ -70,6 +70,7 @@ class ExpertSnapshot:
     eta_text: str
     error_excerpt: str
     stage: str
+    dataset_progress_text: str
 
 
 def subscribers_path(base_dir: str | Path) -> Path:
@@ -122,6 +123,7 @@ def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
         latest_failure = next((record for record in agent_records if not record.success), None)
         latest_success = next((record for record in agent_records if record.success), None)
         train_ready_rows = count_agent_rows(base, agent)
+        dataset_progress = dataset_progress_for_agent(base, agent)
         is_trainable = bool(target.get("adapter")) or agent == "raven"
         is_active = agent in active_agents or (agent == "raven" and str(remote_status.get("status", "")) == "running")
         dataset = infer_dataset(agent, latest=latest, active_slug=active_slug, remote_status=remote_status)
@@ -133,6 +135,7 @@ def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
             is_active=is_active,
             train_ready_rows=train_ready_rows,
             stage=stage,
+            dataset_progress=dataset_progress,
         )
         status_text = infer_status_text(status_kind, latest=latest, remote_status=remote_status)
         progress_percent = infer_progress_percent(
@@ -142,6 +145,7 @@ def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
             latest=latest,
             train_ready_rows=train_ready_rows,
             remote_status=remote_status,
+            dataset_progress=dataset_progress,
         )
         experts.append(
             ExpertSnapshot(
@@ -173,6 +177,7 @@ def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
                 ),
                 error_excerpt=extract_error_excerpt(latest_failure),
                 stage=stage,
+                dataset_progress_text=f"{dataset_progress['covered']}/{dataset_progress['expected']} datasets",
             )
         )
 
@@ -197,6 +202,31 @@ def count_agent_rows(base_dir: Path, agent: str) -> int:
     return count
 
 
+def dataset_progress_for_agent(base_dir: Path, agent: str) -> dict[str, int]:
+    train_ready_path = base_dir / "train_ready" / f"{agent}_train_ready.jsonl"
+    covered = set()
+    if train_ready_path.exists():
+        for line in train_ready_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                row = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            metadata = row.get("metadata", {})
+            dataset_name = str(metadata.get("dataset", "") or "").strip()
+            if dataset_name:
+                covered.add(dataset_name)
+    target = next((item for item in ARCHITECTURE_TRAINING_TARGETS if str(item.get("agent")) == agent), None)
+    expected = len(target.get("datasets", [])) if isinstance(target, dict) else 0
+    expected = max(expected, len(covered), 1)
+    return {
+        "covered": len(covered),
+        "expected": expected,
+    }
+
+
 def infer_dataset(agent: str, *, latest: Any, active_slug: str, remote_status: dict[str, Any]) -> str:
     if agent == "raven":
         current_dataset = str(remote_status.get("current_dataset_ref", "") or "")
@@ -217,12 +247,13 @@ def infer_status_kind(
     is_active: bool,
     train_ready_rows: int,
     stage: str,
+    dataset_progress: dict[str, int],
 ) -> str:
     if is_active:
         return GREEN
     if latest is not None and not latest.success:
         return RED
-    if latest is not None and latest.success:
+    if latest is not None and latest.success and dataset_progress["covered"] >= dataset_progress["expected"]:
         return GREEN
     if stage == "tool_only":
         return GREEN
@@ -252,6 +283,7 @@ def infer_progress_percent(
     latest: Any,
     train_ready_rows: int,
     remote_status: dict[str, Any],
+    dataset_progress: dict[str, int],
 ) -> int:
     if stage == "tool_only":
         return 100
@@ -260,9 +292,12 @@ def infer_progress_percent(
         return REMOTE_PHASE_PROGRESS.get(phase, 65)
 
     row_progress = min(train_ready_rows / 100.0, 1.0)
-    progress = int(round(row_progress * 60))
-    if latest is not None and latest.success:
+    dataset_ratio = dataset_progress["covered"] / max(dataset_progress["expected"], 1)
+    progress = int(round(max(row_progress * 0.35, dataset_ratio) * 90))
+    if latest is not None and latest.success and dataset_progress["covered"] >= dataset_progress["expected"]:
         progress = max(progress, 100)
+    elif latest is not None and latest.success:
+        progress = max(progress, 70)
     elif is_active:
         progress = max(progress, 72)
     elif latest is not None and not latest.success:
@@ -421,6 +456,7 @@ def expert_detail_page(snapshot: dict[str, Any], agent: str) -> dict[str, Any]:
             {"name": "모델", "value": expert.model or "-", "inline": True},
             {"name": "어댑터", "value": expert.adapter or "-", "inline": True},
             {"name": "train_ready rows", "value": str(expert.train_ready_rows), "inline": True},
+            {"name": "데이터셋 진행", "value": expert.dataset_progress_text, "inline": True},
             {"name": "성공 / 실패", "value": f"{expert.success_count} / {expert.failure_count}", "inline": True},
             {"name": "스테이지", "value": expert.stage or "-", "inline": True},
             {"name": "최근 업데이트", "value": expert.latest_timestamp or "-", "inline": True},

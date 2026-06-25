@@ -22,6 +22,7 @@ from mystic.training.continuous import (
     continuous_cycle_log_path,
     continuous_state_path,
     default_rotation_slugs,
+    normalize_rotation_slugs,
     now_iso,
     read_json,
     write_continuous_status_outputs,
@@ -68,22 +69,23 @@ def write_text(path: Path, text: str) -> None:
 
 
 def load_state(base_dir: Path, slugs: list[str]) -> dict[str, Any]:
+    normalized_slugs = normalize_rotation_slugs(base_dir, slugs)
     path = continuous_state_path(base_dir)
     if path.exists():
         state = read_json(path)
-        state.setdefault("rotation_slugs", slugs)
+        state["rotation_slugs"] = normalized_slugs
         return state
     return {
         "status": "idle",
         "service_label": LAUNCHD_LABEL,
         "started_at": now_iso(),
         "last_heartbeat": now_iso(),
-        "rotation_slugs": slugs,
+        "rotation_slugs": normalized_slugs,
         "current_cycle": 0,
         "completed_cycles": 0,
         "next_dataset_index": 0,
         "active_slug": "",
-        "next_slug": slugs[0] if slugs else "",
+        "next_slug": normalized_slugs[0] if normalized_slugs else "",
         "last_error": "",
     }
 
@@ -104,7 +106,7 @@ def tier_for_cycle(cycle_number: int, rotation_size: int) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     base_dir = Path(args.base_dir)
-    slugs = args.hf_slugs or default_rotation_slugs()
+    slugs = normalize_rotation_slugs(base_dir, args.hf_slugs or default_rotation_slugs())
     details_dir = continuous_cycle_details_dir(base_dir)
     details_dir.mkdir(parents=True, exist_ok=True)
     cycle_log = continuous_cycle_log_path(base_dir)

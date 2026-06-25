@@ -85,8 +85,9 @@ class DiscordDashboardTests(unittest.TestCase):
 
             algebra = next(item for item in snapshot["experts"] if item.agent == "algebra")
             raven = next(item for item in snapshot["experts"] if item.agent == "raven")
-            self.assertEqual(algebra.status_kind, GREEN)
-            self.assertEqual(algebra.progress_percent, 100)
+            self.assertEqual(algebra.status_kind, YELLOW)
+            self.assertLess(algebra.progress_percent, 100)
+            self.assertEqual(algebra.dataset_progress_text, "0/13 datasets")
             self.assertEqual(raven.status_kind, GREEN)
             self.assertGreaterEqual(raven.progress_percent, 70)
 
@@ -96,6 +97,7 @@ class DiscordDashboardTests(unittest.TestCase):
 
             detail = expert_detail_page(snapshot, "raven")
             self.assertIn("실패 로그", [field["name"] for field in detail["fields"]])
+            self.assertIn("데이터셋 진행", [field["name"] for field in detail["fields"]])
 
     def test_failed_expert_is_red_when_not_active(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -141,6 +143,54 @@ class DiscordDashboardTests(unittest.TestCase):
             snapshot = load_dashboard_snapshot(base)
             report = next(item for item in snapshot["experts"] if item.agent == "report")
             self.assertEqual(report.status_kind, YELLOW)
+
+    def test_progress_uses_dataset_metadata_coverage(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir) / "mystic_data"
+            (base / "train_ready").mkdir(parents=True, exist_ok=True)
+            (base / "state").mkdir(parents=True, exist_ok=True)
+            (base / "reports").mkdir(parents=True, exist_ok=True)
+            rows = [
+                {
+                    "metadata": {"dataset": "numinamath_cot"},
+                },
+                {
+                    "metadata": {"dataset": "openmathinstruct_2"},
+                },
+                {
+                    "metadata": {"dataset": "openr1_mixture_of_thoughts"},
+                },
+            ]
+            (base / "train_ready" / "prime_train_ready.jsonl").write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n",
+                encoding="utf-8",
+            )
+            (base / "logs").mkdir(parents=True, exist_ok=True)
+            (base / "logs" / "specialist_training_history.jsonl").write_text(
+                json.dumps(
+                    {
+                        "event_id": "prime-ok",
+                        "timestamp": "2026-06-25T02:00:00+00:00",
+                        "agent": "prime",
+                        "division": "Pure Math",
+                        "model_name": "deepseek-r1-distill-14b",
+                        "base_model": "deepseek-r1-distill-14b",
+                        "success": True,
+                        "status": "TRAIN_OK",
+                        "duration_seconds": 12.0,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            write_json(base / "state" / "continuous_training_state.json", {"status": "sleeping", "active_slug": ""})
+            write_json(base / "state" / "remote_cycle_state.json", {"status": "sleeping", "current_phase": ""})
+
+            snapshot = load_dashboard_snapshot(base)
+            prime = next(item for item in snapshot["experts"] if item.agent == "prime")
+            self.assertEqual(prime.dataset_progress_text, "3/19 datasets")
+            self.assertLess(prime.progress_percent, 100)
+            self.assertEqual(prime.status_kind, YELLOW)
 
 
 if __name__ == "__main__":

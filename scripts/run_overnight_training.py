@@ -125,9 +125,10 @@ def has_cached_numina_rows(base_dir: Path, requested_rows: int) -> bool:
 
 def has_cached_hf_rows(base_dir: Path, slug: str) -> bool:
     relative = RAW_SAMPLE_PATHS.get(slug)
-    if not relative:
-        return False
-    return count_jsonl_rows(base_dir / relative) > 0
+    if relative and count_jsonl_rows(base_dir / relative) > 0:
+        return True
+    snapshot_manifest = base_dir / "raw" / slug / "snapshot_manifest.json"
+    return snapshot_manifest.exists()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -256,6 +257,7 @@ def main(argv: list[str] | None = None) -> int:
                     "command": command,
                     "ok": False,
                     "error": repr(exc),
+                    "error_type": type(exc).__name__,
                     "stdout_log": str(stdout_log),
                     "stderr_log": str(stderr_log),
                     "parsed": extract_last_json_object(stdout),
