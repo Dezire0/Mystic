@@ -26,6 +26,7 @@ from mystic.discord_dashboard import (
     save_subscriber,
 )
 from mystic.env_loader import load_dotenv_file
+from mystic.research_lab import ResearchResult, run_research_lab
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -55,6 +56,43 @@ def embed_from_payload(payload: dict[str, object]) -> discord.Embed:
     footer = str(payload.get("footer", "") or "")
     if footer:
         embed.set_footer(text=footer[:2048])
+    return embed
+
+
+def chunk_text(value: str, limit: int = 3900) -> list[str]:
+    text = value.strip()
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    while text:
+        if len(text) <= limit:
+            chunks.append(text)
+            break
+        split_index = text.rfind("\n", 0, limit)
+        if split_index <= 0:
+            split_index = limit
+        chunks.append(text[:split_index].strip())
+        text = text[split_index:].strip()
+    return chunks
+
+
+def research_embed(result: ResearchResult) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"Mystic 연구실 · {result.specialist_name}",
+        description=chunk_text(result.final_answer)[0],
+        color=0x5865F2,
+    )
+    embed.add_field(name="선택 전문가", value=result.specialist_name, inline=True)
+    embed.add_field(name="생성 모델", value=f"{result.backend} / {result.model}"[:1024], inline=True)
+    embed.add_field(name="검증 모델", value=f"{result.critic_backend} / {result.critic_model}"[:1024], inline=True)
+    embed.add_field(name="전략", value=(result.plan_strategy or "-")[:1024], inline=False)
+    embed.add_field(
+        name="Raven 판정",
+        value=f"{result.critic_verdict} (confidence={result.critic_confidence:.2f})"[:1024],
+        inline=True,
+    )
+    if result.critic_first_fatal_error:
+        embed.add_field(name="검증 메모", value=result.critic_first_fatal_error[:1024], inline=False)
     return embed
 
 
@@ -248,6 +286,28 @@ def register_commands(bot: MysticDiscordBot) -> None:
         view = MysticOverviewView(base_dir=bot.base_dir, user_id=user.id, page=0)
         await dm_channel.send(embed=embed_from_payload(view.current_payload()), view=view)
         await interaction.response.send_message("최신 Mystic 대시보드를 DM으로 다시 보냈습니다.", ephemeral=True)
+
+    @bot.tree.command(name="mystic_lab", description="Mystic 연구실로 수학 질문을 분석합니다.")
+    @app_commands.describe(question="자연어 수학 질문")
+    async def mystic_lab(interaction: discord.Interaction, question: str) -> None:
+        if not question.strip():
+            await interaction.response.send_message("질문이 비어 있습니다.", ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True, ephemeral=interaction.guild is not None)
+        try:
+            result = await asyncio.to_thread(run_research_lab, question.strip(), base_dir=bot.base_dir)
+        except Exception as exc:
+            await interaction.followup.send(f"연구실 실행 실패: {exc}", ephemeral=True)
+            return
+
+        chunks = chunk_text(result.final_answer)
+        embed = research_embed(result)
+        if interaction.guild is not None:
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.followup.send(embed=embed, ephemeral=False)
+        for extra in chunks[1:]:
+            await interaction.followup.send(extra[:1900], ephemeral=interaction.guild is not None)
 
 
 async def run_bot(args: argparse.Namespace) -> None:

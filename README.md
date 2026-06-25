@@ -115,6 +115,15 @@ Use `/mystic` in Discord. The bot opens a DM and sends:
 
 - 1-3 overview pages with all experts, progress percent, and running/waiting/failure status
 - an expert detail page with progress bar, dataset, ETA, and latest failure log
+- `/mystic_lab` runs the local research lab for a natural-language math question
+
+`/mystic_lab` flow:
+
+- question understanding
+- strategy planning
+- approach execution
+- conclusion drafting
+- Raven critique to reduce unsupported claims
 
 Run it persistently with launchd:
 
