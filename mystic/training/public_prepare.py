@@ -6,6 +6,7 @@ from collections import defaultdict
 from hashlib import md5
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from mystic.training.blueprints import AGENT_DIVISIONS
@@ -63,6 +64,7 @@ def prepare_public_train_ready_datasets(
     preserved_counts: dict[str, int] = {}
     added_counts: dict[str, int] = defaultdict(int)
     source_counts: dict[str, int] = defaultdict(int)
+    candidates_by_agent: dict[str, list[tuple[int, dict[str, Any]]]] = defaultdict(list)
 
     for agent in sorted(PUBLIC_AGENT_SOURCES):
         path = train_ready_root / f"{agent}_train_ready.jsonl"
@@ -88,17 +90,21 @@ def prepare_public_train_ready_datasets(
             for agent, allowed_sources in PUBLIC_AGENT_SOURCES.items():
                 if source_slug not in allowed_sources:
                     continue
-                if len(rows_by_agent[agent]) >= max_rows_per_agent:
-                    continue
-                row = _to_train_ready_row(agent, source_slug, normalized)
-                fingerprint = _row_fingerprint(row)
-                if fingerprint in fingerprints_by_agent[agent]:
-                    continue
-                rows_by_agent[agent].append(row)
-                fingerprints_by_agent[agent].add(fingerprint)
-                added_counts[agent] += 1
-                source_rows_added += 1
+                for row in _to_train_ready_rows(agent, source_slug, normalized):
+                    fingerprint = _row_fingerprint(row)
+                    if fingerprint in fingerprints_by_agent[agent]:
+                        continue
+                    fingerprints_by_agent[agent].add(fingerprint)
+                    candidates_by_agent[agent].append((int(row["metadata"].get("quality_score", 0)), row))
+                    source_rows_added += 1
         source_counts[source_slug] = source_rows_added
+
+    for agent, candidates in candidates_by_agent.items():
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        remaining = max(max_rows_per_agent - len(rows_by_agent[agent]), 0)
+        for _, row in candidates[:remaining]:
+            rows_by_agent[agent].append(row)
+            added_counts[agent] += 1
 
     split_buckets: dict[str, list[dict[str, Any]]] = {"train": [], "validation": [], "test": []}
     written_files: list[str] = []
@@ -160,10 +166,14 @@ def _normalize_public_row(source_slug: str, row: dict[str, Any]) -> dict[str, st
     )
     if not problem or not solution:
         return None
+    quality_score = _quality_score(problem, solution)
+    if quality_score < 4:
+        return None
     return {
         "problem": problem,
         "solution": solution,
         "source_slug": source_slug,
+        "quality_score": str(quality_score),
     }
 
 
@@ -227,25 +237,192 @@ def _clean_text(value: str | None) -> str:
     return str(value).strip()
 
 
-def _to_train_ready_row(agent: str, source_slug: str, normalized: dict[str, str]) -> dict[str, Any]:
-    return {
-        "agent": agent,
-        "division": AGENT_DIVISIONS.get(agent, "unknown"),
-        "instruction": _instruction_for_agent(agent),
-        "input": (
-            f"Dataset source: {source_slug}\n"
-            f"Problem:\n{normalized['problem']}"
-        ),
-        "output": _output_for_agent(agent, normalized["solution"]),
-        "status": "PUBLIC_REAL",
-        "metadata": {
-            "dataset": source_slug,
-            "split": "train",
-            "source_type": "public_real",
-            "target_agent": agent,
-            "bootstrap": False,
+def _quality_score(problem: str, solution: str) -> int:
+    score = 0
+    combined = f"{problem}\n{solution}".lower()
+    if len(problem) >= 24:
+        score += 2
+    if len(solution) >= 24:
+        score += 2
+    if len(solution.split()) >= 8:
+        score += 1
+    if re.search(r"[0-9=+\-*/^]|\\frac|\\sum|\\int|prime|proof|theorem|lemma|probab|matrix|limit|integral", combined):
+        score += 1
+    if any(token in combined for token in ["sorry", "as an ai", "i can't", "cannot help", "not sure"]):
+        score -= 4
+    return score
+
+
+def _to_train_ready_rows(agent: str, source_slug: str, normalized: dict[str, str]) -> list[dict[str, Any]]:
+    quality_score = int(normalized.get("quality_score", "0") or 0)
+    if agent != "core":
+        return [
+            {
+                "agent": agent,
+                "division": AGENT_DIVISIONS.get(agent, "unknown"),
+                "instruction": _instruction_for_agent(agent),
+                "input": (
+                    f"Dataset source: {source_slug}\n"
+                    f"Problem:\n{normalized['problem']}"
+                ),
+                "output": _output_for_agent(agent, normalized["solution"]),
+                "status": "PUBLIC_REAL",
+                "metadata": {
+                    "dataset": source_slug,
+                    "split": "train",
+                    "source_type": "public_real",
+                    "target_agent": agent,
+                    "bootstrap": False,
+                    "quality_score": quality_score,
+                    "curation": "quality_filtered_public",
+                },
+            }
+        ]
+
+    specialist = _router_specialist(normalized["problem"])
+    support_specialists = _router_support_specialists(specialist)
+    return [
+        {
+            "agent": "core",
+            "division": AGENT_DIVISIONS.get("core", "unknown"),
+            "instruction": "Select the best primary specialist and support specialists. Return JSON with specialist, support_specialists, reason.",
+            "input": f"Dataset source: {source_slug}\nProblem:\n{normalized['problem']}",
+            "output": json.dumps(
+                {
+                    "specialist": specialist,
+                    "support_specialists": support_specialists,
+                    "reason": _router_reason(specialist),
+                },
+                ensure_ascii=True,
+            ),
+            "status": "PUBLIC_REAL",
+            "metadata": {
+                "dataset": source_slug,
+                "split": "train",
+                "source_type": "public_real",
+                "target_agent": "core",
+                "bootstrap": False,
+                "quality_score": quality_score,
+                "curation": "quality_filtered_public",
+                "role_variant": "router",
+            },
         },
+        {
+            "agent": "core",
+            "division": AGENT_DIVISIONS.get("core", "unknown"),
+            "instruction": "Write the first executable solving strategy. Return JSON with strategy and phases.",
+            "input": (
+                f"Dataset source: {source_slug}\n"
+                f"Primary specialist: {specialist}\n"
+                f"Support specialists: {', '.join(support_specialists)}\n"
+                f"Problem:\n{normalized['problem']}"
+            ),
+            "output": json.dumps(
+                {
+                    "strategy": _planner_strategy(specialist),
+                    "phases": _planner_phases(normalized["problem"]),
+                },
+                ensure_ascii=True,
+            ),
+            "status": "PUBLIC_REAL",
+            "metadata": {
+                "dataset": source_slug,
+                "split": "train",
+                "source_type": "public_real",
+                "target_agent": "core",
+                "bootstrap": False,
+                "quality_score": quality_score,
+                "curation": "quality_filtered_public",
+                "role_variant": "planner",
+            },
+        },
+    ]
+
+
+def _router_specialist(problem: str) -> str:
+    lowered = problem.lower()
+    keyword_map = [
+        ("triangle", "geo"),
+        ("geometry", "geo"),
+        ("probability", "probability"),
+        ("random", "probability"),
+        ("integral", "analysis"),
+        ("limit", "analysis"),
+        ("matrix", "algebra"),
+        ("equation", "algebra"),
+        ("logic", "logic"),
+        ("contradiction", "logic"),
+        ("physics", "physics"),
+        ("velocity", "physics"),
+        ("chem", "chem"),
+        ("molecule", "chem"),
+        ("biology", "biomath"),
+        ("gene", "biomath"),
+        ("prime", "prime"),
+        ("integer", "prime"),
+        ("proof", "prime"),
+    ]
+    for keyword, agent in keyword_map:
+        if keyword in lowered:
+            return agent
+    return "core"
+
+
+def _router_support_specialists(specialist: str) -> list[str]:
+    defaults = {
+        "prime": ["logic", "pattern", "forge", "raven"],
+        "algebra": ["logic", "analysis", "forge", "raven"],
+        "geo": ["analysis", "logic", "forge", "raven"],
+        "analysis": ["algebra", "logic", "forge", "raven"],
+        "probability": ["analysis", "logic", "simulator", "raven"],
+        "logic": ["prime", "forge", "raven"],
+        "physics": ["analysis", "simulator", "forge", "raven"],
+        "chem": ["analysis", "simulator", "forge", "raven"],
+        "biomath": ["analysis", "simulator", "forge", "raven"],
+        "core": ["logic", "pattern", "forge", "raven"],
     }
+    return defaults.get(specialist, ["logic", "forge", "raven"])
+
+
+def _router_reason(specialist: str) -> str:
+    reasons = {
+        "prime": "정수 조건과 증명 분기가 중심이라 prime이 주도한다.",
+        "algebra": "대수 변형과 기호 조작 비중이 커서 algebra가 주도한다.",
+        "geo": "기하 구조와 도형 불변량이 핵심이라 geo가 주도한다.",
+        "analysis": "극한/부등식 해석이 핵심이라 analysis가 주도한다.",
+        "probability": "확률 구조와 사건 분해가 핵심이라 probability가 주도한다.",
+        "logic": "논리 구조와 추론 위생이 핵심이라 logic이 주도한다.",
+        "physics": "물리 제약과 수식 해석이 핵심이라 physics가 주도한다.",
+        "chem": "화학적 제약과 수량 관계가 중요해 chem이 주도한다.",
+        "biomath": "정량 생물학 가정이 핵심이라 biomath가 주도한다.",
+        "core": "문제가 넓거나 혼합형이라 core가 오케스트레이션한다.",
+    }
+    return reasons.get(specialist, "도메인 단서를 기준으로 specialist를 선택했다.")
+
+
+def _planner_strategy(specialist: str) -> str:
+    strategies = {
+        "prime": "정수 조건과 상한/하한을 먼저 잡고 분기별로 닫는다.",
+        "algebra": "표현식을 정리하고 핵심 대수 변환을 분기별로 검증한다.",
+        "geo": "도형 구조를 재구성하고 보조정리와 불변량을 정리한다.",
+        "analysis": "정의역과 극한/부등식 구조를 먼저 고정한 뒤 세부 증명으로 간다.",
+        "probability": "확률 공간과 사건 분해를 먼저 정의하고 계산을 닫는다.",
+        "logic": "가정, 결론, 추론 단계의 누락 여부를 먼저 정리한다.",
+        "physics": "변수, 단위, 보존 법칙, 경계조건 순으로 검증한다.",
+        "chem": "화학 제약과 수량 관계를 먼저 정리한 뒤 계산을 수행한다.",
+        "biomath": "모형 가정과 정량 관계를 먼저 명시하고 계산을 진행한다.",
+        "core": "문제를 분해하고 specialist별 태스크를 배분한 뒤 검증으로 닫는다.",
+    }
+    return strategies.get(specialist, "핵심 구조를 먼저 분해하고 분기별로 검증한다.")
+
+
+def _planner_phases(problem: str) -> list[str]:
+    lowered = problem.lower()
+    if "all" in lowered or "classify" in lowered or "integer" in lowered or "positive integer" in lowered:
+        return ["범위 제한", "경우 분기", "후보 검산", "완전성 확인"]
+    if "prove" in lowered or "theorem" in lowered or "lemma" in lowered:
+        return ["핵심 보조정리 식별", "주 논증 전개", "반례/누락 점검", "결론 정리"]
+    return ["문제 구조 파악", "핵심 단계 분해", "검산 및 반례 점검", "결론 정리"]
 
 
 def _instruction_for_agent(agent: str) -> str:

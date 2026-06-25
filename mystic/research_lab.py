@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 import json
 import os
@@ -381,6 +382,15 @@ def remote_reasoning_state(*, fallback_model: str) -> tuple[bool, str, str]:
     return remote_enabled, remote_backend, remote_model or fallback_model
 
 
+def parallel_reasoning_enabled(*, remote_enabled: bool) -> bool:
+    override = str(os.getenv("MYSTIC_PARALLEL_REASONING", "")).strip().lower()
+    if override in {"1", "true", "yes", "on"}:
+        return True
+    if override in {"0", "false", "no", "off"}:
+        return False
+    return remote_enabled
+
+
 def run_research_lab(
     question: str,
     *,
@@ -395,6 +405,7 @@ def run_research_lab(
     generator_model = str(defaults.get("generator_model", "qwen2.5:7b"))
     generator_client = build_client(generator_backend, config_path=config_path)
     remote_enabled, remote_backend, remote_model = remote_reasoning_state(fallback_model=generator_model)
+    parallel_enabled = parallel_reasoning_enabled(remote_enabled=remote_enabled)
 
     critic_backend, critic_model, critic_client = build_critic_client(config_path=config_path)
 
@@ -438,6 +449,7 @@ def run_research_lab(
                 *[f"초기 단계: {phase}" for phase in plan.phases[:4]],
                 f"원격 reasoning 사용 가능: {'yes' if remote_enabled else 'no'}",
                 f"원격 backend/model: {remote_backend} / {remote_model}",
+                f"병렬 reasoning 사용: {'yes' if parallel_enabled else 'no'}",
             ],
         },
     )
@@ -460,6 +472,7 @@ def run_research_lab(
         fallback_client=generator_client,
         fallback_backend=generator_backend,
         fallback_model=generator_model,
+        parallel_enabled=parallel_enabled,
         progress_callback=progress_callback,
     )
     plan = assign_tasks(
@@ -481,6 +494,7 @@ def run_research_lab(
         fallback_client=generator_client,
         fallback_backend=generator_backend,
         fallback_model=generator_model,
+        parallel_enabled=parallel_enabled,
         progress_callback=progress_callback,
     )
     objections = build_pairwise_objections(
@@ -493,6 +507,7 @@ def run_research_lab(
         fallback_client=generator_client,
         fallback_backend=generator_backend,
         fallback_model=generator_model,
+        parallel_enabled=parallel_enabled,
         progress_callback=progress_callback,
     )
     executions = revise_executions(
@@ -507,6 +522,7 @@ def run_research_lab(
         fallback_client=generator_client,
         fallback_backend=generator_backend,
         fallback_model=generator_model,
+        parallel_enabled=parallel_enabled,
         progress_callback=progress_callback,
     )
     expert = get_expert_snapshot(snapshot, plan.specialist)
@@ -802,10 +818,11 @@ def build_method_proposals(
     fallback_client: LLMClient,
     fallback_backend: str,
     fallback_model: str,
+    parallel_enabled: bool,
     progress_callback: ProgressCallback | None,
 ) -> list[MethodProposal]:
-    proposals: list[MethodProposal] = []
-    for agent in selected_agents:
+    def worker(index_agent: tuple[int, str]) -> tuple[int, MethodProposal, dict[str, Any]]:
+        index, agent = index_agent
         expert = get_expert_snapshot(snapshot, agent)
         backend, model, client = resolve_reasoning_backend(
             agent=agent,
@@ -834,26 +851,36 @@ def build_method_proposals(
             deliverable=str(payload.get("deliverable", "")).strip() or "국소 결론과 다음 handoff",
             raw_text=raw,
         )
-        proposals.append(proposal)
-        emit_progress(
-            progress_callback,
-            "method_proposal_complete",
-            {
-                "agent": agent,
-                "specialist_name": expert.name,
-                "backend": backend,
-                "model": model,
-                "method_summary": proposal.method_summary,
-                "task_candidate": proposal.task_candidate,
-                "deliverable": proposal.deliverable,
-                "lines": [
-                    f"{expert.name} backend/model: {backend} / {model}",
-                    f"{expert.name} 방법: {proposal.method_summary}",
-                    f"{expert.name} 제안 태스크: {proposal.task_candidate}",
-                    f"{expert.name} 산출물: {proposal.deliverable}",
-                ],
-            },
-        )
+        payload_out = {
+            "agent": agent,
+            "specialist_name": expert.name,
+            "backend": backend,
+            "model": model,
+            "method_summary": proposal.method_summary,
+            "task_candidate": proposal.task_candidate,
+            "deliverable": proposal.deliverable,
+            "lines": [
+                f"{expert.name} backend/model: {backend} / {model}",
+                f"{expert.name} 방법: {proposal.method_summary}",
+                f"{expert.name} 제안 태스크: {proposal.task_candidate}",
+                f"{expert.name} 산출물: {proposal.deliverable}",
+            ],
+        }
+        return index, proposal, payload_out
+
+    pairs = list(enumerate(selected_agents))
+    if not parallel_enabled or len(pairs) <= 1:
+        ordered: list[tuple[int, MethodProposal, dict[str, Any]]] = [worker(item) for item in pairs]
+    else:
+        ordered = []
+        with ThreadPoolExecutor(max_workers=min(4, len(pairs))) as executor:
+            futures = [executor.submit(worker, item) for item in pairs]
+            for future in as_completed(futures):
+                ordered.append(future.result())
+    ordered.sort(key=lambda item: item[0])
+    proposals = [proposal for _, proposal, _ in ordered]
+    for _, _, payload_out in ordered:
+        emit_progress(progress_callback, "method_proposal_complete", payload_out)
     return proposals
 
 
@@ -940,11 +967,12 @@ def execute_assigned_tasks(
     fallback_client: LLMClient,
     fallback_backend: str,
     fallback_model: str,
+    parallel_enabled: bool,
     progress_callback: ProgressCallback | None,
 ) -> list[TaskExecution]:
     proposal_map = {proposal.agent: proposal for proposal in proposals}
-    executions: list[TaskExecution] = []
-    for assignment in plan.task_assignments:
+    def worker(index_assignment: tuple[int, TaskAssignment]) -> tuple[int, TaskExecution, dict[str, Any]]:
+        index, assignment = index_assignment
         expert = get_expert_snapshot(snapshot, assignment.agent)
         proposal = proposal_map[assignment.agent]
         backend, model, client = resolve_reasoning_backend(
@@ -981,30 +1009,40 @@ def execute_assigned_tasks(
             assignment=assignment,
             sections=sections,
         )
-        executions.append(execution)
-        emit_progress(
-            progress_callback,
-            "task_execution_complete",
-            {
-                "agent": assignment.agent,
-                "specialist_name": expert.name,
-                "backend": backend,
-                "model": model,
-                "task": assignment.task,
-                "deliverable": assignment.deliverable,
-                "understanding": sections.understanding,
-                "strategy": sections.strategy,
-                "execution": sections.execution,
-                "conclusion": sections.conclusion,
-                "uncertainties": sections.uncertainties,
-                "lines": [
-                    f"{expert.name} backend/model: {backend} / {model}",
-                    f"{expert.name} 담당 태스크: {assignment.task}",
-                    f"{expert.name} 작업 전략: {compact_line(sections.strategy, 220)}",
-                    f"{expert.name} 작업 결론: {compact_line(sections.conclusion, 220)}",
-                ],
-            },
-        )
+        payload_out = {
+            "agent": assignment.agent,
+            "specialist_name": expert.name,
+            "backend": backend,
+            "model": model,
+            "task": assignment.task,
+            "deliverable": assignment.deliverable,
+            "understanding": sections.understanding,
+            "strategy": sections.strategy,
+            "execution": sections.execution,
+            "conclusion": sections.conclusion,
+            "uncertainties": sections.uncertainties,
+            "lines": [
+                f"{expert.name} backend/model: {backend} / {model}",
+                f"{expert.name} 담당 태스크: {assignment.task}",
+                f"{expert.name} 작업 전략: {compact_line(sections.strategy, 220)}",
+                f"{expert.name} 작업 결론: {compact_line(sections.conclusion, 220)}",
+            ],
+        }
+        return index, execution, payload_out
+
+    pairs = list(enumerate(plan.task_assignments))
+    if not parallel_enabled or len(pairs) <= 1:
+        ordered: list[tuple[int, TaskExecution, dict[str, Any]]] = [worker(item) for item in pairs]
+    else:
+        ordered = []
+        with ThreadPoolExecutor(max_workers=min(4, len(pairs))) as executor:
+            futures = [executor.submit(worker, item) for item in pairs]
+            for future in as_completed(futures):
+                ordered.append(future.result())
+    ordered.sort(key=lambda item: item[0])
+    executions = [execution for _, execution, _ in ordered]
+    for _, _, payload_out in ordered:
+        emit_progress(progress_callback, "task_execution_complete", payload_out)
     return executions
 
 
@@ -1019,12 +1057,23 @@ def build_pairwise_objections(
     fallback_client: LLMClient,
     fallback_backend: str,
     fallback_model: str,
+    parallel_enabled: bool,
     progress_callback: ProgressCallback | None,
 ) -> list[DebateNote]:
     notes: list[DebateNote] = []
     if len(executions) < 2:
         return notes
+    work_items: list[tuple[int, TaskExecution, TaskExecution]] = []
+    position = 0
     for reviewer_execution in executions:
+        for target_execution in executions:
+            if target_execution.agent == reviewer_execution.agent:
+                continue
+            work_items.append((position, reviewer_execution, target_execution))
+            position += 1
+
+    def worker(item: tuple[int, TaskExecution, TaskExecution]) -> tuple[int, DebateNote, dict[str, Any]]:
+        index, reviewer_execution, target_execution = item
         reviewer = get_expert_snapshot(snapshot, reviewer_execution.agent)
         backend, model, client = resolve_reasoning_backend(
             agent=reviewer_execution.agent,
@@ -1034,55 +1083,61 @@ def build_pairwise_objections(
             fallback_backend=fallback_backend,
             fallback_model=fallback_model,
         )
-        for target_execution in executions:
-            if target_execution.agent == reviewer_execution.agent:
-                continue
-            user_prompt = (
-                f"Problem:\n{question.strip()}\n\n"
-                f"Combined strategy:\n{plan.strategy}\n\n"
-                f"Target specialist: {target_execution.specialist_name} / {target_execution.agent}\n"
-                f"Assigned task: {target_execution.assignment.task}\n"
-                f"Deliverable: {target_execution.assignment.deliverable}\n"
-                f"UNDERSTANDING:\n{target_execution.sections.understanding}\n"
-                f"STRATEGY:\n{target_execution.sections.strategy}\n"
-                f"EXECUTION:\n{target_execution.sections.execution}\n"
-                f"CONCLUSION:\n{target_execution.sections.conclusion}\n"
-                f"UNCERTAINTIES:\n{target_execution.sections.uncertainties}\n\n"
-                f"Reviewer specialist: {reviewer.name} / {reviewer.agent}"
-            )
-            raw = client.generate_text(model=model, system_prompt=OBJECTION_PROMPT, user_prompt=user_prompt)
-            payload = parse_json_object(raw)
-            note = DebateNote(
-                reviewer_agent=reviewer_execution.agent,
-                reviewer_name=reviewer.name,
-                target_agent=target_execution.agent,
-                target_name=target_execution.specialist_name,
-                objection=str(payload.get("objection", "")).strip() or "구체 objection 없음",
-                risk=str(payload.get("risk", "")).strip() or "잠재 위험 설명 없음",
-                requested_fix=str(payload.get("requested_fix", "")).strip() or "추가 보완 요청 없음",
-                raw_text=raw,
-            )
-            notes.append(note)
-            emit_progress(
-                progress_callback,
-                "debate_objection_complete",
-                {
-                    "reviewer_agent": note.reviewer_agent,
-                    "reviewer_name": note.reviewer_name,
-                    "target_agent": note.target_agent,
-                    "target_name": note.target_name,
-                    "backend": backend,
-                    "model": model,
-                    "objection": note.objection,
-                    "risk": note.risk,
-                    "requested_fix": note.requested_fix,
-                    "lines": [
-                        f"{note.reviewer_name} -> {note.target_name} objection: {note.objection}",
-                        f"위험: {note.risk}",
-                        f"수정 요청: {note.requested_fix}",
-                    ],
-                },
-            )
+        user_prompt = (
+            f"Problem:\n{question.strip()}\n\n"
+            f"Combined strategy:\n{plan.strategy}\n\n"
+            f"Target specialist: {target_execution.specialist_name} / {target_execution.agent}\n"
+            f"Assigned task: {target_execution.assignment.task}\n"
+            f"Deliverable: {target_execution.assignment.deliverable}\n"
+            f"UNDERSTANDING:\n{target_execution.sections.understanding}\n"
+            f"STRATEGY:\n{target_execution.sections.strategy}\n"
+            f"EXECUTION:\n{target_execution.sections.execution}\n"
+            f"CONCLUSION:\n{target_execution.sections.conclusion}\n"
+            f"UNCERTAINTIES:\n{target_execution.sections.uncertainties}\n\n"
+            f"Reviewer specialist: {reviewer.name} / {reviewer.agent}"
+        )
+        raw = client.generate_text(model=model, system_prompt=OBJECTION_PROMPT, user_prompt=user_prompt)
+        payload = parse_json_object(raw)
+        note = DebateNote(
+            reviewer_agent=reviewer_execution.agent,
+            reviewer_name=reviewer.name,
+            target_agent=target_execution.agent,
+            target_name=target_execution.specialist_name,
+            objection=str(payload.get("objection", "")).strip() or "구체 objection 없음",
+            risk=str(payload.get("risk", "")).strip() or "잠재 위험 설명 없음",
+            requested_fix=str(payload.get("requested_fix", "")).strip() or "추가 보완 요청 없음",
+            raw_text=raw,
+        )
+        payload_out = {
+            "reviewer_agent": note.reviewer_agent,
+            "reviewer_name": note.reviewer_name,
+            "target_agent": note.target_agent,
+            "target_name": note.target_name,
+            "backend": backend,
+            "model": model,
+            "objection": note.objection,
+            "risk": note.risk,
+            "requested_fix": note.requested_fix,
+            "lines": [
+                f"{note.reviewer_name} -> {note.target_name} objection: {note.objection}",
+                f"위험: {note.risk}",
+                f"수정 요청: {note.requested_fix}",
+            ],
+        }
+        return index, note, payload_out
+
+    if not parallel_enabled or len(work_items) <= 1:
+        ordered: list[tuple[int, DebateNote, dict[str, Any]]] = [worker(item) for item in work_items]
+    else:
+        ordered = []
+        with ThreadPoolExecutor(max_workers=min(6, len(work_items))) as executor:
+            futures = [executor.submit(worker, item) for item in work_items]
+            for future in as_completed(futures):
+                ordered.append(future.result())
+    ordered.sort(key=lambda item: item[0])
+    for _, note, payload_out in ordered:
+        notes.append(note)
+        emit_progress(progress_callback, "debate_objection_complete", payload_out)
     return notes
 
 
@@ -1099,27 +1154,22 @@ def revise_executions(
     fallback_client: LLMClient,
     fallback_backend: str,
     fallback_model: str,
+    parallel_enabled: bool,
     progress_callback: ProgressCallback | None,
 ) -> list[TaskExecution]:
     proposal_map = {proposal.agent: proposal for proposal in proposals}
     objection_map: dict[str, list[DebateNote]] = {}
     for note in objections:
         objection_map.setdefault(note.target_agent, []).append(note)
-    revised: list[TaskExecution] = []
-    for execution in executions:
+    def worker(index_execution: tuple[int, TaskExecution]) -> tuple[int, TaskExecution, dict[str, Any]]:
+        index, execution = index_execution
         received = objection_map.get(execution.agent, [])
         if not received:
-            revised.append(execution)
-            emit_progress(
-                progress_callback,
-                "revision_complete",
-                {
-                    "agent": execution.agent,
-                    "specialist_name": execution.specialist_name,
-                    "lines": [f"{execution.specialist_name} revision: 수신 objection 없음, 기존 초안 유지"],
-                },
-            )
-            continue
+            return index, execution, {
+                "agent": execution.agent,
+                "specialist_name": execution.specialist_name,
+                "lines": [f"{execution.specialist_name} revision: 수신 objection 없음, 기존 초안 유지"],
+            }
         expert = get_expert_snapshot(snapshot, execution.agent)
         proposal = proposal_map[execution.agent]
         backend, model, client = resolve_reasoning_backend(
@@ -1158,22 +1208,32 @@ def revise_executions(
             assignment=execution.assignment,
             sections=sections,
         )
-        revised.append(revised_execution)
-        emit_progress(
-            progress_callback,
-            "revision_complete",
-            {
-                "agent": execution.agent,
-                "specialist_name": execution.specialist_name,
-                "backend": backend,
-                "model": model,
-                "lines": [
-                    f"{execution.specialist_name} revision 반영 수: {len(received)}",
-                    f"{execution.specialist_name} 수정 전략: {compact_line(sections.strategy, 220)}",
-                    f"{execution.specialist_name} 수정 결론: {compact_line(sections.conclusion, 220)}",
-                ],
-            },
-        )
+        payload_out = {
+            "agent": execution.agent,
+            "specialist_name": execution.specialist_name,
+            "backend": backend,
+            "model": model,
+            "lines": [
+                f"{execution.specialist_name} revision 반영 수: {len(received)}",
+                f"{execution.specialist_name} 수정 전략: {compact_line(sections.strategy, 220)}",
+                f"{execution.specialist_name} 수정 결론: {compact_line(sections.conclusion, 220)}",
+            ],
+        }
+        return index, revised_execution, payload_out
+
+    pairs = list(enumerate(executions))
+    if not parallel_enabled or len(pairs) <= 1:
+        ordered: list[tuple[int, TaskExecution, dict[str, Any]]] = [worker(item) for item in pairs]
+    else:
+        ordered = []
+        with ThreadPoolExecutor(max_workers=min(4, len(pairs))) as executor:
+            futures = [executor.submit(worker, item) for item in pairs]
+            for future in as_completed(futures):
+                ordered.append(future.result())
+    ordered.sort(key=lambda item: item[0])
+    revised = [execution for _, execution, _ in ordered]
+    for _, _, payload_out in ordered:
+        emit_progress(progress_callback, "revision_complete", payload_out)
     return revised
 
 

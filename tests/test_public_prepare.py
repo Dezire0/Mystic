@@ -43,12 +43,21 @@ class PublicPrepareTests(unittest.TestCase):
 
             self.assertGreaterEqual(payload["added_counts"]["prime"], 1)
             self.assertGreaterEqual(payload["added_counts"]["simulator"], 1)
+            self.assertGreaterEqual(payload["added_counts"]["core"], 1)
             prime_rows = [
                 json.loads(line)
                 for line in (base / "train_ready" / "prime_train_ready.jsonl").read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
             self.assertTrue(all(row["metadata"]["source_type"] == "public_real" for row in prime_rows))
+            core_rows = [
+                json.loads(line)
+                for line in (base / "train_ready" / "core_train_ready.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(any(row["metadata"].get("role_variant") == "router" for row in core_rows))
+            self.assertTrue(any(row["metadata"].get("role_variant") == "planner" for row in core_rows))
+            self.assertTrue(all(int(row["metadata"].get("quality_score", 0)) >= 4 for row in core_rows))
 
     def test_prepare_public_train_ready_preserves_non_bootstrap_existing_rows(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -76,6 +85,28 @@ class PublicPrepareTests(unittest.TestCase):
             self.assertEqual(payload["preserved_counts"]["raven"], 1)
             contents = existing_path.read_text(encoding="utf-8")
             self.assertIn("existing input", contents)
+
+    def test_prepare_public_train_ready_filters_low_quality_rows(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir) / "mystic_data"
+            write_jsonl(
+                base / "raw" / "numina_math_cot_100.jsonl",
+                [
+                    {"problem": "Hi", "solution": "OK"},
+                    {"problem": "Prove that if n is a positive integer and n^2 is even, then n is even.", "solution": "Assume n were odd. Then n=2k+1, so n^2=4k^2+4k+1 is odd, contradiction. Therefore n is even."},
+                ],
+            )
+
+            payload = prepare_public_train_ready_datasets(base, max_rows_per_agent=5, overwrite=True)
+
+            self.assertGreaterEqual(payload["added_counts"]["prime"], 1)
+            prime_rows = [
+                json.loads(line)
+                for line in (base / "train_ready" / "prime_train_ready.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(prime_rows), 1)
+            self.assertGreaterEqual(int(prime_rows[0]["metadata"].get("quality_score", 0)), 4)
 
 
 if __name__ == "__main__":
