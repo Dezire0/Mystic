@@ -103,6 +103,8 @@ export MYSTIC_DISCORD_TOKEN="your-bot-token"
 export MYSTIC_DISCORD_GUILD_ID="optional-guild-id-for-fast-sync"
 ```
 
+Or put them in `.env` at the project root. `scripts/run_discord_bot.py` now auto-loads `.env` before startup.
+
 Run the bot:
 
 ```bash

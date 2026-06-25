@@ -25,6 +25,7 @@ from mystic.discord_dashboard import (
     overview_page,
     save_subscriber,
 )
+from mystic.env_loader import load_dotenv_file
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -266,6 +267,7 @@ def getenv_required(name: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv_file(ROOT / ".env", override=False)
     args = build_parser().parse_args(argv)
     asyncio.run(run_bot(args))
     return 0
