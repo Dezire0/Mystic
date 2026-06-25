@@ -159,13 +159,24 @@ def build_critic_client(*, config_path: str | Path) -> tuple[str, str, LLMClient
     if active_backend == "adapter":
         base_model = str(defaults.get("active_raven_base_model", "")).strip()
         adapter_path = str(defaults.get("active_raven_adapter", "")).strip()
-        client = build_client(
-            "adapter",
-            config_path=config_path,
-            base_model=base_model,
-            adapter_path=adapter_path,
-        )
-        return "adapter", base_model, client
+        try:
+            client = build_client(
+                "adapter",
+                config_path=config_path,
+                base_model=base_model,
+                adapter_path=adapter_path,
+            )
+            return "adapter", base_model, client
+        except Exception as exc:
+            fallback_backend = str(defaults.get("backend", "ollama"))
+            fallback_model = str(defaults.get("raven_model", defaults.get("generator_model", "qwen2.5:7b")))
+            print(
+                "[warning] Raven adapter critic unavailable in research lab; "
+                f"falling back to {fallback_backend}/{fallback_model}. "
+                f"Original error: {exc}"
+            )
+            client = build_client(fallback_backend, config_path=config_path)
+            return fallback_backend, fallback_model, client
 
     raven_model = str(defaults.get("raven_model", defaults.get("generator_model", "qwen2.5:7b")))
     client = build_client(active_backend, config_path=config_path)

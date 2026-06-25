@@ -7,6 +7,7 @@ from mystic.discord_dashboard import ExpertSnapshot
 from mystic.research_lab import (
     ResearchSections,
     build_final_answer,
+    build_critic_client,
     heuristic_specialist,
     parse_json_object,
     parse_sections,
@@ -64,6 +65,30 @@ class ResearchLabTests(unittest.TestCase):
         )
         self.assertIn("검증 판정: GAP", text)
         self.assertIn("missing lemma", text)
+
+    @patch("mystic.research_lab.load_model_defaults")
+    @patch("mystic.research_lab.build_client")
+    def test_build_critic_client_falls_back_when_adapter_runtime_is_missing(self, client_builder, defaults_loader):
+        defaults_loader.return_value = {
+            "backend": "ollama",
+            "generator_model": "qwen2.5:7b",
+            "raven_model": "qwen2.5:7b",
+            "active_raven_backend": "adapter",
+            "active_raven_base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+            "active_raven_adapter": "mystic_data/adapters/raven_lora_v0",
+        }
+        fallback_client = FakeClient(
+            [
+                '{"verdict":"VALID","first_fatal_error":"","missing_assumptions":[],"invalid_steps":[],"valid_steps":[],"repair_possible":true,"confidence":0.9,"final_status":"VALID"}'
+            ]
+        )
+        client_builder.side_effect = [RuntimeError("No module named 'torch'"), fallback_client]
+
+        backend, model, client = build_critic_client(config_path="configs/models.json")
+
+        self.assertEqual(backend, "ollama")
+        self.assertEqual(model, "qwen2.5:7b")
+        self.assertIs(client, fallback_client)
 
     @patch("mystic.research_lab.load_model_defaults")
     @patch("mystic.research_lab.build_client")

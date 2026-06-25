@@ -128,6 +128,8 @@ Use `/mystic` in Discord. The bot opens a DM and sends:
 
 For plain-message replies, enable `MESSAGE CONTENT INTENT` in the Discord Developer Portal for the bot application. The runtime now enables `message_content` in code, but Discord must also allow it in the bot settings.
 
+If the active Raven critic is configured as a local PEFT adapter but the Discord bot runtime does not have `torch`/`peft` installed, the research lab automatically falls back to the configured non-adapter Raven backend instead of failing the whole reply.
+
 Run it persistently with launchd:
 
 ```bash
