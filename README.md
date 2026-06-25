@@ -87,6 +87,33 @@ Use the existing Python 3.11 environment in this repo:
 .venv-training/bin/python scripts/download_numina_sample.py --limit 100
 ```
 
+## Discord Bot
+
+Install the Discord bot dependency:
+
+```bash
+/opt/homebrew/Caskroom/miniforge/base/bin/python -m venv .venv-discord
+.venv-discord/bin/python -m pip install -r requirements-discord.txt
+```
+
+Set environment variables:
+
+```bash
+export MYSTIC_DISCORD_TOKEN="your-bot-token"
+export MYSTIC_DISCORD_GUILD_ID="optional-guild-id-for-fast-sync"
+```
+
+Run the bot:
+
+```bash
+.venv-discord/bin/python scripts/run_discord_bot.py --base-dir mystic_data
+```
+
+Use `/mystic` in Discord. The bot opens a DM and sends:
+
+- 1-3 overview pages with all experts, progress percent, and running/waiting/failure status
+- an expert detail page with progress bar, dataset, ETA, and latest failure log
+
 ## Ollama Backend
 
 Pull a local model:

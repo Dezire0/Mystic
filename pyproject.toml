@@ -20,6 +20,9 @@ api = [
 dev = [
   "pytest>=8.0.0",
 ]
+discord = [
+  "discord.py>=2.4.0",
+]
 
 [project.scripts]
 mystic = "mystic.cli.main:main"
