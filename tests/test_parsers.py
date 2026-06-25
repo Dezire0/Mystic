@@ -86,6 +86,27 @@ class ParserTests(unittest.TestCase):
         self.assertIn("(2, 4, 8)", critique["first_fatal_error"])
         self.assertIn("Missing valid solutions: (2, 4, 4)", " ".join(critique["invalid_steps"]))
 
+    def test_parse_raven_output_marks_all_bad_integer_tuples_invalid(self):
+        problem = "1/x + 1/y + 1/z = 1, x <= y <= z, positive integers"
+        answer_text = "Candidate tuples: (3,6,4), (4,5,7)."
+        critique = parse_raven_output(
+            raw_output='{"verdict":"GAP","first_fatal_error":"","missing_assumptions":[],"invalid_steps":[],"valid_steps":[],"repair_possible":true,"confidence":0.4,"final_status":"GAP"}',
+            sample_id="s2",
+            run_id="r2",
+            backend="ollama",
+            model="qwen2.5:7b",
+            problem=problem,
+            answer_text=answer_text,
+        )
+        combined = " ".join(critique["invalid_steps"])
+        self.assertEqual(critique["verdict"], "INVALID")
+        self.assertIn("(3, 6, 4)", combined)
+        self.assertIn("y=6 > z=4", combined)
+        self.assertIn("3/4 != 1", combined)
+        self.assertIn("(4, 5, 7)", combined)
+        self.assertIn("83/140 != 1", combined)
+        self.assertIn("Missing valid solutions: (2, 3, 6), (2, 4, 4), (3, 3, 3)", combined)
+
     def test_parse_raven_output_accepts_complete_egyptian_fraction_solution_set(self):
         problem = "1/x + 1/y + 1/z = 1, x <= y <= z, positive integers"
         answer_text = "The complete solutions are (2,3,6), (2,4,4), (3,3,3)."
