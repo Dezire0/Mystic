@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 from mystic.discord_dashboard import ExpertSnapshot
@@ -115,11 +116,21 @@ class ResearchLabTests(unittest.TestCase):
             eta_text="진행 중",
             error_excerpt="",
             stage="planning_only",
+            dataset_covered_count=3,
+            dataset_expected_count=19,
             dataset_progress_text="3/19 datasets",
             status_detail="OpenMathInstruct-2",
             progress_reason="현재 로컬 학습 기준",
         )
-        snapshot_loader.return_value = {"experts": [expert]}
+        snapshot_loader.return_value = {
+            "experts": [
+                expert,
+                replace(expert, agent="logic", name="Mystic-Logic", division="Logic", model="qwen3-14b"),
+                replace(expert, agent="pattern", name="Mystic-Pattern", division="Discovery", model="qwen3-14b"),
+                replace(expert, agent="forge", name="Mystic-Forge", division="Discovery", model="qwen3-coder"),
+                replace(expert, agent="raven", name="Mystic-Raven", division="Verification", model="qwen3-14b"),
+            ]
+        }
         defaults_loader.return_value = {
             "backend": "ollama",
             "generator_model": "qwen2.5:7b",
@@ -130,7 +141,12 @@ class ResearchLabTests(unittest.TestCase):
             FakeClient(
                 [
                     '{"specialist":"prime","reason":"정수론 문제로 보인다","strategy":"문제를 작은 단계로 쪼개 확인한다"}',
-                    "UNDERSTANDING:\n질문 파악\nSTRATEGY:\n계획 정리\nEXECUTION:\n단계별 풀이\nCONCLUSION:\n최종 결과\nUNCERTAINTIES:\n없음",
+                    "UNDERSTANDING:\nprime 관점 질문 파악\nSTRATEGY:\nprime 계획\nEXECUTION:\nprime 단계별 풀이\nCONCLUSION:\nprime 결과\nUNCERTAINTIES:\n없음",
+                    "UNDERSTANDING:\nlogic 관점 질문 파악\nSTRATEGY:\nlogic 계획\nEXECUTION:\nlogic 단계별 풀이\nCONCLUSION:\nlogic 결과\nUNCERTAINTIES:\n없음",
+                    "UNDERSTANDING:\npattern 관점 질문 파악\nSTRATEGY:\npattern 계획\nEXECUTION:\npattern 단계별 풀이\nCONCLUSION:\npattern 결과\nUNCERTAINTIES:\n없음",
+                    "UNDERSTANDING:\nforge 관점 질문 파악\nSTRATEGY:\nforge 계획\nEXECUTION:\nforge 단계별 풀이\nCONCLUSION:\nforge 결과\nUNCERTAINTIES:\n없음",
+                    "UNDERSTANDING:\nraven 관점 질문 파악\nSTRATEGY:\nraven 계획\nEXECUTION:\nraven 단계별 풀이\nCONCLUSION:\nraven 결과\nUNCERTAINTIES:\n없음",
+                    "UNDERSTANDING:\n통합 질문 파악\nSTRATEGY:\n통합 계획\nEXECUTION:\n통합 단계별 풀이\nCONCLUSION:\n통합 최종 결과\nUNCERTAINTIES:\n없음",
                 ]
             ),
             FakeClient(
@@ -148,11 +164,23 @@ class ResearchLabTests(unittest.TestCase):
             progress_callback=lambda stage, payload: progress_events.append((stage, payload)),
         )
         self.assertEqual(result.specialist, "prime")
+        self.assertIn("prime", result.participating_specialists)
+        self.assertIn("raven", result.participating_specialists)
         self.assertEqual(result.critic_verdict, "VALID")
         self.assertIn("결론", result.final_answer)
         self.assertEqual(
             [stage for stage, _ in progress_events],
-            ["routing_complete", "solution_complete", "critique_complete", "final_answer_ready"],
+            [
+                "routing_complete",
+                "specialist_complete",
+                "specialist_complete",
+                "specialist_complete",
+                "specialist_complete",
+                "specialist_complete",
+                "synthesis_complete",
+                "critique_complete",
+                "final_answer_ready",
+            ],
         )
 
 

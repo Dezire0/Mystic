@@ -17,16 +17,18 @@ DEFAULT_CONFIG_PATH = ROOT / "configs" / "models.json"
 
 ROUTER_PROMPT = """You are Mystic-Router.
 
-Choose the single best specialist for the user's math or science reasoning request.
+Choose the best primary specialist and several support specialists for the user's math or science reasoning request.
 Return JSON only:
 {
   "specialist": "prime | algebra | geo | analysis | probability | logic | physics | complexity | biomath | chem | lean | raven | forge | conjecture | pattern | simulator | report | core",
+  "support_specialists": ["..."],
   "reason": "...",
   "strategy": "..."
 }
 
 Rules:
 - Pick exactly one specialist.
+- Pick 2 to 5 support specialists when they can contribute materially.
 - Prefer a concrete domain specialist over core when possible.
 - Use core only when the question is broad or ambiguous.
 - Write reason and strategy in Korean.
@@ -64,14 +66,45 @@ CONCLUSION:
 UNCERTAINTIES:
 """
 
+
+SYNTHESIS_PROMPT = """You are Mystic-Core-Synthesizer.
+
+You will receive:
+1. The user's original problem.
+2. The Core routing strategy.
+3. Several specialist drafts.
+
+Your job:
+1. Compare the drafts.
+2. Keep the strongest useful ideas.
+3. Remove contradictions and unjustified leaps.
+4. Produce one integrated solution draft in Korean.
+5. If the drafts disagree, say so explicitly in UNCERTAINTIES.
+
+Output plain text with exactly these section headers:
+UNDERSTANDING:
+STRATEGY:
+EXECUTION:
+CONCLUSION:
+UNCERTAINTIES:
+"""
+
 ProgressCallback = Callable[[str, dict[str, str]], None]
 
 
 @dataclass(slots=True)
 class ResearchPlan:
     specialist: str
+    support_specialists: list[str]
     reason: str
     strategy: str
+
+
+@dataclass(slots=True)
+class SpecialistDraft:
+    agent: str
+    specialist_name: str
+    sections: ResearchSections
 
 
 @dataclass(slots=True)
@@ -89,6 +122,7 @@ class ResearchResult:
     question: str
     specialist: str
     specialist_name: str
+    participating_specialists: list[str]
     backend: str
     model: str
     critic_backend: str
@@ -135,21 +169,47 @@ def run_research_lab(
         "routing_complete",
         {
             "specialist": plan.specialist,
+            "support_specialists": ", ".join(plan.support_specialists),
             "reason": plan.reason,
             "strategy": plan.strategy,
         },
     )
+    selected_agents = [plan.specialist, *plan.support_specialists]
+    drafts: list[SpecialistDraft] = []
+    for agent in selected_agents:
+        expert = get_expert_snapshot(snapshot, agent)
+        sections = solve_question(
+            question=question,
+            plan=plan,
+            expert=expert,
+            client=generator_client,
+            model=generator_model,
+        )
+        drafts.append(SpecialistDraft(agent=agent, specialist_name=expert.name, sections=sections))
+        emit_progress(
+            progress_callback,
+            "specialist_complete",
+            {
+                "agent": agent,
+                "specialist_name": expert.name,
+                "understanding": sections.understanding,
+                "strategy": sections.strategy,
+                "execution": sections.execution,
+                "conclusion": sections.conclusion,
+                "uncertainties": sections.uncertainties,
+            },
+        )
     expert = get_expert_snapshot(snapshot, plan.specialist)
-    sections = solve_question(
+    sections = synthesize_solution(
         question=question,
         plan=plan,
-        expert=expert,
+        drafts=drafts,
         client=generator_client,
         model=generator_model,
     )
     emit_progress(
         progress_callback,
-        "solution_complete",
+        "synthesis_complete",
         {
             "specialist_name": expert.name,
             "understanding": sections.understanding,
@@ -188,6 +248,7 @@ def run_research_lab(
         question=question,
         specialist=plan.specialist,
         specialist_name=expert.name,
+        participating_specialists=selected_agents,
         backend=generator_backend,
         model=generator_model,
         critic_backend=critic_backend,
@@ -257,9 +318,20 @@ def route_question(*, question: str, snapshot: dict[str, Any], client: LLMClient
     specialist = str(payload.get("specialist", "")).strip().lower()
     if specialist not in {str(item.agent) for item in snapshot["experts"]}:
         specialist = heuristic_specialist(question)
+    support_specialists = normalize_support_specialists(
+        payload.get("support_specialists"),
+        specialist=specialist,
+        question=question,
+        available_agents={str(item.agent) for item in snapshot["experts"]},
+    )
     reason = str(payload.get("reason", "")).strip() or fallback_reason(specialist)
     strategy = str(payload.get("strategy", "")).strip() or "문제를 분해하고 보수적으로 단계별 추론을 수행한다."
-    return ResearchPlan(specialist=specialist, reason=reason, strategy=strategy)
+    return ResearchPlan(
+        specialist=specialist,
+        support_specialists=support_specialists,
+        reason=reason,
+        strategy=strategy,
+    )
 
 
 def solve_question(
@@ -286,6 +358,35 @@ def solve_question(
         f"Question:\n{question.strip()}"
     )
     raw = client.generate_text(model=model, system_prompt=system_prompt, user_prompt=user_prompt)
+    return parse_sections(raw)
+
+
+def synthesize_solution(
+    *,
+    question: str,
+    plan: ResearchPlan,
+    drafts: list[SpecialistDraft],
+    client: LLMClient,
+    model: str,
+) -> ResearchSections:
+    draft_chunks = []
+    for draft in drafts:
+        draft_chunks.append(
+            f"[{draft.specialist_name} / {draft.agent}]\n"
+            f"UNDERSTANDING:\n{draft.sections.understanding}\n"
+            f"STRATEGY:\n{draft.sections.strategy}\n"
+            f"EXECUTION:\n{draft.sections.execution}\n"
+            f"CONCLUSION:\n{draft.sections.conclusion}\n"
+            f"UNCERTAINTIES:\n{draft.sections.uncertainties}"
+        )
+    user_prompt = (
+        f"Primary specialist: {plan.specialist}\n"
+        f"Support specialists: {', '.join(plan.support_specialists) or '-'}\n"
+        f"Core strategy: {plan.strategy}\n\n"
+        f"Problem:\n{question.strip()}\n\n"
+        f"Specialist drafts:\n\n" + "\n\n".join(draft_chunks)
+    )
+    raw = client.generate_text(model=model, system_prompt=SYNTHESIS_PROMPT, user_prompt=user_prompt)
     return parse_sections(raw)
 
 
@@ -321,6 +422,7 @@ def build_final_answer(*, plan: ResearchPlan, sections: ResearchSections, critiq
     caution_lines: list[str] = []
     verdict = str(critique_value(critique, "verdict", "NEEDS_MORE_DETAIL"))
     first_fatal_error = str(critique_value(critique, "first_fatal_error", "") or "")
+    support_specialists = list(getattr(plan, "support_specialists", []) or [])
     if verdict != "VALID":
         caution_lines.append(f"검증 판정: {verdict}")
         if first_fatal_error:
@@ -330,6 +432,7 @@ def build_final_answer(*, plan: ResearchPlan, sections: ResearchSections, critiq
 
     lines = [
         f"선택 전문가: {plan.specialist}",
+        f"참여 전문가: {', '.join([plan.specialist, *support_specialists])}",
         "",
         "이해:",
         sections.understanding.strip() or "-",
@@ -416,6 +519,53 @@ def heuristic_specialist(question: str) -> str:
 
 def fallback_reason(specialist: str) -> str:
     return f"{specialist} specialist chosen by heuristic fallback."
+
+
+def normalize_support_specialists(
+    raw_value: Any,
+    *,
+    specialist: str,
+    question: str,
+    available_agents: set[str],
+) -> list[str]:
+    fallback = default_support_specialists(specialist, question)
+    values: list[str]
+    if isinstance(raw_value, list):
+        values = [str(item).strip().lower() for item in raw_value if str(item).strip()]
+    else:
+        values = []
+    ordered: list[str] = []
+    for item in values + fallback:
+        if item == specialist:
+            continue
+        if item not in available_agents:
+            continue
+        if item not in ordered:
+            ordered.append(item)
+    return ordered[:5]
+
+
+def default_support_specialists(specialist: str, question: str) -> list[str]:
+    lowered = question.lower()
+    defaults = {
+        "prime": ["logic", "pattern", "forge", "raven"],
+        "algebra": ["logic", "analysis", "forge", "raven"],
+        "geo": ["analysis", "logic", "forge", "raven"],
+        "analysis": ["algebra", "logic", "forge", "raven"],
+        "probability": ["analysis", "logic", "simulator", "raven"],
+        "logic": ["prime", "algebra", "forge", "raven"],
+        "physics": ["analysis", "simulator", "forge", "raven"],
+        "complexity": ["logic", "pattern", "forge", "raven"],
+        "biomath": ["analysis", "simulator", "forge", "raven"],
+        "chem": ["analysis", "simulator", "forge", "raven"],
+        "core": ["logic", "pattern", "forge", "raven"],
+    }
+    support = defaults.get(specialist, ["logic", "forge", "raven"])
+    if "counterexample" in lowered or "classify" in lowered or "all solutions" in lowered:
+        for extra in ["pattern", "forge", "simulator"]:
+            if extra not in support:
+                support.append(extra)
+    return support
 
 
 def parse_sections(raw: str) -> ResearchSections:

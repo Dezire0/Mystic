@@ -91,6 +91,11 @@ def research_embed(result: ResearchResult) -> discord.Embed:
         color=0x5865F2,
     )
     embed.add_field(name="선택 전문가", value=result.specialist_name, inline=True)
+    embed.add_field(
+        name="참여 전문가",
+        value=", ".join(result.participating_specialists)[:1024] or "-",
+        inline=False,
+    )
     embed.add_field(name="생성 모델", value=f"{result.backend} / {result.model}"[:1024], inline=True)
     embed.add_field(name="검증 모델", value=f"{result.critic_backend} / {result.critic_model}"[:1024], inline=True)
     embed.add_field(name="전략", value=(result.plan_strategy or "-")[:1024], inline=False)
@@ -156,12 +161,22 @@ async def send_research_response(
             await destination.send(
                 "2. 전략 수립 완료\n"
                 f"전문가: {payload.get('specialist', '-')}\n"
+                f"지원 전문가: {payload.get('support_specialists', '-')}\n"
                 f"이유: {compact_line(payload.get('reason', '-'))}\n"
                 f"전략: {compact_line(payload.get('strategy', '-'), 320)}"
             )
-        elif stage == "solution_complete":
+        elif stage == "specialist_complete":
             await destination.send(
-                "3. 풀이 초안 생성 완료\n"
+                "3. specialist 초안 생성 완료\n"
+                f"전문가 이름: {payload.get('specialist_name', '-')}\n"
+                f"전문가 코드: {payload.get('agent', '-')}\n"
+                f"이해: {compact_line(payload.get('understanding', '-'), 240)}\n"
+                f"전략: {compact_line(payload.get('strategy', '-'), 240)}\n"
+                f"결론 초안: {compact_line(payload.get('conclusion', '-'), 220)}"
+            )
+        elif stage == "synthesis_complete":
+            await destination.send(
+                "4. Core 종합 초안 생성 완료\n"
                 f"전문가 이름: {payload.get('specialist_name', '-')}\n"
                 f"이해: {compact_line(payload.get('understanding', '-'), 320)}\n"
                 f"전략: {compact_line(payload.get('strategy', '-'), 320)}\n"
@@ -171,7 +186,7 @@ async def send_research_response(
         elif stage == "critique_complete":
             warning = payload.get("first_fatal_error", "").strip() or "치명적 오류는 바로 잡히지 않음"
             await destination.send(
-                "4. Raven 검증 완료\n"
+                "5. Raven 검증 완료\n"
                 f"판정: {payload.get('verdict', '-')}\n"
                 f"신뢰도: {payload.get('confidence', '0.0')}\n"
                 f"메모: {compact_line(warning, 320)}"
