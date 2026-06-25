@@ -88,6 +88,28 @@ class ExpertSnapshot:
     progress_reason: str
 
 
+def level_from_percent(percent: int) -> int:
+    bounded = max(0, min(percent, 100))
+    return min(10, max(1, (bounded // 10) + 1 if bounded < 100 else 10))
+
+
+def level_progress_bounds(percent: int) -> tuple[int, int, int]:
+    bounded = max(0, min(percent, 100))
+    level = level_from_percent(bounded)
+    if level >= 10:
+        return level, 100, 100
+    lower = (level - 1) * 10
+    upper = level * 10
+    return level, bounded - lower, upper - lower
+
+
+def render_level_badge(percent: int) -> str:
+    level, current_xp, next_xp = level_progress_bounds(percent)
+    if level >= 10:
+        return f"Lv.{level} MAX"
+    return f"Lv.{level} XP {current_xp}/{next_xp}"
+
+
 def subscribers_path(base_dir: str | Path) -> Path:
     return Path(base_dir) / "state" / "discord_dm_subscribers.json"
 
@@ -477,7 +499,7 @@ def overview_page(snapshot: dict[str, Any], page: int) -> dict[str, Any]:
     for expert in page_experts:
         lines.append(
             f"{expert.status_emoji} **{expert.name}** · {expert.status_text}\n"
-            f"{expert.status_detail}"
+            f"{render_level_badge(expert.progress_percent)} · {expert.status_detail}"
         )
     continuous = snapshot["continuous_status"]
     remote = snapshot["remote_status"]
@@ -527,11 +549,16 @@ def expert_detail_page(snapshot: dict[str, Any], agent: str) -> dict[str, Any]:
     return {
         "author": expert.name,
         "title": f"{expert.status_emoji} {expert.status_text}",
-        "description": f"{render_progress_bar(expert.progress_percent)}\n기준: {expert.progress_reason}",
+        "description": (
+            f"{render_progress_bar(expert.progress_percent)}\n"
+            f"{render_level_badge(expert.progress_percent)}\n"
+            f"기준: {expert.progress_reason}"
+        ),
         "color": expert.status_color,
         "fields": [
             {"name": "학습 현황", "value": f"`{expert.status_text}`", "inline": True},
             {"name": "진행률", "value": f"`{expert.progress_percent}%`", "inline": True},
+            {"name": "레벨", "value": render_level_badge(expert.progress_percent), "inline": True},
             {"name": "학습 데이터", "value": expert.dataset or "-", "inline": True},
             {"name": "예상 시간", "value": expert.eta_text, "inline": True},
             {"name": "현재 상태", "value": expert.status_detail, "inline": True},

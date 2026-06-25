@@ -5,7 +5,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mystic.discord_dashboard import GREEN, PAGE_SIZE, RED, YELLOW, expert_detail_page, load_dashboard_snapshot, overview_page
+from mystic.discord_dashboard import (
+    GREEN,
+    PAGE_SIZE,
+    RED,
+    YELLOW,
+    expert_detail_page,
+    level_from_percent,
+    load_dashboard_snapshot,
+    overview_page,
+    render_level_badge,
+)
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -14,6 +24,13 @@ def write_json(path: Path, payload: dict) -> None:
 
 
 class DiscordDashboardTests(unittest.TestCase):
+    def test_level_badge_maps_percent_to_level_and_xp(self):
+        self.assertEqual(level_from_percent(0), 1)
+        self.assertEqual(level_from_percent(60), 7)
+        self.assertEqual(level_from_percent(100), 10)
+        self.assertEqual(render_level_badge(32), "Lv.4 XP 2/10")
+        self.assertEqual(render_level_badge(100), "Lv.10 MAX")
+
     def test_dashboard_snapshot_builds_overview_and_detail(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir) / "mystic_data"
@@ -98,11 +115,13 @@ class DiscordDashboardTests(unittest.TestCase):
             self.assertIn("표시 규칙", [field["name"] for field in overview["fields"]])
             self.assertNotIn("100%", overview["description"])
             self.assertIn("학습 중", overview["description"])
+            self.assertIn("Lv.", overview["description"])
             self.assertIn("다음:", [field["value"] for field in overview["fields"]][0])
 
             detail = expert_detail_page(snapshot, "raven")
             self.assertIn("실패 로그", [field["name"] for field in detail["fields"]])
             self.assertIn("데이터셋 진행", [field["name"] for field in detail["fields"]])
+            self.assertIn("레벨", [field["name"] for field in detail["fields"]])
 
     def test_failed_expert_is_red_when_not_active(self):
         with tempfile.TemporaryDirectory() as temp_dir:
