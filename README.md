@@ -116,6 +116,13 @@ Use `/mystic` in Discord. The bot opens a DM and sends:
 - 1-3 overview pages with all experts, progress percent, and running/waiting/failure status
 - an expert detail page with progress bar, dataset, ETA, and latest failure log
 
+Run it persistently with launchd:
+
+```bash
+python scripts/manage_discord_bot_service.py install --base-dir mystic_data --guild-id "$MYSTIC_DISCORD_GUILD_ID"
+python scripts/manage_discord_bot_service.py status --base-dir mystic_data
+```
+
 ## Ollama Backend
 
 Pull a local model:
