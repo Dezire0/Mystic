@@ -23,6 +23,7 @@ PAGE_SIZE = 8
 GREEN = "green"
 YELLOW = "yellow"
 RED = "red"
+CYCLE_DELAY_SECONDS = 3600
 
 STATUS_EMOJI = {
     GREEN: "🟢",
@@ -149,6 +150,8 @@ def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
             dataset_progress=dataset_progress,
         )
         status_text = infer_status_text(status_kind, latest=latest, remote_status=remote_status)
+        if stage == "tool_only":
+            status_text = "도구"
         if status_kind == GREEN and not is_cycle_complete(stage=stage, dataset_progress=dataset_progress):
             status_text = "대기"
         status_detail = infer_status_detail(
@@ -201,7 +204,7 @@ def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
                 stage=stage,
                 dataset_progress_text=f"{dataset_progress['covered']}/{dataset_progress['expected']} datasets",
                 status_detail=status_detail,
-                progress_reason=infer_progress_reason(agent=agent, is_active=is_active),
+                progress_reason=infer_progress_reason(agent=agent, is_active=is_active, stage=stage),
             )
         )
 
@@ -308,6 +311,8 @@ def infer_status_detail(
 ) -> str:
     if status_kind == RED:
         return "최근 실행 실패"
+    if stage == "tool_only":
+        return "학습 대상 아님"
     if is_active and agent == "raven":
         phase = str(remote_status.get("current_phase", "") or "")
         return PHASE_LABELS.get(phase, phase or "원격 실행 중")
@@ -329,7 +334,7 @@ def infer_progress_percent(
     dataset_progress: dict[str, int],
 ) -> int:
     if stage == "tool_only":
-        return 100
+        return 0
     if agent == "raven" and is_active:
         phase = str(remote_status.get("current_phase", "") or "")
         return REMOTE_PHASE_PROGRESS.get(phase, 65)
@@ -352,7 +357,9 @@ def infer_progress_percent(
     return min(progress, 100)
 
 
-def infer_progress_reason(*, agent: str, is_active: bool) -> str:
+def infer_progress_reason(*, agent: str, is_active: bool, stage: str) -> str:
+    if stage == "tool_only":
+        return "학습 퍼센트 없음"
     if is_active and agent == "raven":
         return "원격 사이클 단계 기준"
     if is_active:
@@ -466,7 +473,9 @@ def overview_page(snapshot: dict[str, Any], page: int) -> dict[str, Any]:
                 "value": (
                     f"현재: `{local_status_label(continuous)}`\n"
                     f"사이클: `{continuous.get('current_cycle', '-')}`\n"
-                    f"데이터셋: `{continuous.get('active_slug', '-') or '-'}`"
+                    f"데이터셋: `{continuous.get('active_slug', '-') or '-'}`\n"
+                    f"다음: `{continuous.get('next_slug', '-') or '-'}`\n"
+                    f"경과: `{cycle_elapsed_text(continuous, 'cycle_started_at')}`"
                 ),
                 "inline": True,
             },
@@ -475,7 +484,8 @@ def overview_page(snapshot: dict[str, Any], page: int) -> dict[str, Any]:
                 "value": (
                     f"현재: `{remote_status_label(remote)}`\n"
                     f"사이클: `{remote.get('active_cycle_id', '-')}`\n"
-                    f"단계: `{PHASE_LABELS.get(str(remote.get('current_phase', '') or ''), str(remote.get('current_phase', '-') or '-'))}`"
+                    f"단계: `{PHASE_LABELS.get(str(remote.get('current_phase', '') or ''), str(remote.get('current_phase', '-') or '-'))}`\n"
+                    f"경과: `{cycle_elapsed_text(remote, 'cycle_started_at')}`"
                 ),
                 "inline": True,
             },
@@ -532,7 +542,7 @@ def render_progress_bar(percent: int, *, width: int = 20) -> str:
 def local_status_label(payload: dict[str, Any]) -> str:
     status = str(payload.get("status", "")).lower()
     if status == "running":
-        return "학습 중"
+        return "지연 중" if cycle_is_delayed(payload, "cycle_started_at") else "학습 중"
     if status == "error":
         return "오류"
     return "대기"
@@ -541,7 +551,29 @@ def local_status_label(payload: dict[str, Any]) -> str:
 def remote_status_label(payload: dict[str, Any]) -> str:
     status = str(payload.get("status", "")).lower()
     if status == "running":
-        return "학습 중"
+        return "지연 중" if cycle_is_delayed(payload, "cycle_started_at") else "학습 중"
     if status == "error":
         return "오류"
     return "대기"
+
+
+def cycle_is_delayed(payload: dict[str, Any], started_key: str) -> bool:
+    started_at = str(payload.get(started_key, "") or "")
+    if not started_at:
+        return False
+    try:
+        elapsed = (datetime.now(UTC) - parse_timestamp(started_at)).total_seconds()
+    except Exception:
+        return False
+    return elapsed >= CYCLE_DELAY_SECONDS
+
+
+def cycle_elapsed_text(payload: dict[str, Any], started_key: str) -> str:
+    started_at = str(payload.get(started_key, "") or "")
+    if not started_at:
+        return "-"
+    try:
+        elapsed = max((datetime.now(UTC) - parse_timestamp(started_at)).total_seconds(), 0.0)
+    except Exception:
+        return "-"
+    return format_duration(elapsed)

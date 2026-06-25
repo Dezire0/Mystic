@@ -57,8 +57,6 @@ def default_rotation_slugs() -> list[str]:
         "openr1_mixture_of_thoughts",
         "openthoughts",
         "openmathinstruct_1",
-        "leandojo",
-        "proofnet",
     ]
     ordered = [slug for slug in preferred_order if slug in slugs]
     remaining = [slug for slug in slugs if slug not in ordered]

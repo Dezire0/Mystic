@@ -98,6 +98,7 @@ class DiscordDashboardTests(unittest.TestCase):
             self.assertIn("표시 규칙", [field["name"] for field in overview["fields"]])
             self.assertNotIn("100%", overview["description"])
             self.assertIn("학습 중", overview["description"])
+            self.assertIn("다음:", [field["value"] for field in overview["fields"]][0])
 
             detail = expert_detail_page(snapshot, "raven")
             self.assertIn("실패 로그", [field["name"] for field in detail["fields"]])
@@ -197,6 +198,19 @@ class DiscordDashboardTests(unittest.TestCase):
             self.assertLess(prime.progress_percent, 100)
             self.assertEqual(prime.status_kind, GREEN)
             self.assertEqual(prime.status_text, "대기")
+
+    def test_tool_only_agent_is_not_shown_as_fully_trained(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir) / "mystic_data"
+            (base / "state").mkdir(parents=True, exist_ok=True)
+            write_json(base / "state" / "continuous_training_state.json", {"status": "sleeping", "active_slug": ""})
+            write_json(base / "state" / "remote_cycle_state.json", {"status": "sleeping", "current_phase": ""})
+
+            snapshot = load_dashboard_snapshot(base)
+            smt = next(item for item in snapshot["experts"] if item.agent == "smt")
+            self.assertEqual(smt.status_text, "도구")
+            self.assertEqual(smt.progress_percent, 0)
+            self.assertEqual(smt.status_detail, "학습 대상 아님")
 
 
 if __name__ == "__main__":
