@@ -23,8 +23,7 @@ Return JSON only:
 {
   "specialist": "prime | algebra | geo | analysis | probability | logic | physics | complexity | biomath | chem | lean | raven | forge | conjecture | pattern | simulator | report | core",
   "support_specialists": ["..."],
-  "reason": "...",
-  "strategy": "..."
+  "reason": "..."
 }
 
 Rules:
@@ -32,7 +31,34 @@ Rules:
 - Pick 2 to 5 support specialists when they can contribute materially.
 - Prefer a concrete domain specialist over core when possible.
 - Use core only when the question is broad or ambiguous.
-- Write reason and strategy in Korean.
+- Do not write the full solving strategy. Routing only.
+- Write reason in Korean.
+- Output JSON only.
+"""
+
+
+PLANNER_PROMPT = """You are Mystic-Core-Planner.
+
+You will receive:
+1. The original user problem.
+2. The chosen primary specialist.
+3. The support specialists.
+4. The routing reason.
+
+Your job:
+1. Write the first executable solving strategy.
+2. Break the work into a small number of concrete phases.
+3. Keep the plan realistic before critic review.
+
+Return JSON only:
+{
+  "strategy": "...",
+  "phases": ["..."]
+}
+
+Rules:
+- Write in Korean.
+- Keep the plan concrete.
 - Output JSON only.
 """
 
@@ -284,6 +310,7 @@ class ResearchPlan:
     support_specialists: list[str]
     reason: str
     strategy: str
+    phases: list[str] = field(default_factory=list)
     critic_summary: str = ""
     critic_reviews: list[CriticReview] = field(default_factory=list)
     handoff_notes: list[str] = field(default_factory=list)
@@ -345,6 +372,15 @@ def critique_value(critique: Any, key: str, default: Any = "") -> Any:
     return getattr(critique, key, default)
 
 
+def remote_reasoning_state(*, fallback_model: str) -> tuple[bool, str, str]:
+    remote_backend = str(os.getenv("MYSTIC_REMOTE_REASONING_BACKEND", "openai-compatible")).strip()
+    remote_model = str(
+        os.getenv("MYSTIC_REMOTE_REASONING_MODEL", os.getenv("MYSTIC_GENERATOR_MODEL", fallback_model))
+    ).strip()
+    remote_enabled = bool(os.getenv("MYSTIC_REMOTE_REASONING_MODEL", "").strip() and os.getenv("MYSTIC_API_BASE", "").strip())
+    return remote_enabled, remote_backend, remote_model or fallback_model
+
+
 def run_research_lab(
     question: str,
     *,
@@ -358,6 +394,7 @@ def run_research_lab(
     generator_backend = str(defaults.get("backend", "ollama"))
     generator_model = str(defaults.get("generator_model", "qwen2.5:7b"))
     generator_client = build_client(generator_backend, config_path=config_path)
+    remote_enabled, remote_backend, remote_model = remote_reasoning_state(fallback_model=generator_model)
 
     critic_backend, critic_model, critic_client = build_critic_client(config_path=config_path)
 
@@ -367,13 +404,6 @@ def run_research_lab(
         client=generator_client,
         model=generator_model,
     )
-    plan = run_core_critics(
-        question=question,
-        plan=plan,
-        client=generator_client,
-        model=generator_model,
-        progress_callback=progress_callback,
-    )
     emit_progress(
         progress_callback,
         "routing_complete",
@@ -381,14 +411,42 @@ def run_research_lab(
             "specialist": plan.specialist,
             "support_specialists": ", ".join(plan.support_specialists),
             "reason": plan.reason,
-            "strategy": plan.strategy,
             "lines": [
                 f"주 전문가: {plan.specialist}",
                 f"보조 전문가: {', '.join(plan.support_specialists) or '-'}",
                 f"선정 이유: {plan.reason}",
-                f"통합 전략: {plan.strategy}",
             ],
         },
+    )
+    plan = plan_question(
+        question=question,
+        plan=plan,
+        client=generator_client,
+        model=generator_model,
+    )
+    emit_progress(
+        progress_callback,
+        "planning_complete",
+        {
+            "strategy": plan.strategy,
+            "phases": plan.phases,
+            "remote_enabled": remote_enabled,
+            "remote_backend": remote_backend,
+            "remote_model": remote_model,
+            "lines": [
+                f"Core 초기 전략: {plan.strategy}",
+                *[f"초기 단계: {phase}" for phase in plan.phases[:4]],
+                f"원격 reasoning 사용 가능: {'yes' if remote_enabled else 'no'}",
+                f"원격 backend/model: {remote_backend} / {remote_model}",
+            ],
+        },
+    )
+    plan = run_core_critics(
+        question=question,
+        plan=plan,
+        client=generator_client,
+        model=generator_model,
+        progress_callback=progress_callback,
     )
 
     selected_agents = [plan.specialist, *plan.support_specialists]
@@ -577,11 +635,7 @@ def resolve_reasoning_backend(
     fallback_model: str,
 ) -> tuple[str, str, LLMClient]:
     heavy_agents = {"prime", "algebra", "analysis", "geo", "logic", "complexity", "biomath", "chem", "physics"}
-    remote_backend = str(os.getenv("MYSTIC_REMOTE_REASONING_BACKEND", "openai-compatible")).strip()
-    remote_model = str(
-        os.getenv("MYSTIC_REMOTE_REASONING_MODEL", os.getenv("MYSTIC_GENERATOR_MODEL", fallback_model))
-    ).strip()
-    remote_enabled = bool(os.getenv("MYSTIC_REMOTE_REASONING_MODEL", "").strip() and os.getenv("MYSTIC_API_BASE", "").strip())
+    remote_enabled, remote_backend, remote_model = remote_reasoning_state(fallback_model=fallback_model)
     if agent in heavy_agents and remote_enabled:
         try:
             client = build_client(remote_backend, config_path=config_path)
@@ -616,12 +670,37 @@ def route_question(*, question: str, snapshot: dict[str, Any], client: LLMClient
         available_agents={str(item.agent) for item in snapshot["experts"]},
     )
     reason = str(payload.get("reason", "")).strip() or fallback_reason(specialist)
-    strategy = str(payload.get("strategy", "")).strip() or "문제를 분해하고 보수적으로 단계별 추론을 수행한다."
     return ResearchPlan(
         specialist=specialist,
         support_specialists=support_specialists,
         reason=reason,
+        strategy="",
+    )
+
+
+def plan_question(*, question: str, plan: ResearchPlan, client: LLMClient, model: str) -> ResearchPlan:
+    user_prompt = (
+        f"Problem:\n{question.strip()}\n\n"
+        f"Primary specialist: {plan.specialist}\n"
+        f"Support specialists: {', '.join(plan.support_specialists) or '-'}\n"
+        f"Routing reason: {plan.reason}\n"
+    )
+    raw = client.generate_text(model=model, system_prompt=PLANNER_PROMPT, user_prompt=user_prompt)
+    payload = parse_json_object(raw)
+    strategy = str(payload.get("strategy", "")).strip() or "문제를 분해하고 보수적으로 단계별 추론을 수행한다."
+    phases = parse_string_list(payload.get("phases"))
+    if not phases:
+        phases = ["문제 구조 파악", "필요한 경우 분기", "검산 및 완전성 확인"]
+    return ResearchPlan(
+        specialist=plan.specialist,
+        support_specialists=plan.support_specialists,
+        reason=plan.reason,
         strategy=strategy,
+        phases=phases,
+        critic_summary=plan.critic_summary,
+        critic_reviews=plan.critic_reviews,
+        handoff_notes=plan.handoff_notes,
+        task_assignments=plan.task_assignments,
     )
 
 
@@ -704,6 +783,7 @@ def run_core_critics(
         support_specialists=plan.support_specialists,
         reason=plan.reason,
         strategy=strategy,
+        phases=plan.phases,
         critic_summary=" | ".join(all_notes),
         critic_reviews=reviews,
         handoff_notes=plan.handoff_notes,
@@ -767,6 +847,7 @@ def build_method_proposals(
                 "task_candidate": proposal.task_candidate,
                 "deliverable": proposal.deliverable,
                 "lines": [
+                    f"{expert.name} backend/model: {backend} / {model}",
                     f"{expert.name} 방법: {proposal.method_summary}",
                     f"{expert.name} 제안 태스크: {proposal.task_candidate}",
                     f"{expert.name} 산출물: {proposal.deliverable}",
@@ -840,6 +921,7 @@ def assign_tasks(
         support_specialists=plan.support_specialists,
         reason=plan.reason,
         strategy=combined_strategy,
+        phases=plan.phases,
         critic_summary=plan.critic_summary,
         critic_reviews=plan.critic_reviews,
         handoff_notes=handoff_notes,
@@ -916,6 +998,7 @@ def execute_assigned_tasks(
                 "conclusion": sections.conclusion,
                 "uncertainties": sections.uncertainties,
                 "lines": [
+                    f"{expert.name} backend/model: {backend} / {model}",
                     f"{expert.name} 담당 태스크: {assignment.task}",
                     f"{expert.name} 작업 전략: {compact_line(sections.strategy, 220)}",
                     f"{expert.name} 작업 결론: {compact_line(sections.conclusion, 220)}",

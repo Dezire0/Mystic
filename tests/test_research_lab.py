@@ -151,6 +151,7 @@ class ResearchLabTests(unittest.TestCase):
             FakeClient(
                 [
                     '{"specialist":"prime","reason":"정수론 문제로 보인다","strategy":"문제를 작은 단계로 쪼개 확인한다"}',
+                    '{"strategy":"정수 조건을 먼저 제한하고 분기별로 닫는다","phases":["범위 제한","경우 분기","검산 및 완전성 확인"]}',
                     '{"summary":"라우팅은 괜찮지만 단계 분해가 약하다","findings":["초기 계획만으로는 완전성 보장이 약함"],"revision":"분류 후 specialist별 태스크를 재분배한다"}',
                     '{"summary":"빠질 수 있는 경우가 있다","findings":["경계 사례 분류 필요"],"revision":"모든 경우를 분류하도록 태스크를 배분한다"}',
                     '{"summary":"반례 공격이 필요하다","findings":["잘못된 후보를 빠르게 솎아야 함"],"revision":"Forge와 Raven을 통해 반례와 검산을 병행한다"}',
@@ -216,11 +217,12 @@ class ResearchLabTests(unittest.TestCase):
         self.assertEqual(
             [stage for stage, _ in progress_events],
             [
+                "routing_complete",
+                "planning_complete",
                 "plan_critic_complete",
                 "completeness_critic_complete",
                 "counterexample_critic_complete",
                 "cost_latency_critic_complete",
-                "routing_complete",
                 "method_proposal_complete",
                 "method_proposal_complete",
                 "method_proposal_complete",

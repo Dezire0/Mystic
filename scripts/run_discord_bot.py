@@ -87,18 +87,19 @@ def compact_line(value: str, limit: int = 220) -> str:
 def stage_title(stage: str) -> str:
     titles = {
         "routing_complete": "2. 라우팅 완료",
-        "plan_critic_complete": "2-1. CorePlan Critic 완료",
-        "completeness_critic_complete": "2-2. Completeness Critic 완료",
-        "counterexample_critic_complete": "2-3. Counterexample Critic 완료",
-        "cost_latency_critic_complete": "2-4. Cost/Latency Critic 완료",
-        "method_proposal_complete": "3. 방법 제안 도착",
-        "task_assignment_complete": "4. Core 태스크 배분 완료",
-        "task_execution_complete": "5. 담당 태스크 실행 완료",
-        "debate_objection_complete": "6. selected specialist objection",
-        "revision_complete": "7. objection 반영 revision",
-        "synthesis_complete": "8. Core 통합 완료",
-        "critique_complete": "9. Raven 검증 완료",
-        "final_answer_ready": "10. 최종 답 준비 완료",
+        "planning_complete": "3. Core 초기 계획 완료",
+        "plan_critic_complete": "4-1. CorePlan Critic 완료",
+        "completeness_critic_complete": "4-2. Completeness Critic 완료",
+        "counterexample_critic_complete": "4-3. Counterexample Critic 완료",
+        "cost_latency_critic_complete": "4-4. Cost/Latency Critic 완료",
+        "method_proposal_complete": "5. 방법 제안 도착",
+        "task_assignment_complete": "6. Core 태스크 배분 완료",
+        "task_execution_complete": "7. 담당 태스크 실행 완료",
+        "debate_objection_complete": "8. selected specialist objection",
+        "revision_complete": "9. objection 반영 revision",
+        "synthesis_complete": "10. Core 통합 완료",
+        "critique_complete": "11. Raven 검증 완료",
+        "final_answer_ready": "12. 최종 답 준비 완료",
     }
     return titles.get(stage, stage)
 

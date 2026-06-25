@@ -9,8 +9,9 @@ from scripts.run_discord_bot import is_dm_message, normalize_message_question, p
 
 class DiscordBotMessageTests(unittest.TestCase):
     def test_stage_title_maps_new_multi_critic_and_debate_stages(self):
-        self.assertEqual(stage_title("completeness_critic_complete"), "2-2. Completeness Critic 완료")
-        self.assertEqual(stage_title("debate_objection_complete"), "6. selected specialist objection")
+        self.assertEqual(stage_title("planning_complete"), "3. Core 초기 계획 완료")
+        self.assertEqual(stage_title("completeness_critic_complete"), "4-2. Completeness Critic 완료")
+        self.assertEqual(stage_title("debate_objection_complete"), "8. selected specialist objection")
 
     def test_progress_message_chunks_expands_lines(self):
         messages = progress_message_chunks(
@@ -23,7 +24,7 @@ class DiscordBotMessageTests(unittest.TestCase):
                 ]
             },
         )
-        self.assertEqual(messages[0], "4. Core 태스크 배분 완료")
+        self.assertEqual(messages[0], "6. Core 태스크 배분 완료")
         self.assertIn("Mystic-Prime 담당: 범위 제한", messages)
 
     def test_normalize_message_question_keeps_dm_text(self):
