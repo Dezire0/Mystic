@@ -351,6 +351,8 @@ def main(argv: list[str] | None = None) -> int:
             run_id=run_id,
             backend=raven_backend,
             model=raven_model_identifier,
+            problem=sample["problem"],
+            answer_text=proof_text,
         )
         if not critique["first_fatal_error"] and critique["verdict"] == "VALID":
             critique["first_fatal_error"] = ""
@@ -437,6 +439,8 @@ def main(argv: list[str] | None = None) -> int:
                         run_id=run_id,
                         backend="adapter",
                         model=adapter_path,
+                        problem=sample["problem"],
+                        answer_text=proof_text,
                     )
                 base_raw_output, base_latency = _call_text_client(
                     base_compare_client,
@@ -450,6 +454,8 @@ def main(argv: list[str] | None = None) -> int:
                     run_id=run_id,
                     backend="adapter-base",
                     model=base_model,
+                    problem=sample["problem"],
+                    answer_text=proof_text,
                 )
                 comparison_record = build_comparison_record(
                     sample_id=sample_id,

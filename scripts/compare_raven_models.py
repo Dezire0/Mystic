@@ -134,6 +134,8 @@ def main(argv: list[str] | None = None) -> int:
                 run_id=run_id,
                 backend="adapter-base",
                 model=args.base_model,
+                problem=str(row.get("problem", "")),
+                answer_text=proof_text,
             )
             adapter_critique = parse_raven_output(
                 raw_output=adapter_raw,
@@ -141,6 +143,8 @@ def main(argv: list[str] | None = None) -> int:
                 run_id=run_id,
                 backend="adapter",
                 model=args.adapter_path,
+                problem=str(row.get("problem", "")),
+                answer_text=proof_text,
             )
             record = build_comparison_record(
                 sample_id=sample_id,

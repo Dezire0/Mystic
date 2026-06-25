@@ -312,6 +312,8 @@ def critique_solution(
         run_id="discord_research_lab",
         backend=backend,
         model=model,
+        problem=question,
+        answer_text=proof_attempt,
     )
 
 

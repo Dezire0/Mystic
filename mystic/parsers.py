@@ -7,6 +7,7 @@ import json
 from typing import Any
 import uuid
 
+from mystic.final_answer_verifier import verify_final_answer
 from mystic.schema import RavenCritique, Verdict
 
 
@@ -138,6 +139,8 @@ def parse_raven_output(
     run_id: str,
     backend: str,
     model: str,
+    problem: str = "",
+    answer_text: str = "",
 ) -> RavenCritique:
     payload, parse_error = _parse_json_object(raw_output)
     if payload is None:
@@ -155,6 +158,22 @@ def parse_raven_output(
     first_fatal_error = _string_value(payload.get("first_fatal_error"))
     if not first_fatal_error and verdict != "VALID":
         first_fatal_error = "No fatal error was provided."
+
+    verification = verify_final_answer(problem=problem, answer_text=answer_text) if problem and answer_text else None
+    if verification is not None and verification["verdict"] == "INVALID":
+        verdict = "INVALID"
+        first_fatal_error = _string_value(verification.get("first_fatal_error")) or first_fatal_error
+        payload["invalid_steps"] = [
+            *_string_list(payload.get("invalid_steps")),
+            *_string_list(verification.get("invalid_steps")),
+        ]
+        payload["valid_steps"] = [
+            *_string_list(payload.get("valid_steps")),
+            *_string_list(verification.get("valid_steps")),
+        ]
+        payload["repair_possible"] = verification.get("repair_possible", True)
+        payload["confidence"] = verification.get("confidence", 1.0)
+        payload["final_status"] = verification.get("final_status", "INVALID")
 
     final_status = _string_value(payload.get("final_status"), verdict)
     return RavenCritique(

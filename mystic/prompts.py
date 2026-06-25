@@ -43,4 +43,7 @@ Rules:
 - Use "INVALID" when a fatal logical error breaks the proof.
 - Use "GAP" when the idea may work but essential justification is missing.
 - Use "NEEDS_MORE_DETAIL" when the argument is too vague, malformed, or cannot be checked reliably.
+- If the answer proposes explicit candidate solutions, verify them by direct substitution whenever the equation is simple enough.
+- For finite integer tuple classification problems, missing valid candidates also counts as INVALID.
+- Never label a directly falsified final answer as GAP or NEEDS_MORE_DETAIL.
 """

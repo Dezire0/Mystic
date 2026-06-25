@@ -126,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
                 run_id=run_id,
                 backend="adapter-eval",
                 model=args.adapter_path,
+                problem=str(row.get("problem", "")),
+                answer_text=str(row.get("proof_attempt", "")),
             )
             verdict_match = parsed["verdict"] == str(row.get("target_verdict", ""))
             results.append(
