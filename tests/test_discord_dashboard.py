@@ -122,6 +122,7 @@ class DiscordDashboardTests(unittest.TestCase):
             self.assertIn("실패 로그", [field["name"] for field in detail["fields"]])
             self.assertIn("데이터셋 진행", [field["name"] for field in detail["fields"]])
             self.assertIn("레벨", [field["name"] for field in detail["fields"]])
+            self.assertIn("총 학습 데이터셋", [field["name"] for field in detail["fields"]])
 
     def test_failed_expert_is_red_when_not_active(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -214,6 +215,8 @@ class DiscordDashboardTests(unittest.TestCase):
             snapshot = load_dashboard_snapshot(base)
             prime = next(item for item in snapshot["experts"] if item.agent == "prime")
             self.assertEqual(prime.dataset_progress_text, "3/19 datasets")
+            self.assertEqual(prime.dataset_covered_count, 3)
+            self.assertEqual(prime.dataset_expected_count, 19)
             self.assertLess(prime.progress_percent, 100)
             self.assertEqual(prime.status_kind, GREEN)
             self.assertEqual(prime.status_text, "대기")

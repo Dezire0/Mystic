@@ -83,6 +83,8 @@ class ExpertSnapshot:
     eta_text: str
     error_excerpt: str
     stage: str
+    dataset_covered_count: int
+    dataset_expected_count: int
     dataset_progress_text: str
     status_detail: str
     progress_reason: str
@@ -233,6 +235,8 @@ def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
                 ),
                 error_excerpt=extract_error_excerpt(latest_failure),
                 stage=stage,
+                dataset_covered_count=int(dataset_progress["covered"]),
+                dataset_expected_count=int(dataset_progress["expected"]),
                 dataset_progress_text=f"{dataset_progress['covered']}/{dataset_progress['expected']} datasets",
                 status_detail=status_detail,
                 progress_reason=infer_progress_reason(agent=agent, is_active=is_active, stage=stage),
@@ -564,6 +568,7 @@ def expert_detail_page(snapshot: dict[str, Any], agent: str) -> dict[str, Any]:
             {"name": "현재 상태", "value": expert.status_detail, "inline": True},
             {"name": "모델", "value": expert.model or "-", "inline": True},
             {"name": "어댑터", "value": expert.adapter or "-", "inline": True},
+            {"name": "총 학습 데이터셋", "value": f"{expert.dataset_covered_count}개", "inline": True},
             {"name": "train_ready rows", "value": str(expert.train_ready_rows), "inline": True},
             {"name": "데이터셋 진행", "value": expert.dataset_progress_text, "inline": True},
             {"name": "성공 / 실패", "value": f"{expert.success_count} / {expert.failure_count}", "inline": True},
