@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 from datetime import UTC, datetime
 import importlib.util
 import json
@@ -11,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 from typing import Any
 
@@ -148,10 +150,16 @@ def extract_last_json_object(stdout: str) -> dict[str, Any]:
     raise ValueError("Could not parse JSON object from subprocess stdout.")
 
 
-def run_raw_command(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+def run_raw_command(
+    args: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         args,
         cwd=cwd,
+        env=env,
         text=True,
         capture_output=True,
         check=True,
@@ -443,6 +451,32 @@ def require_kaggle_cli() -> str:
     )
 
 
+@contextlib.contextmanager
+def kaggle_runtime_env() -> Any:
+    """Prefer OAuth credentials when both legacy kaggle.json and OAuth files exist.
+
+    Recent Kaggle CLI builds can read legacy keys for some read-only operations but still
+    require OAuth/access-token config for dataset uploads. A temporary KAGGLE_CONFIG_DIR
+    avoids mutating the user's ~/.kaggle directory.
+    """
+    base_env = os.environ.copy()
+    config_dir = Path.home() / ".kaggle"
+    access_token = config_dir / "access_token"
+    credentials = config_dir / "credentials.json"
+    if access_token.exists() and credentials.exists() and not os.getenv("MYSTIC_DISABLE_KAGGLE_OAUTH_SHIM"):
+        with tempfile.TemporaryDirectory(prefix="mystic_kaggle_oauth_") as temp_dir:
+            temp_path = Path(temp_dir)
+            for source in [access_token, credentials]:
+                target = temp_path / source.name
+                shutil.copy2(source, target)
+                target.chmod(0o600)
+            env = dict(base_env)
+            env["KAGGLE_CONFIG_DIR"] = str(temp_path)
+            yield env
+            return
+    yield base_env
+
+
 def kaggle_command_prefix() -> list[str]:
     mode = require_kaggle_cli()
     if mode.startswith(PYTHON_BIN) or mode.endswith("-m kaggle") or " -m kaggle" in mode:
@@ -454,6 +488,12 @@ def detect_kaggle_username() -> str:
     username = os.getenv("KAGGLE_USERNAME", "").strip()
     if username:
         return username
+    credentials_path = Path.home() / ".kaggle" / "credentials.json"
+    if credentials_path.exists():
+        payload = json.loads(credentials_path.read_text(encoding="utf-8"))
+        username = str(payload.get("username", "")).strip()
+        if username:
+            return username
     credential_path = Path.home() / ".kaggle" / "kaggle.json"
     if credential_path.exists():
         payload = json.loads(credential_path.read_text(encoding="utf-8"))
@@ -466,8 +506,18 @@ def detect_kaggle_username() -> str:
 
 
 def ensure_kaggle_ready() -> str:
-    require_kaggle_cli()
-    return detect_kaggle_username()
+    kaggle_cmd = kaggle_command_prefix()
+    username = detect_kaggle_username()
+    with kaggle_runtime_env() as env:
+        try:
+            run_raw_command([*kaggle_cmd, "datasets", "list", "--mine", "-p", "1"], cwd=ROOT, env=env)
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(
+                "Kaggle authentication failed. Run `kaggle auth login` or refresh "
+                "~/.kaggle/access_token before starting remote cycles. "
+                f"stdout={exc.stdout.strip()!r} stderr={exc.stderr.strip()!r}"
+            ) from exc
+    return username
 
 
 def parse_kaggle_status_output(stdout: str) -> str:
@@ -494,7 +544,15 @@ def parse_kaggle_dataset_status_output(stdout: str) -> str:
 
 def kaggle_dataset_create_needs_version(stdout: str, stderr: str) -> bool:
     combined = f"{stdout}\n{stderr}".lower()
-    return "dataset creation error" in combined and "already in use" in combined
+    duplicate_markers = [
+        "already in use",
+        "already exists",
+        "requested title",
+        "dataset creation error",
+    ]
+    return any(marker in combined for marker in duplicate_markers) and any(
+        marker in combined for marker in ["already in use", "already exists", "requested title"]
+    )
 
 
 def locate_downloaded_adapter_tar(output_dir: Path, expected_name: str) -> Path:
@@ -672,13 +730,14 @@ def build_kaggle_training_script(
 
 
 def write_kaggle_dataset_metadata(dataset_dir: Path, *, dataset_ref: str, title: str) -> Path:
-    metadata_path = dataset_dir / "dataset-metadata.json"
     payload = {
         "title": title,
         "id": dataset_ref,
         "licenses": [{"name": "CC0-1.0"}],
     }
+    metadata_path = dataset_dir / "dataset-metadata.json"
     write_json(metadata_path, payload)
+    write_json(dataset_dir / "datasets-metadata.json", payload)
     return metadata_path
 
 
@@ -713,15 +772,23 @@ def wait_for_kaggle_dataset_ready(
     kaggle_cmd: list[str],
     dataset_ref: str,
     cwd: Path,
+    env: dict[str, str] | None = None,
     poll_seconds: int = 10,
     timeout_minutes: int = 10,
 ) -> dict[str, Any]:
     started_at = time.monotonic()
     checks: list[dict[str, Any]] = []
     while True:
-        result = run_raw_command([*kaggle_cmd, "datasets", "status", dataset_ref], cwd=cwd)
-        stdout = result.stdout.strip() or result.stderr.strip()
-        status = parse_kaggle_dataset_status_output(stdout)
+        try:
+            result = run_raw_command([*kaggle_cmd, "datasets", "status", dataset_ref], cwd=cwd, env=env)
+            stdout = result.stdout.strip() or result.stderr.strip()
+            status = parse_kaggle_dataset_status_output(stdout)
+        except subprocess.CalledProcessError as exc:
+            stdout = (exc.stdout or "").strip() or (exc.stderr or "").strip()
+            lowered = stdout.lower()
+            if "authentication required" in lowered:
+                raise RuntimeError(f"Kaggle authentication failed while polling dataset: {stdout}") from exc
+            status = "running"
         snapshot = {"timestamp": now_iso(), "status": status, "raw": stdout}
         checks.append(snapshot)
         if status == "ready":
@@ -967,37 +1034,60 @@ def run_submit(args: argparse.Namespace) -> int:
         dataset_ref=dataset_ref,
     )
 
-    try:
-        dataset_result = run_raw_command([*kaggle_cmd, "datasets", "create", "-p", str(dataset_dir)], cwd=ROOT)
-        if kaggle_dataset_create_needs_version(dataset_result.stdout, dataset_result.stderr):
+    with kaggle_runtime_env() as kaggle_env:
+        try:
+            dataset_result = run_raw_command(
+                [*kaggle_cmd, "datasets", "create", "-p", str(dataset_dir)],
+                cwd=ROOT,
+                env=kaggle_env,
+            )
+            if kaggle_dataset_create_needs_version(dataset_result.stdout, dataset_result.stderr):
+                dataset_result = run_raw_command(
+                    [*kaggle_cmd, "datasets", "version", "-p", str(dataset_dir), "-m", f"Mystic cycle {args.cycle_id} package update"],
+                    cwd=ROOT,
+                    env=kaggle_env,
+                )
+                dataset_action = "version"
+            else:
+                dataset_action = "create"
+        except subprocess.CalledProcessError as exc:
+            if not kaggle_dataset_create_needs_version(exc.stdout or "", exc.stderr or ""):
+                payload = {
+                    "timestamp": now_iso(),
+                    "command": "submit",
+                    "cycle_id": args.cycle_id,
+                    "kaggle_username": username,
+                    "dataset_ref": dataset_ref,
+                    "kernel_ref": kernel_ref,
+                    "package_path": str(package_path),
+                    "dataset_dir": str(dataset_dir),
+                    "kernel_dir": str(kernel_dir),
+                    "output_tar_name": output_tar_name,
+                    "dataset_action": "create_failed",
+                    "dataset_stdout": (exc.stdout or "").strip(),
+                    "dataset_stderr": (exc.stderr or "").strip(),
+                    "dataset_returncode": exc.returncode,
+                    "status": "SUBMIT_ERROR",
+                }
+                write_json(kaggle_submit_summary_path(base_dir, args.cycle_id), payload)
+                raise RuntimeError(
+                    "Kaggle dataset create failed. "
+                    f"stdout={(exc.stdout or '').strip()!r} stderr={(exc.stderr or '').strip()!r}"
+                ) from exc
             dataset_result = run_raw_command(
                 [*kaggle_cmd, "datasets", "version", "-p", str(dataset_dir), "-m", f"Mystic cycle {args.cycle_id} package update"],
                 cwd=ROOT,
+                env=kaggle_env,
             )
             dataset_action = "version"
-        else:
-            dataset_action = "create"
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").lower()
-        stdout = (exc.stdout or "").lower()
-        duplicate_markers = [
-            "already exists",
-            "already in use",
-        ]
-        if not any(marker in stderr or marker in stdout for marker in duplicate_markers):
-            raise
-        dataset_result = run_raw_command(
-            [*kaggle_cmd, "datasets", "version", "-p", str(dataset_dir), "-m", f"Mystic cycle {args.cycle_id} package update"],
+        dataset_status = wait_for_kaggle_dataset_ready(
+            kaggle_cmd=kaggle_cmd,
+            dataset_ref=dataset_ref,
             cwd=ROOT,
+            env=kaggle_env,
         )
-        dataset_action = "version"
-    dataset_status = wait_for_kaggle_dataset_ready(
-        kaggle_cmd=kaggle_cmd,
-        dataset_ref=dataset_ref,
-        cwd=ROOT,
-    )
-    wait_for_dataset_visibility_stabilization(60)
-    kernel_result = run_raw_command([*kaggle_cmd, "kernels", "push", "-p", str(kernel_dir)], cwd=ROOT)
+        wait_for_dataset_visibility_stabilization(60)
+        kernel_result = run_raw_command([*kaggle_cmd, "kernels", "push", "-p", str(kernel_dir)], cwd=ROOT, env=kaggle_env)
 
     payload = {
         "timestamp": now_iso(),
@@ -1030,31 +1120,51 @@ def run_poll(args: argparse.Namespace) -> int:
     started_at = time.monotonic()
     statuses: list[dict[str, Any]] = []
 
-    while True:
-        result = run_raw_command([*kaggle_cmd, "kernels", "status", kernel_ref], cwd=ROOT)
-        stdout = result.stdout.strip() or result.stderr.strip()
-        status = parse_kaggle_status_output(stdout)
-        snapshot = {"timestamp": now_iso(), "status": status, "raw": stdout}
-        statuses.append(snapshot)
-        if status == "complete":
-            break
-        if status == "failed":
-            write_json(
-                kaggle_poll_summary_path(base_dir, args.cycle_id),
-                {
-                    "timestamp": now_iso(),
-                    "command": "poll",
-                    "cycle_id": args.cycle_id,
-                    "kernel_ref": kernel_ref,
-                    "final_status": status,
-                    "checks": statuses,
-                },
-            )
-            raise RuntimeError(f"Kaggle kernel failed: {stdout}")
-        elapsed_minutes = (time.monotonic() - started_at) / 60.0
-        if elapsed_minutes > args.timeout_minutes:
-            raise TimeoutError(f"Kaggle kernel polling timed out after {args.timeout_minutes} minutes.")
-        time.sleep(args.poll_seconds)
+    with kaggle_runtime_env() as kaggle_env:
+        while True:
+            result = run_raw_command([*kaggle_cmd, "kernels", "status", kernel_ref], cwd=ROOT, env=kaggle_env)
+            stdout = result.stdout.strip() or result.stderr.strip()
+            status = parse_kaggle_status_output(stdout)
+            snapshot = {"timestamp": now_iso(), "status": status, "raw": stdout}
+            statuses.append(snapshot)
+            if status == "complete":
+                break
+            if status == "failed":
+                failure_output_payload: dict[str, Any] = {}
+                failure_output_dir = kaggle_output_dir(base_dir, args.cycle_id) / "failure"
+                failure_output_dir.mkdir(parents=True, exist_ok=True)
+                try:
+                    output_result = run_raw_command(
+                        [*kaggle_cmd, "kernels", "output", kernel_ref, "-p", str(failure_output_dir), "-o"],
+                        cwd=ROOT,
+                        env=kaggle_env,
+                    )
+                    signal_file = locate_cycle_signal_file(failure_output_dir)
+                    failure_output_payload = {
+                        "output_dir": str(failure_output_dir),
+                        "stdout": output_result.stdout.strip(),
+                        "signal_file": str(signal_file) if signal_file is not None else None,
+                        "signal_payload": read_json(signal_file) if signal_file is not None else None,
+                    }
+                except Exception as output_exc:  # pragma: no cover - depends on Kaggle availability
+                    failure_output_payload = {"output_dir": str(failure_output_dir), "error": repr(output_exc)}
+                write_json(
+                    kaggle_poll_summary_path(base_dir, args.cycle_id),
+                    {
+                        "timestamp": now_iso(),
+                        "command": "poll",
+                        "cycle_id": args.cycle_id,
+                        "kernel_ref": kernel_ref,
+                        "final_status": status,
+                        "checks": statuses,
+                        "failure_output": failure_output_payload,
+                    },
+                )
+                raise RuntimeError(f"Kaggle kernel failed: {stdout}")
+            elapsed_minutes = (time.monotonic() - started_at) / 60.0
+            if elapsed_minutes > args.timeout_minutes:
+                raise TimeoutError(f"Kaggle kernel polling timed out after {args.timeout_minutes} minutes.")
+            time.sleep(args.poll_seconds)
 
     payload = {
         "timestamp": now_iso(),
@@ -1081,7 +1191,8 @@ def run_download(args: argparse.Namespace) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     expected_tar_name = args.output_tar_name or str(submit_summary.get("output_tar_name", "")).strip() or default_output_tar_name("mystic_data/adapters/raven_lora_v0")
-    result = run_raw_command([*kaggle_cmd, "kernels", "output", kernel_ref, "-p", str(output_dir)], cwd=ROOT)
+    with kaggle_runtime_env() as kaggle_env:
+        result = run_raw_command([*kaggle_cmd, "kernels", "output", kernel_ref, "-p", str(output_dir)], cwd=ROOT, env=kaggle_env)
     adapter_tar = locate_downloaded_adapter_tar(output_dir, expected_tar_name)
     signal_file = locate_cycle_signal_file(output_dir)
     signal_payload = read_json(signal_file) if signal_file is not None else None

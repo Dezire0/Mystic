@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from mystic.jsonl_loop import ensure_data_dirs, read_jsonl
+from mystic.training.blueprints import ARCHITECTURE_TRAINING_TARGETS, INGESTION_SOURCES
 from mystic.training.continuous import continuous_state_path, read_json, specialist_history_log_path
 from mystic.training.remote_cycle import remote_cycle_state_path
 
@@ -24,6 +25,17 @@ class ExecutionRecord:
     source: str
     status: str
     details: dict[str, Any]
+
+
+DIVISION_LABELS = {
+    "Core": "Core",
+    "Pure Math": "Pure Math",
+    "Science": "Science",
+    "Verification": "Verification",
+    "Discovery": "Discovery",
+    "Memory": "Memory",
+    "Report": "Report",
+}
 
 
 def parse_timestamp(value: str) -> datetime:
@@ -524,6 +536,113 @@ def status_label(status: str) -> str:
     return mapping.get(status, status)
 
 
+def source_name_by_slug() -> dict[str, str]:
+    return {str(source.get("slug", "")): str(source.get("name", "")) for source in INGESTION_SOURCES}
+
+
+def source_agents_by_slug() -> dict[str, set[str]]:
+    return {
+        str(source.get("slug", "")): {str(agent) for agent in source.get("recommended_target_agents", [])}
+        for source in INGESTION_SOURCES
+    }
+
+
+def dataset_label_from_slug(slug: str) -> str:
+    if not slug:
+        return "-"
+    return source_name_by_slug().get(slug, slug)
+
+
+def dataset_label_for_record(record: ExecutionRecord) -> str:
+    details = record.details
+    for key in ["active_slug", "dataset_slug", "source_slug"]:
+        value = str(details.get(key, "") or "")
+        if value:
+            return dataset_label_from_slug(value)
+    run_label = str(details.get("run_label", "") or details.get("run_id", "") or "")
+    match = re.search(r"continuous_cycle_\d+_(.+)$", run_label)
+    if match:
+        return dataset_label_from_slug(match.group(1))
+    dataset_ref = str(details.get("dataset_ref", "") or "")
+    if dataset_ref:
+        return dataset_ref
+    return "-"
+
+
+def count_jsonl_rows(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def build_section_summaries(
+    records: list[ExecutionRecord],
+    *,
+    base_dir: str | Path,
+    continuous_status: dict[str, Any] | None = None,
+    remote_cycle_status: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    base = Path(base_dir)
+    continuous = continuous_status or {}
+    remote = remote_cycle_status or {}
+    active_slug = str(continuous.get("active_slug", "") or "")
+    active_dataset = dataset_label_from_slug(active_slug)
+    active_agents = source_agents_by_slug().get(active_slug, set())
+
+    records_by_agent: dict[str, list[ExecutionRecord]] = {}
+    for record in records:
+        if record.part == "unknown":
+            continue
+        records_by_agent.setdefault(record.part, []).append(record)
+
+    sections: dict[str, list[dict[str, Any]]] = {}
+    for target in ARCHITECTURE_TRAINING_TARGETS:
+        agent = str(target["agent"])
+        division = str(target.get("division", "unknown"))
+        latest = next(iter(records_by_agent.get(agent, [])), None)
+        dataset = active_dataset if agent in active_agents and active_slug else (dataset_label_for_record(latest) if latest else "-")
+        latest_status = status_label(latest.status) if latest else str(target.get("current_stage", "not_started"))
+        latest_success = latest.success if latest else None
+        train_ready_path = base / "train_ready" / f"{agent}_train_ready.jsonl"
+        adapter = str(target.get("adapter") or "-")
+        remote_note = ""
+        if agent == "raven" and remote:
+            remote_status = str(remote.get("status", "") or "")
+            remote_phase = str(remote.get("current_phase", "") or "")
+            remote_note = f"{remote_status}/{remote_phase}".strip("/")
+            remote_dataset = str(remote.get("current_dataset_ref", "") or remote.get("last_model_id", "") or "")
+            if remote_dataset:
+                dataset = remote_dataset
+        agent_records = records_by_agent.get(agent, [])
+        sections.setdefault(division, []).append(
+            {
+                "agent": agent,
+                "name": str(target.get("name", agent)),
+                "division": division,
+                "model": str(target.get("model", "-")),
+                "adapter": adapter,
+                "dataset": dataset,
+                "train_ready_rows": count_jsonl_rows(train_ready_path),
+                "latest_status": latest_status,
+                "latest_success": latest_success,
+                "latest_timestamp": latest.timestamp if latest else "",
+                "success_count": sum(1 for item in agent_records if item.success),
+                "failure_count": sum(1 for item in agent_records if not item.success),
+                "stage": str(target.get("current_stage", "")),
+                "remote_note": remote_note,
+            }
+        )
+
+    return [
+        {
+            "division": division,
+            "label": DIVISION_LABELS.get(division, division),
+            "agents": sorted(items, key=lambda item: str(item["agent"])),
+        }
+        for division, items in sections.items()
+    ]
+
+
 def summarize_records(records: list[ExecutionRecord]) -> dict[str, Any]:
     total = len(records)
     success_count = sum(1 for record in records if record.success)
@@ -554,6 +673,12 @@ def write_execution_history_outputs(base_dir: str | Path) -> dict[str, str | int
     continuous_status = load_continuous_status(base)
     remote_cycle_status = load_remote_cycle_status(base)
     stats = summarize_records(records)
+    section_summaries = build_section_summaries(
+        records,
+        base_dir=base,
+        continuous_status=continuous_status,
+        remote_cycle_status=remote_cycle_status,
+    )
     generated_at = datetime.now(UTC).isoformat()
     output_html.write_text(
         render_execution_history_html(
@@ -561,6 +686,7 @@ def write_execution_history_outputs(base_dir: str | Path) -> dict[str, str | int
             generated_at=generated_at,
             continuous_status=continuous_status,
             remote_cycle_status=remote_cycle_status,
+            section_summaries=section_summaries,
         )
         + "\n",
         encoding="utf-8",
@@ -577,6 +703,7 @@ def write_execution_history_outputs(base_dir: str | Path) -> dict[str, str | int
                     "failure_count": stats["failure_count"],
                     "recent_success_rate": stats["recent_success_rate"],
                 },
+                "section_summaries": section_summaries,
                 "record_count": len(records),
                 "records": [
                     {
@@ -606,15 +733,60 @@ def write_execution_history_outputs(base_dir: str | Path) -> dict[str, str | int
     }
 
 
+def render_section_summary_cards(section_summaries: list[dict[str, Any]]) -> str:
+    if not section_summaries:
+        return '<div class="section-card"><h2>섹션 없음</h2><div class="agent-row">기록이 없습니다.</div></div>'
+    cards: list[str] = []
+    for section in section_summaries:
+        rows: list[str] = []
+        for agent in section.get("agents", []):
+            latest_success = agent.get("latest_success")
+            status_class = "status-neutral"
+            if latest_success is True:
+                status_class = "status-ok"
+            elif latest_success is False:
+                status_class = "status-fail"
+            remote_note = str(agent.get("remote_note", "") or "")
+            remote_html = f'<div class="agent-meta">{html.escape(remote_note)}</div>' if remote_note else ""
+            rows.append(
+                '<div class="agent-row">'
+                '<div>'
+                f'<div class="agent-name">{html.escape(str(agent.get("name", "-")))}</div>'
+                f'<div class="agent-meta">{html.escape(str(agent.get("adapter", "-")))}</div>'
+                f'<div class="agent-meta">rows: {html.escape(str(agent.get("train_ready_rows", 0)))}</div>'
+                '</div>'
+                '<div>'
+                f'<div class="dataset-name">{html.escape(str(agent.get("dataset", "-")))}</div>'
+                f'<div class="agent-meta">{html.escape(str(agent.get("model", "-")))}</div>'
+                '</div>'
+                '<div>'
+                f'<div class="{status_class}">{html.escape(str(agent.get("latest_status", "-")))}</div>'
+                f'<div class="agent-meta">ok/fail: {html.escape(str(agent.get("success_count", 0)))}/{html.escape(str(agent.get("failure_count", 0)))}</div>'
+                f"{remote_html}"
+                '</div>'
+                '</div>'
+            )
+        cards.append(
+            '<div class="section-card">'
+            f'<h2>{html.escape(str(section.get("label", section.get("division", "-"))))}</h2>'
+            '<div class="agent-list">'
+            + "".join(rows)
+            + '</div></div>'
+        )
+    return "".join(cards)
+
+
 def render_execution_history_html(
     records: list[ExecutionRecord],
     *,
     generated_at: str,
     continuous_status: dict[str, Any] | None = None,
     remote_cycle_status: dict[str, Any] | None = None,
+    section_summaries: list[dict[str, Any]] | None = None,
 ) -> str:
     status_payload = continuous_status or {}
     remote_status = remote_cycle_status or {}
+    sections = section_summaries or []
     stats = summarize_records(records)
     rows: list[str] = []
     for index, record in enumerate(records, start=1):
@@ -688,6 +860,7 @@ def render_execution_history_html(
             f"{display_stream(latest_failure)} / {latest_failure.part} / "
             f"{status_label(latest_failure.status)} / {latest_failure.timestamp}"
         )
+    section_cards = render_section_summary_cards(sections)
     return f"""<!doctype html>
 <html lang="ko">
 <head>
@@ -869,6 +1042,66 @@ def render_execution_history_html(
       border-top: 1px solid var(--line);
       background: rgba(184, 92, 56, 0.04);
     }}
+    .section-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 14px;
+      margin: 20px 0;
+    }}
+    .section-card {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 8px 22px rgba(42, 29, 18, 0.06);
+    }}
+    .section-card h2 {{
+      margin: 0;
+      padding: 12px 14px;
+      font-size: 16px;
+      background: rgba(31, 27, 22, 0.05);
+      border-bottom: 1px solid var(--line);
+    }}
+    .agent-list {{
+      display: grid;
+    }}
+    .agent-row {{
+      display: grid;
+      grid-template-columns: minmax(92px, 0.9fr) minmax(130px, 1.2fr) minmax(94px, 0.7fr);
+      gap: 10px;
+      padding: 10px 14px;
+      border-bottom: 1px solid rgba(216, 207, 191, 0.7);
+      align-items: start;
+    }}
+    .agent-row:last-child {{
+      border-bottom: 0;
+    }}
+    .agent-name {{
+      font-weight: 700;
+      font-size: 13px;
+    }}
+    .agent-meta {{
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+      word-break: break-word;
+    }}
+    .dataset-name {{
+      font-size: 13px;
+      word-break: break-word;
+    }}
+    .status-ok {{
+      color: var(--ok);
+      font-weight: 700;
+    }}
+    .status-fail {{
+      color: var(--fail);
+      font-weight: 700;
+    }}
+    .status-neutral {{
+      color: var(--muted);
+      font-weight: 700;
+    }}
   </style>
 </head>
 <body>
@@ -922,6 +1155,10 @@ def render_execution_history_html(
         <h2>최근 실패</h2>
         <p>{html.escape(latest_failure_text)}</p>
       </div>
+    </div>
+    <h2>섹션별 학습 현황</h2>
+    <div class="section-grid">
+      {section_cards}
     </div>
     <div class="panel">
       <table>

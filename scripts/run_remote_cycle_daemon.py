@@ -185,6 +185,17 @@ def build_cycle_command(args: argparse.Namespace, spec: dict[str, str], base_dir
     return command
 
 
+def is_blocking_remote_error(error_message: str) -> bool:
+    text = error_message.lower()
+    blockers = [
+        "kaggle authentication failed",
+        "authentication required",
+        "could not find service",
+        "kaggle cli not found",
+    ]
+    return any(blocker in text for blocker in blockers)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     base_dir = Path(args.base_dir)
@@ -295,14 +306,16 @@ def main(argv: list[str] | None = None) -> int:
         finish_payload = payloads.get("finish", {})
         compare_payload = finish_payload.get("compare_payload", {})
         metrics = compare_payload.get("metrics", {}) if isinstance(compare_payload, dict) else {}
+        blocking_error = (not success) and is_blocking_remote_error(error_message)
         cycle_record = {
             "timestamp": finished_at,
             "cycle_number": cycle_number,
             "cycle_id": cycle_id,
             "started_at": started_at,
             "finished_at": finished_at,
-            "status": "REMOTE_CYCLE_OK" if success else "REMOTE_CYCLE_ERROR",
+            "status": "REMOTE_CYCLE_OK" if success else ("REMOTE_CYCLE_BLOCKED" if blocking_error else "REMOTE_CYCLE_ERROR"),
             "success": success,
+            "blocked": blocking_error,
             "returncode": returncode,
             "error": error_message,
             "base_model": args.base_model,
@@ -332,18 +345,18 @@ def main(argv: list[str] | None = None) -> int:
                 "last_adapter_path": spec["adapter_path"],
                 "last_model_id": spec["model_id"],
                 "last_error": error_message,
-                "status": "sleeping" if success else "error",
+                "status": "sleeping" if success else ("blocked" if blocking_error else "error"),
                 "active_cycle_id": "",
                 "active_adapter_path": "",
                 "active_model_id": "",
-                "current_phase": "idle" if success else "error",
+                "current_phase": "idle" if success else ("blocked" if blocking_error else "error"),
                 "current_kernel_ref": "",
                 "current_dataset_ref": "",
             }
         )
         persist_state(base_dir, state)
 
-        if args.once or stop_requested["value"]:
+        if args.once or stop_requested["value"] or blocking_error:
             break
 
         sleep_seconds = args.sleep_seconds if success else args.error_sleep_seconds
@@ -352,8 +365,9 @@ def main(argv: list[str] | None = None) -> int:
             persist_state(base_dir, state)
             time.sleep(min(15, max(wake_at - time.monotonic(), 0)))
 
-    state["status"] = "stopped"
-    state["stopped_at"] = now_iso()
+    if state.get("status") != "blocked":
+        state["status"] = "stopped"
+        state["stopped_at"] = now_iso()
     persist_state(base_dir, state)
     return 0
 

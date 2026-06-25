@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from mystic.execution_history import (
+    build_section_summaries,
     collect_execution_records,
     format_duration,
     render_execution_history_html,
@@ -252,12 +253,34 @@ class ExecutionHistoryTests(unittest.TestCase):
             self.assertIn("sshleifer/tiny-gpt2", html_text)
             self.assertIn("로컬 연속 학습", html_text)
             self.assertIn("원격 Kaggle 사이클", html_text)
+            self.assertIn("섹션별 학습 현황", html_text)
             self.assertIn("https://www.kaggle.com/code/user/mystic-raven-remote-cycle-0002", html_text)
             self.assertIn("https://www.kaggle.com/datasets/user/mystic-cycle-remote-cycle-0002", html_text)
             json_payload = json.loads(json_path.read_text(encoding="utf-8"))
             self.assertEqual(json_payload["record_count"], 1)
             self.assertEqual(json_payload["continuous_status"]["status"], "running")
             self.assertEqual(json_payload["remote_cycle_status"]["status"], "running")
+            self.assertIn("section_summaries", json_payload)
+
+    def test_build_section_summaries_marks_active_dataset_by_target_agent(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir) / "mystic_data"
+            train_ready = base / "train_ready"
+            train_ready.mkdir(parents=True, exist_ok=True)
+            (train_ready / "prime_train_ready.jsonl").write_text('{"x":1}\n{"x":2}\n', encoding="utf-8")
+            records = collect_execution_records(base)
+
+            summaries = build_section_summaries(
+                records,
+                base_dir=base,
+                continuous_status={"active_slug": "openmathinstruct_2"},
+                remote_cycle_status={},
+            )
+
+            pure_math = next(section for section in summaries if section["division"] == "Pure Math")
+            prime = next(agent for agent in pure_math["agents"] if agent["agent"] == "prime")
+            self.assertEqual(prime["dataset"], "OpenMathInstruct-2")
+            self.assertEqual(prime["train_ready_rows"], 2)
 
     def test_format_duration(self):
         self.assertEqual(format_duration(None), "-")
