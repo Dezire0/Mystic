@@ -85,7 +85,7 @@ class DiscordDashboardTests(unittest.TestCase):
 
             algebra = next(item for item in snapshot["experts"] if item.agent == "algebra")
             raven = next(item for item in snapshot["experts"] if item.agent == "raven")
-            self.assertEqual(algebra.status_kind, GREEN)
+            self.assertEqual(algebra.status_kind, YELLOW)
             self.assertEqual(algebra.status_text, "대기")
             self.assertLess(algebra.progress_percent, 100)
             self.assertEqual(algebra.dataset_progress_text, "0/13 datasets")
@@ -211,6 +211,7 @@ class DiscordDashboardTests(unittest.TestCase):
             self.assertEqual(smt.status_text, "도구")
             self.assertEqual(smt.progress_percent, 0)
             self.assertEqual(smt.status_detail, "학습 대상 아님")
+            self.assertEqual(smt.status_kind, GREEN)
 
 
 if __name__ == "__main__":

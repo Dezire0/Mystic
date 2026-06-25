@@ -23,18 +23,21 @@ PAGE_SIZE = 8
 GREEN = "green"
 YELLOW = "yellow"
 RED = "red"
+GRAY = "gray"
 CYCLE_DELAY_SECONDS = 3600
 
 STATUS_EMOJI = {
     GREEN: "🟢",
     YELLOW: "🟡",
     RED: "🔴",
+    GRAY: "⚪",
 }
 
 STATUS_COLOR = {
     GREEN: 0x2ECC71,
     YELLOW: 0xF1C40F,
     RED: 0xE74C3C,
+    GRAY: 0x95A5A6,
 }
 
 REMOTE_PHASE_PROGRESS = {
@@ -138,6 +141,8 @@ def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
         dataset_progress = dataset_progress_for_agent(base, agent)
         is_trainable = bool(target.get("adapter")) or agent == "raven"
         is_active = agent in active_agents or (agent == "raven" and str(remote_status.get("status", "")) == "running")
+        local_cycle_running = str(continuous_status.get("status", "")).lower() == "running"
+        remote_cycle_running = str(remote_status.get("status", "")).lower() == "running"
         dataset = infer_dataset(agent, latest=latest, active_slug=active_slug, remote_status=remote_status)
         stage = str(target.get("current_stage", ""))
         status_kind = infer_status_kind(
@@ -148,11 +153,15 @@ def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
             train_ready_rows=train_ready_rows,
             stage=stage,
             dataset_progress=dataset_progress,
+            local_cycle_running=local_cycle_running,
+            remote_cycle_running=remote_cycle_running,
         )
         status_text = infer_status_text(status_kind, latest=latest, remote_status=remote_status)
         if stage == "tool_only":
             status_text = "도구"
-        if status_kind == GREEN and not is_cycle_complete(stage=stage, dataset_progress=dataset_progress):
+        if status_kind == GREEN and stage != "tool_only" and not is_cycle_complete(stage=stage, dataset_progress=dataset_progress):
+            status_text = "대기"
+        if status_kind == YELLOW and not is_active and stage != "tool_only":
             status_text = "대기"
         status_detail = infer_status_detail(
             agent=agent,
@@ -275,11 +284,21 @@ def infer_status_kind(
     train_ready_rows: int,
     stage: str,
     dataset_progress: dict[str, int],
+    local_cycle_running: bool,
+    remote_cycle_running: bool,
 ) -> str:
     if is_active:
         return YELLOW
     if latest is not None and not latest.success:
         return RED
+    if stage == "tool_only":
+        return GREEN
+    if agent == "raven" and remote_cycle_running and not is_cycle_complete(stage=stage, dataset_progress=dataset_progress):
+        return YELLOW
+    if agent != "raven" and local_cycle_running and not is_cycle_complete(stage=stage, dataset_progress=dataset_progress):
+        return YELLOW
+    if is_cycle_complete(stage=stage, dataset_progress=dataset_progress):
+        return GREEN
     return GREEN
 
 
@@ -491,7 +510,7 @@ def overview_page(snapshot: dict[str, Any], page: int) -> dict[str, Any]:
             },
             {
                 "name": "표시 규칙",
-                "value": "🟡 학습 중\n🟢 대기/완료\n🔴 실패/오류",
+                "value": "🟡 학습 중/대기\n🟢 완료/도구\n🔴 실패/오류\n⚪ 오프라인/점검",
                 "inline": True,
             },
         ],
