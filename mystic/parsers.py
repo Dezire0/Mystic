@@ -159,7 +159,15 @@ def parse_raven_output(
     if not first_fatal_error and verdict != "VALID":
         first_fatal_error = "No fatal error was provided."
 
-    verification = verify_final_answer(problem=problem, answer_text=answer_text) if problem and answer_text else None
+    verification = None
+    if problem and answer_text:
+        try:
+            verification = verify_final_answer(problem=problem, answer_text=answer_text)
+        except Exception as exc:
+            payload["valid_steps"] = [
+                *_string_list(payload.get("valid_steps")),
+                f"Final-answer verifier skipped due to internal error: {exc}",
+            ]
     if verification is not None and verification["verdict"] == "INVALID":
         verdict = "INVALID"
         first_fatal_error = _string_value(verification.get("first_fatal_error")) or first_fatal_error

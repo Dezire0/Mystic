@@ -63,6 +63,13 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(verification["verdict"], "INVALID")
         self.assertIn("(2, 2)", verification["first_fatal_error"])
 
+    def test_generic_substitution_verifier_skips_when_problem_uses_unknown_variable(self):
+        verification = verify_final_answer(
+            problem="positive integers x, y, z satisfy x + z = 5",
+            answer_text="Candidate solution: (2,3)",
+        )
+        self.assertIsNone(verification)
+
     def test_parse_raven_output_marks_invalid_when_candidate_fails_substitution(self):
         problem = "1/x + 1/y + 1/z = 1, x <= y <= z, positive integers"
         answer_text = "All ordered solutions are (2,4,8), (2,3,6), (3,3,3)."
@@ -93,6 +100,19 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(critique["verdict"], "VALID")
         self.assertEqual(critique["first_fatal_error"], "")
+
+    def test_parse_raven_output_does_not_crash_when_verifier_cannot_map_variables(self):
+        critique = parse_raven_output(
+            raw_output='{"verdict":"GAP","first_fatal_error":"missing justification","missing_assumptions":[],"invalid_steps":[],"valid_steps":[],"repair_possible":true,"confidence":0.5,"final_status":"GAP"}',
+            sample_id="s1",
+            run_id="r1",
+            backend="ollama",
+            model="qwen2.5:7b",
+            problem="positive integers x, y, z satisfy x + z = 5",
+            answer_text="Candidate solution: (2,3)",
+        )
+        self.assertEqual(critique["verdict"], "GAP")
+        self.assertEqual(critique["first_fatal_error"], "missing justification")
 
 
 if __name__ == "__main__":

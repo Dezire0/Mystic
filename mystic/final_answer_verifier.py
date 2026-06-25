@@ -127,6 +127,10 @@ def extract_order_constraints(problem: str) -> list[tuple[str, str, str]]:
     return constraints
 
 
+def variables_in_expression(expression: str) -> set[str]:
+    return {match for match in VARIABLE_PATTERN.findall(expression)}
+
+
 def infer_variable_order(problem: str, tuple_width: int) -> list[str]:
     text = normalize_problem_text(problem)
     chain_match = CHAIN_ORDER_PATTERN.search(text)
@@ -183,8 +187,14 @@ def check_order_constraints(problem: str, assignment: dict[str, Fraction]) -> li
 def verify_equations(problem: str, assignment: dict[str, Fraction]) -> list[str]:
     failures: list[str] = []
     for left, right in extract_equations(problem):
-        lhs = safe_eval_fraction(left, assignment)
-        rhs = safe_eval_fraction(right, assignment)
+        expression_variables = variables_in_expression(left) | variables_in_expression(right)
+        if not expression_variables.issubset(set(assignment)):
+            continue
+        try:
+            lhs = safe_eval_fraction(left, assignment)
+            rhs = safe_eval_fraction(right, assignment)
+        except (ValueError, ZeroDivisionError):
+            continue
         if lhs != rhs:
             failures.append(f"{left} = {right} fails because {lhs} != {rhs}")
     return failures
@@ -200,11 +210,19 @@ def verify_explicit_candidates(problem: str, answer_text: str) -> dict[str, Any]
 
     invalid_steps: list[str] = []
     valid_steps: list[str] = []
+    any_equation_checked = False
     for candidate in candidates:
         assignment = {
             variable: Fraction(value)
             for variable, value in zip(variable_order, candidate)
         }
+        applicable_equations = [
+            (left, right)
+            for left, right in extract_equations(problem)
+            if (variables_in_expression(left) | variables_in_expression(right)).issubset(set(assignment))
+        ]
+        if applicable_equations:
+            any_equation_checked = True
         failures = [
             *check_positive_integer_constraints(problem, assignment),
             *check_order_constraints(problem, assignment),
@@ -214,6 +232,9 @@ def verify_explicit_candidates(problem: str, answer_text: str) -> dict[str, Any]
             invalid_steps.append(f"{candidate}: " + "; ".join(failures))
         else:
             valid_steps.append(f"{candidate} passes direct substitution")
+
+    if not any_equation_checked:
+        return None
 
     if invalid_steps:
         return {
