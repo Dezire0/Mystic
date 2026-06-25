@@ -141,11 +141,16 @@ class ResearchLabTests(unittest.TestCase):
             FakeClient(
                 [
                     '{"specialist":"prime","reason":"정수론 문제로 보인다","strategy":"문제를 작은 단계로 쪼개 확인한다"}',
+                    '{"risk_summary":"완전성 검토가 약할 수 있다","missing_specialists":["forge"],"weak_assumptions":["모든 경우 분류 누락 가능"],"revised_strategy":"분류 후 반례 탐색과 검산을 반드시 병행한다"}',
                     "UNDERSTANDING:\nprime 관점 질문 파악\nSTRATEGY:\nprime 계획\nEXECUTION:\nprime 단계별 풀이\nCONCLUSION:\nprime 결과\nUNCERTAINTIES:\n없음",
                     "UNDERSTANDING:\nlogic 관점 질문 파악\nSTRATEGY:\nlogic 계획\nEXECUTION:\nlogic 단계별 풀이\nCONCLUSION:\nlogic 결과\nUNCERTAINTIES:\n없음",
                     "UNDERSTANDING:\npattern 관점 질문 파악\nSTRATEGY:\npattern 계획\nEXECUTION:\npattern 단계별 풀이\nCONCLUSION:\npattern 결과\nUNCERTAINTIES:\n없음",
                     "UNDERSTANDING:\nforge 관점 질문 파악\nSTRATEGY:\nforge 계획\nEXECUTION:\nforge 단계별 풀이\nCONCLUSION:\nforge 결과\nUNCERTAINTIES:\n없음",
                     "UNDERSTANDING:\nraven 관점 질문 파악\nSTRATEGY:\nraven 계획\nEXECUTION:\nraven 단계별 풀이\nCONCLUSION:\nraven 결과\nUNCERTAINTIES:\n없음",
+                    "UNDERSTANDING:\nlogic이 prime 검토\nSTRATEGY:\n허점 점검\nEXECUTION:\n경계 사례 확인\nCONCLUSION:\nlogic 검토 의견\nUNCERTAINTIES:\n없음",
+                    "UNDERSTANDING:\npattern이 logic 검토\nSTRATEGY:\n패턴 점검\nEXECUTION:\n형태 확인\nCONCLUSION:\npattern 검토 의견\nUNCERTAINTIES:\n없음",
+                    "UNDERSTANDING:\nforge가 pattern 검토\nSTRATEGY:\n탐색 점검\nEXECUTION:\n반례 확인\nCONCLUSION:\nforge 검토 의견\nUNCERTAINTIES:\n없음",
+                    "UNDERSTANDING:\nraven이 forge 검토\nSTRATEGY:\n논리 점검\nEXECUTION:\n완전성 확인\nCONCLUSION:\nraven 검토 의견\nUNCERTAINTIES:\n없음",
                     "UNDERSTANDING:\n통합 질문 파악\nSTRATEGY:\n통합 계획\nEXECUTION:\n통합 단계별 풀이\nCONCLUSION:\n통합 최종 결과\nUNCERTAINTIES:\n없음",
                 ]
             ),
@@ -171,12 +176,17 @@ class ResearchLabTests(unittest.TestCase):
         self.assertEqual(
             [stage for stage, _ in progress_events],
             [
+                "plan_critic_complete",
                 "routing_complete",
                 "specialist_complete",
                 "specialist_complete",
                 "specialist_complete",
                 "specialist_complete",
                 "specialist_complete",
+                "cross_review_complete",
+                "cross_review_complete",
+                "cross_review_complete",
+                "cross_review_complete",
                 "synthesis_complete",
                 "critique_complete",
                 "final_answer_ready",

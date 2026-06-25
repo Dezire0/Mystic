@@ -119,12 +119,15 @@ Use `/mystic` in Discord. The bot opens a DM and sends:
 - you can also send a plain DM to the bot, or mention the bot in a guild message, and it will answer without a slash command
 - DM/mention research replies now send stepwise progress updates before the final answer: question understanding, strategy, draft solution, and Raven critique
 - the research lab now uses Core routing plus multiple specialist drafts before Core synthesis, instead of trusting a single specialist alone
+- the research lab also includes a Core plan critic, specialist cross-review, and optional remote heavy-reasoning backend split when configured
 
 `/mystic_lab` flow:
 
 - question understanding
 - strategy planning
+- Core plan critic
 - multi-specialist draft generation
+- specialist cross-review
 - Core synthesis
 - conclusion drafting
 - Raven critique to reduce unsupported claims

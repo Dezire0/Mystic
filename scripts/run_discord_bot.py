@@ -165,14 +165,31 @@ async def send_research_response(
                 f"이유: {compact_line(payload.get('reason', '-'))}\n"
                 f"전략: {compact_line(payload.get('strategy', '-'), 320)}"
             )
+        elif stage == "plan_critic_complete":
+            await destination.send(
+                "2-1. Core 계획 비평 완료\n"
+                f"비평 요약: {compact_line(payload.get('critic_summary', '-') or '-', 320)}\n"
+                f"수정 전략: {compact_line(payload.get('strategy', '-'), 320)}"
+            )
         elif stage == "specialist_complete":
             await destination.send(
                 "3. specialist 초안 생성 완료\n"
                 f"전문가 이름: {payload.get('specialist_name', '-')}\n"
                 f"전문가 코드: {payload.get('agent', '-')}\n"
+                f"백엔드: {payload.get('backend', '-')}\n"
+                f"모델: {payload.get('model', '-')}\n"
                 f"이해: {compact_line(payload.get('understanding', '-'), 240)}\n"
                 f"전략: {compact_line(payload.get('strategy', '-'), 240)}\n"
                 f"결론 초안: {compact_line(payload.get('conclusion', '-'), 220)}"
+            )
+        elif stage == "cross_review_complete":
+            await destination.send(
+                "3-1. specialist 교차검토 완료\n"
+                f"검토자: {payload.get('reviewer_name', '-')} ({payload.get('reviewer_agent', '-')})\n"
+                f"대상: {payload.get('target_agent', '-')}\n"
+                f"백엔드: {payload.get('backend', '-')}\n"
+                f"모델: {payload.get('model', '-')}\n"
+                f"핵심 의견: {compact_line(payload.get('conclusion', '-'), 320)}"
             )
         elif stage == "synthesis_complete":
             await destination.send(

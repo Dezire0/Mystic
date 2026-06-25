@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -89,6 +90,48 @@ CONCLUSION:
 UNCERTAINTIES:
 """
 
+
+PLAN_CRITIC_PROMPT = """You are Mystic-Core-Plan-Critic.
+
+You will receive a problem and a proposed Core routing plan.
+Attack the plan before execution.
+
+Return JSON only:
+{
+  "risk_summary": "...",
+  "missing_specialists": ["..."],
+  "weak_assumptions": ["..."],
+  "revised_strategy": "..."
+}
+
+Rules:
+- Be concise and concrete.
+- Write in Korean.
+- Output JSON only.
+"""
+
+
+CROSS_REVIEW_PROMPT = """You are a Mystic specialist reviewer.
+
+You will receive:
+1. The original problem.
+2. The Core strategy.
+3. Another specialist's draft.
+
+Your job:
+1. Point out hidden assumptions, logical gaps, or missing cases.
+2. Mention any useful improvement.
+3. Keep it concise.
+4. Write in Korean.
+
+Output plain text with exactly these section headers:
+UNDERSTANDING:
+STRATEGY:
+EXECUTION:
+CONCLUSION:
+UNCERTAINTIES:
+"""
+
 ProgressCallback = Callable[[str, dict[str, str]], None]
 
 
@@ -98,12 +141,21 @@ class ResearchPlan:
     support_specialists: list[str]
     reason: str
     strategy: str
+    critic_summary: str = ""
 
 
 @dataclass(slots=True)
 class SpecialistDraft:
     agent: str
     specialist_name: str
+    sections: ResearchSections
+
+
+@dataclass(slots=True)
+class CrossReviewNote:
+    reviewer_agent: str
+    reviewer_name: str
+    target_agent: str
     sections: ResearchSections
 
 
@@ -164,6 +216,20 @@ def run_research_lab(
         client=generator_client,
         model=generator_model,
     )
+    plan = critique_plan(
+        question=question,
+        plan=plan,
+        client=generator_client,
+        model=generator_model,
+    )
+    emit_progress(
+        progress_callback,
+        "plan_critic_complete",
+        {
+            "critic_summary": plan.critic_summary,
+            "strategy": plan.strategy,
+        },
+    )
     emit_progress(
         progress_callback,
         "routing_complete",
@@ -178,12 +244,20 @@ def run_research_lab(
     drafts: list[SpecialistDraft] = []
     for agent in selected_agents:
         expert = get_expert_snapshot(snapshot, agent)
+        agent_backend, agent_model, agent_client = resolve_reasoning_backend(
+            agent=agent,
+            config_path=config_path,
+            defaults=defaults,
+            fallback_client=generator_client,
+            fallback_backend=generator_backend,
+            fallback_model=generator_model,
+        )
         sections = solve_question(
             question=question,
             plan=plan,
             expert=expert,
-            client=generator_client,
-            model=generator_model,
+            client=agent_client,
+            model=agent_model,
         )
         drafts.append(SpecialistDraft(agent=agent, specialist_name=expert.name, sections=sections))
         emit_progress(
@@ -192,6 +266,8 @@ def run_research_lab(
             {
                 "agent": agent,
                 "specialist_name": expert.name,
+                "backend": agent_backend,
+                "model": agent_model,
                 "understanding": sections.understanding,
                 "strategy": sections.strategy,
                 "execution": sections.execution,
@@ -199,11 +275,24 @@ def run_research_lab(
                 "uncertainties": sections.uncertainties,
             },
         )
+    cross_reviews = build_cross_reviews(
+        question=question,
+        plan=plan,
+        drafts=drafts,
+        snapshot=snapshot,
+        defaults=defaults,
+        config_path=config_path,
+        fallback_client=generator_client,
+        fallback_backend=generator_backend,
+        fallback_model=generator_model,
+        progress_callback=progress_callback,
+    )
     expert = get_expert_snapshot(snapshot, plan.specialist)
     sections = synthesize_solution(
         question=question,
         plan=plan,
         drafts=drafts,
+        cross_reviews=cross_reviews,
         client=generator_client,
         model=generator_model,
     )
@@ -299,6 +388,30 @@ def build_critic_client(*, config_path: str | Path) -> tuple[str, str, LLMClient
     return active_backend, raven_model, client
 
 
+def resolve_reasoning_backend(
+    *,
+    agent: str,
+    config_path: str | Path,
+    defaults: dict[str, Any],
+    fallback_client: LLMClient,
+    fallback_backend: str,
+    fallback_model: str,
+) -> tuple[str, str, LLMClient]:
+    heavy_agents = {"prime", "algebra", "analysis", "geo", "logic", "complexity", "biomath", "chem", "physics"}
+    remote_backend = str(os.getenv("MYSTIC_REMOTE_REASONING_BACKEND", "openai-compatible")).strip()
+    remote_model = str(
+        os.getenv("MYSTIC_REMOTE_REASONING_MODEL", os.getenv("MYSTIC_GENERATOR_MODEL", fallback_model))
+    ).strip()
+    remote_enabled = bool(os.getenv("MYSTIC_REMOTE_REASONING_MODEL", "").strip() and os.getenv("MYSTIC_API_BASE", "").strip())
+    if agent in heavy_agents and remote_enabled:
+        try:
+            client = build_client(remote_backend, config_path=config_path)
+            return remote_backend, remote_model or fallback_model, client
+        except Exception:
+            pass
+    return fallback_backend, fallback_model, fallback_client
+
+
 def route_question(*, question: str, snapshot: dict[str, Any], client: LLMClient, model: str) -> ResearchPlan:
     expert_lines = []
     for expert in snapshot["experts"]:
@@ -334,6 +447,27 @@ def route_question(*, question: str, snapshot: dict[str, Any], client: LLMClient
     )
 
 
+def critique_plan(*, question: str, plan: ResearchPlan, client: LLMClient, model: str) -> ResearchPlan:
+    user_prompt = (
+        f"Problem:\n{question.strip()}\n\n"
+        f"Primary specialist: {plan.specialist}\n"
+        f"Support specialists: {', '.join(plan.support_specialists) or '-'}\n"
+        f"Reason: {plan.reason}\n"
+        f"Strategy: {plan.strategy}"
+    )
+    raw = client.generate_text(model=model, system_prompt=PLAN_CRITIC_PROMPT, user_prompt=user_prompt)
+    payload = parse_json_object(raw)
+    critic_summary = str(payload.get("risk_summary", "")).strip()
+    revised_strategy = str(payload.get("revised_strategy", "")).strip()
+    return ResearchPlan(
+        specialist=plan.specialist,
+        support_specialists=plan.support_specialists,
+        reason=plan.reason,
+        strategy=revised_strategy or plan.strategy,
+        critic_summary=critic_summary,
+    )
+
+
 def solve_question(
     *,
     question: str,
@@ -366,6 +500,7 @@ def synthesize_solution(
     question: str,
     plan: ResearchPlan,
     drafts: list[SpecialistDraft],
+    cross_reviews: list[CrossReviewNote],
     client: LLMClient,
     model: str,
 ) -> ResearchSections:
@@ -384,9 +519,102 @@ def synthesize_solution(
         f"Support specialists: {', '.join(plan.support_specialists) or '-'}\n"
         f"Core strategy: {plan.strategy}\n\n"
         f"Problem:\n{question.strip()}\n\n"
-        f"Specialist drafts:\n\n" + "\n\n".join(draft_chunks)
+        f"Specialist drafts:\n\n"
+        + "\n\n".join(draft_chunks)
+        + "\n\nCross reviews:\n\n"
+        + "\n\n".join(
+            f"[{note.reviewer_name} -> {note.target_agent}]\n"
+            f"UNDERSTANDING:\n{note.sections.understanding}\n"
+            f"STRATEGY:\n{note.sections.strategy}\n"
+            f"EXECUTION:\n{note.sections.execution}\n"
+            f"CONCLUSION:\n{note.sections.conclusion}\n"
+            f"UNCERTAINTIES:\n{note.sections.uncertainties}"
+            for note in cross_reviews
+        )
     )
     raw = client.generate_text(model=model, system_prompt=SYNTHESIS_PROMPT, user_prompt=user_prompt)
+    return parse_sections(raw)
+
+
+def build_cross_reviews(
+    *,
+    question: str,
+    plan: ResearchPlan,
+    drafts: list[SpecialistDraft],
+    snapshot: dict[str, Any],
+    defaults: dict[str, Any],
+    config_path: str | Path,
+    fallback_client: LLMClient,
+    fallback_backend: str,
+    fallback_model: str,
+    progress_callback: ProgressCallback | None,
+) -> list[CrossReviewNote]:
+    if len(drafts) < 2:
+        return []
+    notes: list[CrossReviewNote] = []
+    for index, reviewer_draft in enumerate(drafts[1:], start=1):
+        target = drafts[index - 1]
+        reviewer = get_expert_snapshot(snapshot, reviewer_draft.agent)
+        backend, model, client = resolve_reasoning_backend(
+            agent=reviewer_draft.agent,
+            config_path=config_path,
+            defaults=defaults,
+            fallback_client=fallback_client,
+            fallback_backend=fallback_backend,
+            fallback_model=fallback_model,
+        )
+        sections = cross_review_draft(
+            question=question,
+            plan=plan,
+            reviewer=reviewer,
+            target=target,
+            client=client,
+            model=model,
+        )
+        note = CrossReviewNote(
+            reviewer_agent=reviewer_draft.agent,
+            reviewer_name=reviewer.name,
+            target_agent=target.agent,
+            sections=sections,
+        )
+        notes.append(note)
+        emit_progress(
+            progress_callback,
+            "cross_review_complete",
+            {
+                "reviewer_agent": reviewer_draft.agent,
+                "reviewer_name": reviewer.name,
+                "target_agent": target.agent,
+                "backend": backend,
+                "model": model,
+                "conclusion": sections.conclusion,
+            },
+        )
+    return notes
+
+
+def cross_review_draft(
+    *,
+    question: str,
+    plan: ResearchPlan,
+    reviewer: ExpertSnapshot,
+    target: SpecialistDraft,
+    client: LLMClient,
+    model: str,
+) -> ResearchSections:
+    system_prompt = CROSS_REVIEW_PROMPT
+    user_prompt = (
+        f"Problem:\n{question.strip()}\n\n"
+        f"Core strategy:\n{plan.strategy}\n\n"
+        f"Target specialist: {target.specialist_name} / {target.agent}\n"
+        f"UNDERSTANDING:\n{target.sections.understanding}\n"
+        f"STRATEGY:\n{target.sections.strategy}\n"
+        f"EXECUTION:\n{target.sections.execution}\n"
+        f"CONCLUSION:\n{target.sections.conclusion}\n"
+        f"UNCERTAINTIES:\n{target.sections.uncertainties}\n\n"
+        f"Reviewer specialist: {reviewer.name} / {reviewer.agent}"
+    )
+    raw = client.generate_text(model=model, system_prompt=system_prompt, user_prompt=user_prompt)
     return parse_sections(raw)
 
 
