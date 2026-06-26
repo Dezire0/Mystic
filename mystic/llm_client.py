@@ -65,6 +65,42 @@ class BaseHTTPClient(LLMClient):
     def _extract_text(self, payload: dict[str, Any], raw_text: str) -> str:
         """Extract plain text from the backend response."""
 
+    def _retry_after_seconds(self, exc: Exception) -> float | None:
+        response = getattr(exc, "response", None)
+        if response is None:
+            return None
+        value = response.headers.get("Retry-After")
+        if not value:
+            return None
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            return None
+
+    def _status_code(self, exc: Exception) -> int | None:
+        response = getattr(exc, "response", None)
+        if response is None:
+            return None
+        try:
+            return int(response.status_code)
+        except (TypeError, ValueError):
+            return None
+
+    def _should_retry(self, exc: Exception) -> bool:
+        status_code = self._status_code(exc)
+        if status_code is None:
+            return True
+        return status_code in {408, 409, 429, 500, 502, 503, 504}
+
+    def _retry_delay_seconds(self, exc: Exception, attempt: int) -> float:
+        retry_after = self._retry_after_seconds(exc)
+        if retry_after is not None:
+            return min(retry_after, 30.0)
+        status_code = self._status_code(exc)
+        if status_code == 429:
+            return min(3.0 * (2 ** attempt), 20.0)
+        return min(2 ** attempt, 6.0)
+
     def generate_text(self, *, model: str, system_prompt: str, user_prompt: str) -> str:
         _require_requests()
         assert requests is not None
@@ -90,11 +126,13 @@ class BaseHTTPClient(LLMClient):
                 return text.strip()
             except requests.RequestException as exc:
                 last_error = str(exc)
+                if not self._should_retry(exc):
+                    break
             except (KeyError, TypeError, ValueError) as exc:
                 last_error = f"Malformed backend response: {exc}"
 
             if attempt < self.retries:
-                time.sleep(min(2 ** attempt, 4))
+                time.sleep(self._retry_delay_seconds(exc, attempt))
 
         raise LLMClientError(f"{self.__class__.__name__} request failed: {last_error}")
 

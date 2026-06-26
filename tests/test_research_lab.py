@@ -5,6 +5,7 @@ from dataclasses import replace
 from unittest.mock import patch
 
 from mystic.discord_dashboard import ExpertSnapshot
+from mystic.llm_client import LLMClientError
 from mystic.research_lab import (
     ResearchSections,
     build_final_answer,
@@ -23,7 +24,10 @@ class FakeClient:
     def generate_text(self, *, model: str, system_prompt: str, user_prompt: str) -> str:
         if not self.outputs:
             raise AssertionError("No fake outputs left")
-        return self.outputs.pop(0)
+        item = self.outputs.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
 class ResearchLabTests(unittest.TestCase):
@@ -346,6 +350,117 @@ class ResearchLabTests(unittest.TestCase):
         self.assertIn("early_stop_triggered", stages)
         self.assertNotIn("debate_objection_complete", stages)
         self.assertNotIn("revision_complete", stages)
+
+    @patch("mystic.research_lab.parallel_reasoning_enabled")
+    @patch("mystic.research_lab.remote_reasoning_state")
+    @patch("mystic.research_lab.load_model_defaults")
+    @patch("mystic.research_lab.build_client")
+    @patch("mystic.research_lab.load_dashboard_snapshot")
+    def test_run_research_lab_falls_back_to_local_when_remote_rate_limited(
+        self,
+        snapshot_loader,
+        client_builder,
+        defaults_loader,
+        remote_state,
+        parallel_enabled,
+    ):
+        expert = ExpertSnapshot(
+            agent="prime",
+            name="Mystic-Prime",
+            division="Pure Math",
+            model="deepseek-r1-distill-14b",
+            adapter="prime_lora_v0",
+            dataset="OpenMathInstruct-2",
+            train_ready_rows=10,
+            progress_percent=60,
+            status_text="학습 중",
+            status_kind="yellow",
+            status_emoji="🟡",
+            status_color=0xF1C40F,
+            is_active=True,
+            is_trainable=True,
+            latest_timestamp="2026-06-25T00:00:00+00:00",
+            success_count=1,
+            failure_count=0,
+            eta_text="진행 중",
+            error_excerpt="",
+            stage="planning_only",
+            dataset_covered_count=3,
+            dataset_expected_count=19,
+            dataset_progress_text="3/19 datasets",
+            status_detail="OpenMathInstruct-2",
+            progress_reason="현재 로컬 학습 기준",
+        )
+        snapshot_loader.return_value = {
+            "experts": [
+                expert,
+                replace(expert, agent="logic", name="Mystic-Logic", division="Logic", model="qwen3-14b"),
+            ]
+        }
+        defaults_loader.return_value = {
+            "backend": "ollama",
+            "generator_model": "qwen2.5:7b",
+            "raven_model": "qwen2.5:7b",
+            "active_raven_backend": "ollama",
+        }
+        remote_state.return_value = (True, "openai-compatible", "llama-3.3-70b-versatile")
+        parallel_enabled.return_value = False
+
+        local_client = FakeClient(
+            [
+                '{"specialist":"prime","reason":"정수론 문제","strategy":"범위를 제한한다"}',
+                '{"strategy":"작게 닫힌 분기만 확인한다","phases":["범위 제한","케이스 정리"],"execution_mode":"fast","selected_count_cap":2,"debate_rounds":1,"require_revision":true,"early_stop_if_closed":true}',
+                '{"summary":"좋다","findings":[],"revision":"작게 닫힌 분기를 유지한다"}',
+                '{"summary":"누락 없음","findings":[],"revision":"작게 닫힌 분기를 유지한다"}',
+                '{"summary":"반례 위험 낮음","findings":[],"revision":"작게 닫힌 분기를 유지한다"}',
+                '{"summary":"빠르게 끝낼 수 있다","findings":[],"revision":"작게 닫힌 분기를 유지한다"}',
+                '{"method_summary":"prime은 범위를 닫는다","task_candidate":"x 범위 제한","dependencies":[],"deliverable":"범위 결론"}',
+                '{"combined_strategy":"prime과 logic만으로 닫는다","handoff_notes":[],"task_assignments":[{"agent":"prime","task":"x 범위 제한","deliverable":"범위 결론"},{"agent":"logic","task":"분기 누락 점검","deliverable":"완전성 메모"}]}',
+                "UNDERSTANDING:\nprime 이해\nSTRATEGY:\n닫힌 전략\nEXECUTION:\n범위를 제한했다\nCONCLUSION:\nprime 결론 완성\nUNCERTAINTIES:\n없음",
+                "UNDERSTANDING:\n통합 질문 파악\nSTRATEGY:\n통합 계획\nEXECUTION:\n통합 단계별 풀이\nCONCLUSION:\n통합 최종 결과\nUNCERTAINTIES:\n없음",
+            ]
+        )
+        critic_client = FakeClient(
+            [
+                '{"verdict":"VALID","first_fatal_error":"","missing_assumptions":[],"invalid_steps":[],"valid_steps":["ok"],"repair_possible":true,"confidence":0.8,"final_status":"VALID"}'
+            ]
+        )
+        remote_prime_method = FakeClient(
+            [LLMClientError("OpenAICompatibleClient request failed: 429 Client Error: Too Many Requests")]
+        )
+        remote_logic_method = FakeClient(
+            ['{"method_summary":"logic은 완전성만 체크한다","task_candidate":"분기 누락 점검","dependencies":["prime"],"deliverable":"완전성 메모"}']
+        )
+        remote_prime_execution = FakeClient(
+            [LLMClientError("OpenAICompatibleClient request failed: 429 Client Error: Too Many Requests")]
+        )
+        remote_logic_execution = FakeClient(
+            ["UNDERSTANDING:\nlogic 이해\nSTRATEGY:\n완전성 점검 전략\nEXECUTION:\n누락을 확인했다\nCONCLUSION:\nlogic 결론 완성\nUNCERTAINTIES:\n없음"]
+        )
+        client_builder.side_effect = [
+            local_client,
+            critic_client,
+            remote_prime_method,
+            remote_logic_method,
+            remote_prime_execution,
+            remote_logic_execution,
+        ]
+
+        progress_events: list[tuple[str, dict[str, str]]] = []
+        result = run_research_lab(
+            "Classify the finite cases.",
+            base_dir="mystic_data",
+            progress_callback=lambda stage, payload: progress_events.append((stage, payload)),
+        )
+
+        self.assertEqual(result.critic_verdict, "VALID")
+        fallback_lines = [
+            line
+            for _, payload in progress_events
+            for line in payload.get("lines", [])
+            if "로컬 폴백" in str(line)
+        ]
+        self.assertTrue(fallback_lines)
 
 
 if __name__ == "__main__":

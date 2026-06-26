@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from mystic.discord_dashboard import ExpertSnapshot, load_dashboard_snapshot
-from mystic.llm_client import LLMClient, build_client, load_model_defaults
+from mystic.llm_client import LLMClient, LLMClientError, build_client, load_model_defaults
 from mystic.parsers import parse_raven_output
 from mystic.prompts import RAVEN_CRITIC_PROMPT
 
@@ -422,13 +422,17 @@ def remote_reasoning_state(*, fallback_model: str) -> tuple[bool, str, str]:
     return remote_enabled, remote_backend, remote_model or fallback_model
 
 
-def parallel_reasoning_enabled(*, remote_enabled: bool) -> bool:
+def parallel_reasoning_enabled(*, remote_enabled: bool, remote_backend: str) -> bool:
     override = str(os.getenv("MYSTIC_PARALLEL_REASONING", "")).strip().lower()
     if override in {"1", "true", "yes", "on"}:
         return True
     if override in {"0", "false", "no", "off"}:
         return False
-    return remote_enabled
+    if not remote_enabled:
+        return False
+    if remote_backend == "openai-compatible":
+        return False
+    return True
 
 
 def run_research_lab(
@@ -445,7 +449,7 @@ def run_research_lab(
     generator_model = str(defaults.get("generator_model", "qwen2.5:7b"))
     generator_client = build_client(generator_backend, config_path=config_path)
     remote_enabled, remote_backend, remote_model = remote_reasoning_state(fallback_model=generator_model)
-    parallel_enabled = parallel_reasoning_enabled(remote_enabled=remote_enabled)
+    parallel_enabled = parallel_reasoning_enabled(remote_enabled=remote_enabled, remote_backend=remote_backend)
 
     critic_backend, critic_model, critic_client = build_critic_client(config_path=config_path)
 
@@ -736,6 +740,39 @@ def resolve_reasoning_backend(
     return fallback_backend, fallback_model, fallback_client
 
 
+def generate_with_backend_fallback(
+    *,
+    client: LLMClient,
+    backend: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    fallback_client: LLMClient,
+    fallback_backend: str,
+    fallback_model: str,
+) -> tuple[str, str, str, bool, str]:
+    try:
+        text = client.generate_text(model=model, system_prompt=system_prompt, user_prompt=user_prompt)
+        return backend, model, text, False, ""
+    except Exception as exc:
+        same_backend = backend == fallback_backend and model == fallback_model and client is fallback_client
+        if same_backend:
+            raise
+        fallback_error = compact_line(str(exc), 220)
+        try:
+            text = fallback_client.generate_text(
+                model=fallback_model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+        except Exception as fallback_exc:
+            raise LLMClientError(
+                "Primary reasoning backend failed and fallback backend also failed. "
+                f"Primary error: {exc}. Fallback error: {fallback_exc}"
+            ) from fallback_exc
+        return fallback_backend, fallback_model, text, True, fallback_error
+
+
 def route_question(*, question: str, snapshot: dict[str, Any], client: LLMClient, model: str) -> ResearchPlan:
     expert_lines = []
     for expert in snapshot["experts"]:
@@ -930,7 +967,16 @@ def build_method_proposals(
             f"Your specialist: {expert.name} / {expert.agent}\n"
             f"Division: {expert.division}\n"
         )
-        raw = client.generate_text(model=model, system_prompt=METHOD_PROPOSAL_PROMPT, user_prompt=user_prompt)
+        actual_backend, actual_model, raw, fallback_used, fallback_error = generate_with_backend_fallback(
+            client=client,
+            backend=backend,
+            model=model,
+            system_prompt=METHOD_PROPOSAL_PROMPT,
+            user_prompt=user_prompt,
+            fallback_client=fallback_client,
+            fallback_backend=fallback_backend,
+            fallback_model=fallback_model,
+        )
         payload = parse_json_object(raw)
         proposal = MethodProposal(
             agent=agent,
@@ -944,16 +990,17 @@ def build_method_proposals(
         payload_out = {
             "agent": agent,
             "specialist_name": expert.name,
-            "backend": backend,
-            "model": model,
+            "backend": actual_backend,
+            "model": actual_model,
             "method_summary": proposal.method_summary,
             "task_candidate": proposal.task_candidate,
             "deliverable": proposal.deliverable,
             "lines": [
-                f"{expert.name} backend/model: {backend} / {model}",
+                f"{expert.name} backend/model: {actual_backend} / {actual_model}",
                 f"{expert.name} 방법: {proposal.method_summary}",
                 f"{expert.name} 제안 태스크: {proposal.task_candidate}",
                 f"{expert.name} 산출물: {proposal.deliverable}",
+                *([f"{expert.name} 원격 실패 후 로컬 폴백: {fallback_error}"] if fallback_used else []),
             ],
         }
         return index, proposal, payload_out
@@ -1096,7 +1143,16 @@ def execute_assigned_tasks(
             f"Combined strategy:\n{plan.strategy}\n\n"
             f"All selected specialists: {', '.join([plan.specialist, *plan.support_specialists])}\n"
         )
-        raw = client.generate_text(model=model, system_prompt=system_prompt, user_prompt=user_prompt)
+        actual_backend, actual_model, raw, fallback_used, fallback_error = generate_with_backend_fallback(
+            client=client,
+            backend=backend,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            fallback_client=fallback_client,
+            fallback_backend=fallback_backend,
+            fallback_model=fallback_model,
+        )
         sections = parse_sections(raw)
         execution = TaskExecution(
             agent=assignment.agent,
@@ -1107,8 +1163,8 @@ def execute_assigned_tasks(
         payload_out = {
             "agent": assignment.agent,
             "specialist_name": expert.name,
-            "backend": backend,
-            "model": model,
+            "backend": actual_backend,
+            "model": actual_model,
             "task": assignment.task,
             "deliverable": assignment.deliverable,
             "understanding": sections.understanding,
@@ -1117,10 +1173,11 @@ def execute_assigned_tasks(
             "conclusion": sections.conclusion,
             "uncertainties": sections.uncertainties,
             "lines": [
-                f"{expert.name} backend/model: {backend} / {model}",
+                f"{expert.name} backend/model: {actual_backend} / {actual_model}",
                 f"{expert.name} 담당 태스크: {assignment.task}",
                 f"{expert.name} 작업 전략: {compact_line(sections.strategy, 220)}",
                 f"{expert.name} 작업 결론: {compact_line(sections.conclusion, 220)}",
+                *([f"{expert.name} 원격 실패 후 로컬 폴백: {fallback_error}"] if fallback_used else []),
             ],
         }
         return index, execution, payload_out
@@ -1191,7 +1248,16 @@ def build_pairwise_objections(
             f"UNCERTAINTIES:\n{target_execution.sections.uncertainties}\n\n"
             f"Reviewer specialist: {reviewer.name} / {reviewer.agent}"
         )
-        raw = client.generate_text(model=model, system_prompt=OBJECTION_PROMPT, user_prompt=user_prompt)
+        actual_backend, actual_model, raw, fallback_used, fallback_error = generate_with_backend_fallback(
+            client=client,
+            backend=backend,
+            model=model,
+            system_prompt=OBJECTION_PROMPT,
+            user_prompt=user_prompt,
+            fallback_client=fallback_client,
+            fallback_backend=fallback_backend,
+            fallback_model=fallback_model,
+        )
         payload = parse_json_object(raw)
         note = DebateNote(
             reviewer_agent=reviewer_execution.agent,
@@ -1208,8 +1274,8 @@ def build_pairwise_objections(
             "reviewer_name": note.reviewer_name,
             "target_agent": note.target_agent,
             "target_name": note.target_name,
-            "backend": backend,
-            "model": model,
+            "backend": actual_backend,
+            "model": actual_model,
             "objection": note.objection,
             "risk": note.risk,
             "requested_fix": note.requested_fix,
@@ -1217,6 +1283,7 @@ def build_pairwise_objections(
                 f"{note.reviewer_name} -> {note.target_name} objection: {note.objection}",
                 f"위험: {note.risk}",
                 f"수정 요청: {note.requested_fix}",
+                *([f"{note.reviewer_name} 원격 실패 후 로컬 폴백: {fallback_error}"] if fallback_used else []),
             ],
         }
         return index, note, payload_out
@@ -1295,7 +1362,16 @@ def revise_executions(
             f"Method proposal:\n{proposal.method_summary}\n"
             f"Expected deliverable:\n{execution.assignment.deliverable}\n"
         )
-        raw = client.generate_text(model=model, system_prompt=system_prompt, user_prompt=user_prompt)
+        actual_backend, actual_model, raw, fallback_used, fallback_error = generate_with_backend_fallback(
+            client=client,
+            backend=backend,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            fallback_client=fallback_client,
+            fallback_backend=fallback_backend,
+            fallback_model=fallback_model,
+        )
         sections = parse_sections(raw)
         revised_execution = TaskExecution(
             agent=execution.agent,
@@ -1306,12 +1382,13 @@ def revise_executions(
         payload_out = {
             "agent": execution.agent,
             "specialist_name": execution.specialist_name,
-            "backend": backend,
-            "model": model,
+            "backend": actual_backend,
+            "model": actual_model,
             "lines": [
                 f"{execution.specialist_name} revision 반영 수: {len(received)}",
                 f"{execution.specialist_name} 수정 전략: {compact_line(sections.strategy, 220)}",
                 f"{execution.specialist_name} 수정 결론: {compact_line(sections.conclusion, 220)}",
+                *([f"{execution.specialist_name} 원격 실패 후 로컬 폴백: {fallback_error}"] if fallback_used else []),
             ],
         }
         return index, revised_execution, payload_out
