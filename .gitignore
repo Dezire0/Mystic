@@ -51,3 +51,5 @@ raven_lora*_qwen.tar.gz
 !mystic_data/state/.gitkeep
 !mystic_data/metadata/
 !mystic_data/metadata/**
+.vercel
+.env*
