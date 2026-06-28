@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+from typing import Any
 
 try:
     from fastapi import FastAPI, HTTPException, Request, Response
@@ -67,6 +68,7 @@ def create_app(
     def research_table_start():
         status = toolbox.mystic_status()
         participants = _participant_options(status)
+        controller = _controller_option()
         auth_cards = [
             ProviderAuthCard(
                 model_id=model_id,
@@ -76,7 +78,7 @@ def create_app(
             for model_id, model_status in status["models"].items()
             if model_status["provider"] == "cli" and model_status["status"]["state"] == "not_authenticated"
         ]
-        return ResearchTableStartPage(participants=participants, auth_cards=auth_cards)
+        return ResearchTableStartPage(participants=participants, auth_cards=auth_cards, controller=controller)
 
     @app.get("/research-table/start/run", response_class=HTMLResponse)
     def research_table_run(
@@ -84,13 +86,18 @@ def create_app(
         problem: str,
         mode: str = "discovery_debate",
         max_rounds: int = 3,
-        num_models: int = 3,
+        controller: str = "gpt_controller",
     ):
-        selected = request.query_params.getlist("participants")[: max(2, min(num_models, 4))]
+        status = toolbox.mystic_status()
+        allowed_options = _participant_options(status)
+        allowed_ids = {item["model_id"] for item in allowed_options}
+        selected = _dedupe_preserving_order(request.query_params.getlist("participants"))
         if not problem.strip():
             raise HTTPException(status_code=400, detail="problem is required")
-        if len(selected) < 2:
-            raise HTTPException(status_code=400, detail="at least two participants are required")
+        if len(selected) < 2 or len(selected) > 3:
+            raise HTTPException(status_code=400, detail="select two or three participants")
+        if any(model_id not in allowed_ids for model_id in selected):
+            raise HTTPException(status_code=400, detail="one or more selected participants are unavailable")
         session = toolbox.mystic_run_research_table(
             problem=problem,
             participants=selected,
@@ -98,6 +105,15 @@ def create_app(
             max_rounds=max_rounds,
             enable_tools=True,
             tools=["mystic_verify_answer"],
+            controller=controller,
+        )
+        _persist_research_table_selection(
+            session_dir=root_path / "mystic_data" / "research_table_sessions" / session["session_id"],
+            participant_models=[
+                next(item for item in allowed_options if item["model_id"] == model_id)
+                for model_id in selected
+            ],
+            controller=_controller_option(controller),
         )
         return RedirectResponse(url=f"/research-table/sessions/{session['session_id']}", status_code=302)
 
@@ -180,35 +196,97 @@ def create_app(
 
 
 def _participant_options(status: dict) -> list[dict]:
-    options = []
-    preferred = ["local_prime", "local_qwen", "local_raven", "gemini_cli", "claude_cli"]
-    for model_id in preferred:
-        model = status["models"].get(model_id)
-        if model is None:
+    models = status.get("models", {})
+    ranked: list[tuple[int, str, dict[str, Any]]] = []
+    for model_id, model in models.items():
+        provider = str(model.get("provider", ""))
+        enabled = bool(model.get("enabled", True))
+        if provider == "api" and not enabled:
             continue
+        if provider not in {"ollama", "local_adapter", "cli"}:
+            continue
+        ranked.append((_participant_rank(model_id, provider), model_id, model))
+    selected_defaults = 0
+    options = []
+    for _, model_id, model in sorted(ranked):
+        checked = False
+        if str(model.get("provider", "")) != "cli" and selected_defaults < 2:
+            checked = True
+            selected_defaults += 1
         options.append(
             {
                 "model_id": model_id,
-                "label": _participant_label(model_id),
+                "label": _participant_label(model_id, model),
                 "provider": model["provider"],
                 "model_name": model["model_name"],
                 "roles": model.get("role_defaults", []),
                 "auth_state": model["status"]["state"],
-                "checked": model_id in {"local_prime", "local_qwen", "local_raven"},
+                "checked": checked,
             }
         )
     return options
 
 
-def _participant_label(model_id: str) -> str:
-    labels = {
-        "local_prime": "Local DeepSeek-R1-Distill-14B",
-        "local_qwen": "Local Qwen3-14B",
-        "local_raven": "Local Raven LoRA",
-        "gemini_cli": "Gemini CLI",
-        "claude_cli": "Claude CLI",
+def _participant_label(model_id: str, model: dict[str, Any]) -> str:
+    if model_id == "gemini_cli":
+        return "Gemini CLI"
+    if model_id == "claude_cli":
+        return "Claude CLI"
+    return f"{model_id} ({model.get('model_name', model_id)})"
+
+
+def _participant_rank(model_id: str, provider: str) -> int:
+    if provider in {"ollama", "local_adapter"}:
+        return 0
+    if model_id == "gemini_cli":
+        return 1
+    if model_id == "claude_cli":
+        return 2
+    return 3
+
+
+def _controller_option(model_id: str = "gpt_controller") -> dict[str, str]:
+    return {
+        "model_id": model_id,
+        "provider": "controller",
+        "model_name": "GPT Controller" if model_id == "gpt_controller" else model_id,
     }
-    return labels.get(model_id, model_id)
+
+
+def _dedupe_preserving_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        item = str(value).strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        ordered.append(item)
+    return ordered
+
+
+def _persist_research_table_selection(
+    *,
+    session_dir: Path,
+    participant_models: list[dict[str, Any]],
+    controller: dict[str, str],
+) -> None:
+    if not session_dir.exists():
+        return
+    session_path = session_dir / "session.json"
+    session = _load_optional_json(session_path, {})
+    if not isinstance(session, dict):
+        return
+    session["participant_models"] = [
+        {
+            "model_id": item["model_id"],
+            "provider": item["provider"],
+            "model_name": item["model_name"],
+        }
+        for item in participant_models
+    ]
+    session["controller"] = controller
+    session_path.write_text(json.dumps(session, indent=2), encoding="utf-8")
 
 
 def _resolve_runtime_root(source_root: Path) -> Path:

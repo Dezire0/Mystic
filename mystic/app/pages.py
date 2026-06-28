@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 import json
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,7 @@ from mystic.app.components import (
 )
 
 
-def ResearchTableStartPage(*, participants: list[dict[str, Any]], auth_cards: list[str]) -> str:
+def ResearchTableStartPage(*, participants: list[dict[str, Any]], auth_cards: list[str], controller: dict[str, Any]) -> str:
     body = (
         "<section class='grid'>"
         "<article class='panel'>"
@@ -31,16 +32,19 @@ def ResearchTableStartPage(*, participants: list[dict[str, Any]], auth_cards: li
         "<div><label class='field-label'>Problem</label><textarea name='problem' placeholder='State the problem or research question.'></textarea></div>"
         f"<div><label class='field-label'>Choose participants</label>{ParticipantSelector(participants=participants)}</div>"
         "<div class='grid'>"
-        "<div><label class='field-label'>Number of models</label><select name='num_models'>"
-        "<option value='2'>2 models</option><option value='3' selected>3 models</option><option value='4'>4 models</option></select></div>"
         "<div><label class='field-label'>Mode</label><select name='mode'>"
-        "<option value='solve'>Solve Mode</option>"
-        "<option value='train'>Train Mode</option>"
         "<option value='discovery_debate' selected>Discovery Debate Mode / Research Table</option>"
+        "<option value='discovery_only'>Discovery Only</option>"
         "</select></div></div>"
         "<div><label class='field-label'>Rounds</label><select name='max_rounds'>"
         "<option value='2'>2</option><option value='3' selected>3</option><option value='4'>4</option></select></div>"
-        "<div class='meta-row'><span class='chip'>GPT Controller / current ChatGPT session included as judge</span></div>"
+        f"<input type='hidden' name='controller' value='{escape(str(controller.get('model_id', 'gpt_controller')))}'>"
+        "<div class='panel'>"
+        "<h3>Controller / Judge</h3>"
+        f"<p><strong>{escape(str(controller.get('model_name', 'GPT Controller')))}</strong></p>"
+        f"<p class='small muted'>{escape(str(controller.get('provider', 'controller')))} / {escape(str(controller.get('model_id', 'gpt_controller')))}</p>"
+        "<p class='small muted'>Select exactly 2 or 3 participant models. GPT Controller coordinates synthesis and judgment but is not counted as a local participant.</p>"
+        "</div>"
         "<div class='action-row'><button class='action primary' type='submit'>Start Research Table</button></div>"
         "</form></article>"
         "<article class='panel'><h2>Auth & Policy</h2><p class='muted'>Local models are preferred. API providers remain disabled by default. CLI providers can participate once logged in.</p>"
@@ -74,6 +78,18 @@ def ResearchTableSessionPage(*, session: dict[str, Any]) -> str:
         for turn in turns
         if str(turn.get("speaker_type", "")) == "tool"
     )
+    participant_models = session.get("participant_models", [])
+    participant_cards = "".join(
+        (
+            "<article class='turn'>"
+            f"<div class='meta-row'><span class='badge'>{escape(str(item.get('model_id', '')))}</span>"
+            f"<span class='badge'>{escape(str(item.get('provider', '')))}</span>"
+            f"<span class='badge'>{escape(str(item.get('model_name', '')))}</span></div>"
+            "</article>"
+        )
+        for item in participant_models
+    )
+    controller = session.get("controller", {})
     body = (
         "<section class='grid'>"
         "<article class='panel'>"
@@ -82,6 +98,10 @@ def ResearchTableSessionPage(*, session: dict[str, Any]) -> str:
         f"<div class='stack'>{phase_sections}</div>"
         "</article>"
         "<div class='stack'>"
+        "<section class='panel'><h2>Selected Participants</h2>"
+        f"<div class='stack'>{participant_cards or '<p class=\"muted\">No participant metadata recorded.</p>'}</div>"
+        f"<div class='meta-row'><span class='badge'>controller</span><span class='badge'>{escape(str(controller.get('model_name', 'GPT Controller')))}</span><span class='badge'>{escape(str(controller.get('model_id', 'gpt_controller')))}</span></div>"
+        "</section>"
         "<section class='panel'><h2>Discoveries</h2>"
         f"<div class='discovery-grid'>{discoveries or '<p class=\"muted\">No discoveries recorded.</p>'}</div></section>"
         "<section class='panel'><h2>Verification Requests</h2>"

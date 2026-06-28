@@ -64,6 +64,13 @@ class _StubToolbox:
                     "status": {"state": "not_authenticated", "message": "Login with Claude."},
                     "role_defaults": ["critique", "judge"],
                 },
+                "openai_api": {
+                    "provider": "api",
+                    "model_name": "gpt-4o-mini",
+                    "status": {"state": "disabled", "message": "API provider is disabled by default."},
+                    "role_defaults": ["judge"],
+                    "enabled": False,
+                },
             },
             "tools": {"mcp_server": "ready"},
             "datasets": {},
@@ -82,6 +89,7 @@ class _StubToolbox:
         max_rounds: int,
         enable_tools: bool,
         tools: list[str],
+        controller: str = "gpt_controller",
     ):
         session_id = "research-test-session"
         session_dir = self.root_path / "mystic_data" / "research_table_sessions" / session_id
@@ -90,6 +98,15 @@ class _StubToolbox:
             "session_id": session_id,
             "problem": problem,
             "participants": participants,
+            "participant_models": [
+                {
+                    "model_id": model_id,
+                    "provider": self.mystic_status()["models"][model_id]["provider"],
+                    "model_name": self.mystic_status()["models"][model_id]["model_name"],
+                }
+                for model_id in participants
+            ],
+            "controller": {"model_id": controller, "provider": "controller", "model_name": "GPT Controller"},
             "rounds": max_rounds,
             "turns": [
                 {
@@ -255,7 +272,13 @@ class AppRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("ResearchTableStartPage", response.text)
         self.assertIn("Gemini CLI", response.text)
+        self.assertIn("Claude CLI", response.text)
+        self.assertIn("local_prime", response.text)
+        self.assertIn("local_raven", response.text)
         self.assertIn("Login with Google", response.text)
+        self.assertIn("Login with Claude", response.text)
+        self.assertIn("GPT Controller", response.text)
+        self.assertNotIn("openai_api", response.text)
 
     def test_research_table_run_redirects_to_created_session(self):
         response = self.client.get(
@@ -269,6 +292,37 @@ class AppRouteTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.headers["location"], "/research-table/sessions/research-test-session")
+
+    def test_created_research_table_session_shows_selected_participants(self):
+        create = self.client.get(
+            "/research-table/start/run",
+            params=[
+                ("problem", "Participant test"),
+                ("participants", "local_prime"),
+                ("participants", "gemini_cli"),
+            ],
+            follow_redirects=False,
+        )
+        self.assertEqual(create.status_code, 302)
+        response = self.client.get(create.headers["location"])
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Selected Participants", response.text)
+        self.assertIn("local_prime", response.text)
+        self.assertIn("gemini_cli", response.text)
+        self.assertIn("gpt_controller", response.text)
+
+    def test_disabled_api_provider_cannot_be_selected(self):
+        response = self.client.get(
+            "/research-table/start/run",
+            params=[
+                ("problem", "Blocked provider test"),
+                ("participants", "local_prime"),
+                ("participants", "openai_api"),
+            ],
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("unavailable", response.text)
 
     def test_existing_research_table_session_route_renders(self):
         response = self.client.get("/research-table/sessions/research-existing")
