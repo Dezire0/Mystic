@@ -1,16 +1,16 @@
 # Mystic v3
 
-Mystic v3 reinjects the trained Raven adapter into the live JSONL research loop and adds base-vs-adapter comparison plus promotion logic.
+Mystic v3 reinjects the trained Raven adapter into the live JSONL research loop, adds base-vs-adapter comparison plus promotion logic, and now exposes a local Research Table / debate UX through the FastAPI app and MCP server.
 
 It keeps the design intentionally narrow:
 
 - local folders under `mystic_data/`
 - append-only JSONL storage
 - resumable processing through `mystic_data/state/processed_ids.jsonl`
-- no frontend
+- no separate JS frontend bundle
 - no PostgreSQL
 - no vector DB
-- no web dashboard
+- no standalone web dashboard service outside the FastAPI app
 - no multi-agent orchestration yet
 
 ## Files
