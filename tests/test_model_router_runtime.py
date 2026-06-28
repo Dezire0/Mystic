@@ -28,6 +28,12 @@ models:
     auth: google_login
     role_defaults:
       - draft
+  claude_cli:
+    provider: cli
+    command: claude
+    auth: claude_login
+    role_defaults:
+      - critique
 policy:
   max_models_per_compare: 2
   timeout_per_model_seconds: 5
@@ -68,10 +74,81 @@ class ModelRouterRuntimeTests(unittest.TestCase):
                 encoding="utf-8",
             )
             router = ModelRouter(root_path=root, config_path=config_path)
-            with patch("mystic.models.providers.base.shutil.which", return_value="/usr/bin/gemini"):
+            with patch("mystic.models.providers.base.shutil.which", return_value="/usr/bin/gemini"), patch(
+                "mystic.models.providers.cli_provider.run_command",
+                return_value=(1, "", "Login with Google", 0.01),
+            ):
                 status = router.status_snapshot()["gemini_cli"]["status"]
             self.assertEqual(status["state"], "not_authenticated")
             self.assertIn("Login with Google", status["message"])
+
+    def test_router_reports_missing_cli_provider(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            adapter_dir = root / "mystic_data" / "adapters" / "raven_lora_v0"
+            adapter_dir.mkdir(parents=True)
+            config_path = root / "models.yaml"
+            config_path.write_text(
+                TEST_CONFIG.replace("ADAPTER_PATH", str(adapter_dir)),
+                encoding="utf-8",
+            )
+            router = ModelRouter(root_path=root, config_path=config_path)
+            with patch("mystic.models.providers.base.shutil.which", return_value=None):
+                status = router.status_snapshot()["gemini_cli"]["status"]
+            self.assertEqual(status["state"], "missing")
+            self.assertFalse(status["available"])
+
+    def test_router_call_model_returns_auth_required_for_logged_out_cli(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            adapter_dir = root / "mystic_data" / "adapters" / "raven_lora_v0"
+            adapter_dir.mkdir(parents=True)
+            config_path = root / "models.yaml"
+            config_path.write_text(
+                TEST_CONFIG.replace("ADAPTER_PATH", str(adapter_dir)),
+                encoding="utf-8",
+            )
+            router = ModelRouter(root_path=root, config_path=config_path)
+            with patch("mystic.models.providers.base.shutil.which", return_value="/usr/bin/gemini"), patch(
+                "mystic.models.providers.cli_provider.run_command",
+                return_value=(1, "", "not authenticated", 0.01),
+            ):
+                result = router.call_model(
+                    model_id="gemini_cli",
+                    role="draft",
+                    task="Draft",
+                    problem="x + y = 5",
+                )
+            self.assertEqual(result["status"], "AUTH_REQUIRED")
+            self.assertIn("Login with Google", result["auth_message"])
+
+    def test_router_call_model_returns_authenticated_cli_output(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            adapter_dir = root / "mystic_data" / "adapters" / "raven_lora_v0"
+            adapter_dir.mkdir(parents=True)
+            config_path = root / "models.yaml"
+            config_path.write_text(
+                TEST_CONFIG.replace("ADAPTER_PATH", str(adapter_dir)),
+                encoding="utf-8",
+            )
+            router = ModelRouter(root_path=root, config_path=config_path)
+            with patch("mystic.models.providers.base.shutil.which", return_value="/usr/bin/claude"), patch(
+                "mystic.models.providers.cli_provider.run_command",
+                side_effect=[
+                    (0, '{"status":"authenticated"}', "", 0.01),
+                    (0, '{"content":[{"text":"Claude response"}]}', "", 0.02),
+                ],
+            ):
+                result = router.call_model(
+                    model_id="claude_cli",
+                    role="critique",
+                    task="Critique",
+                    problem="x + y = 5",
+                )
+            self.assertEqual(result["status"], "CRITIQUE_ONLY")
+            self.assertEqual(result["provider"], "cli")
+            self.assertIn("Claude response", result["content"])
 
     def test_router_reports_local_adapter_metadata(self):
         with tempfile.TemporaryDirectory() as temp_dir:

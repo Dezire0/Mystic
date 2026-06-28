@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from mystic.mcp.tools import MysticToolbox
 from mystic.models.router import ModelRouter
@@ -30,6 +31,12 @@ models:
     model: mock-report
     role_defaults:
       - summarize
+  gemini_cli:
+    provider: cli
+    command: gemini
+    auth: google_login
+    role_defaults:
+      - draft
 policy:
   max_models_per_compare: 3
   timeout_per_model_seconds: 5
@@ -171,6 +178,24 @@ class MCPToolsTests(unittest.TestCase):
         )
         self.assertEqual(result["final_decision_source"], "deterministic_verifier")
         self.assertEqual(result["final_status"], result["verification"]["verdict"])
+
+    def test_research_table_with_unauthenticated_gemini_records_auth_required_turn(self):
+        toolbox = self._make_toolbox()
+        with patch("mystic.models.providers.base.shutil.which", return_value="/usr/bin/gemini"), patch(
+            "mystic.models.providers.cli_provider.run_command",
+            return_value=(1, "", "Login with Google", 0.01),
+        ):
+            result = toolbox.mystic_run_research_table(
+                problem="positive integers x, y satisfy x + y = 5",
+                participants=["gemini_cli", "local_prime"],
+                mode="discovery_debate",
+                max_rounds=2,
+                enable_tools=True,
+                tools=["mystic_verify_answer"],
+            )
+        auth_turns = [turn for turn in result["turns"] if turn["speaker_id"] == "gemini_cli" and turn["status"] == "AUTH_REQUIRED"]
+        self.assertTrue(auth_turns)
+        self.assertIn("Login with Google", auth_turns[0]["content"])
 
     def test_teacher_packet_export_and_import_persist(self):
         toolbox = self._make_toolbox()

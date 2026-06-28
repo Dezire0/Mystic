@@ -300,6 +300,7 @@ class ResearchTableRunner:
                 context=context_by_participant[model_id],
                 session_id=session.session_id,
             )
+            turn_content = result["content"] or result.get("auth_message") or ""
             turn = ResearchTurn(
                 session_id=session.session_id,
                 round_index=round_index,
@@ -310,17 +311,18 @@ class ResearchTableRunner:
                 model_name=result["model_name"],
                 role=self._turn_role_for_phase(phase),
                 status=result["status"],
-                content=result["content"],
+                content=turn_content,
                 reply_to=reply_to_by_participant.get(model_id, []),
-                summary=result["content"][:240],
-                claims=self._claims_from_content(result["content"]),
-                candidate_answers=self._candidate_answers_from_content(result["content"]),
+                summary=turn_content[:240],
+                claims=self._claims_from_content(turn_content) if result["status"] == "DRAFT_ONLY" or result["status"] == "CRITIQUE_ONLY" or result["status"] == "REVISION" else [],
+                candidate_answers=self._candidate_answers_from_content(turn_content) if result["status"] == "DRAFT_ONLY" or result["status"] == "CRITIQUE_ONLY" or result["status"] == "REVISION" else [],
                 latency_sec=result["latency_sec"],
                 artifact_path=result["artifact_path"],
             )
-            turn.discoveries = self._extract_discoveries(turn)
-            turn.discoveries = self._merge_discoveries(turn.discoveries, discovery_index=discovery_index, discovery_by_claim=discovery_by_claim)
-            turn.verification_requests = self._make_verification_requests(turn, turn.discoveries)
+            if result["status"] in {"DRAFT_ONLY", "CRITIQUE_ONLY", "REVISION"}:
+                turn.discoveries = self._extract_discoveries(turn)
+                turn.discoveries = self._merge_discoveries(turn.discoveries, discovery_index=discovery_index, discovery_by_claim=discovery_by_claim)
+                turn.verification_requests = self._make_verification_requests(turn, turn.discoveries)
             turns.append(turn)
             session.turns.append(turn.to_dict())
             for discovery in turn.discoveries:

@@ -76,7 +76,7 @@ def create_app(
                 action_href=f"/providers/auth/{model_id}",
             )
             for model_id, model_status in status["models"].items()
-            if model_status["provider"] == "cli" and model_status["status"]["state"] == "not_authenticated"
+            if model_status["provider"] == "cli"
         ]
         return ResearchTableStartPage(participants=participants, auth_cards=auth_cards, controller=controller)
 
@@ -221,6 +221,7 @@ def _participant_options(status: dict) -> list[dict]:
                 "model_name": model["model_name"],
                 "roles": model.get("role_defaults", []),
                 "auth_state": model["status"]["state"],
+                "auth_message": model["status"].get("message", ""),
                 "checked": checked,
             }
         )
