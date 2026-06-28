@@ -128,17 +128,17 @@ Install the public tunnel service with:
 ```bash
 python scripts/manage_mystic_public_tunnel_service.py install \
   --gist-id 778759ccca8f7d9a54c1f98662b6a9ec \
-  --public-url https://mystic-gateway.dexproject.workers.dev
+  --public-url https://mystic.dexproject.workers.dev
 
 python scripts/manage_mystic_public_tunnel_service.py status \
   --gist-id 778759ccca8f7d9a54c1f98662b6a9ec \
-  --public-url https://mystic-gateway.dexproject.workers.dev
+  --public-url https://mystic.dexproject.workers.dev
 ```
 
 The fixed public endpoints are expected to be:
 
-- `https://mystic-gateway.dexproject.workers.dev/health`
-- `https://mystic-gateway.dexproject.workers.dev/mcp`
+- `https://mystic.dexproject.workers.dev/health`
+- `https://mystic.dexproject.workers.dev/mcp`
 
 ## Discord Bot
 
