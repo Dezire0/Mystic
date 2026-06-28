@@ -22,10 +22,15 @@ class DiscoveryItem:
 
 @dataclass(slots=True)
 class VerificationRequest:
-    target_discovery_id: str
+    target_discovery_id: str | None
     tool: str
     question: str
+    target_turn_id: str = ""
+    target_candidate_answer: str = ""
     status: str = "pending"
+    result_verdict: str = ""
+    result_reasoning: str = ""
+    tool_turn_id: str = ""
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def to_dict(self) -> dict[str, Any]:
