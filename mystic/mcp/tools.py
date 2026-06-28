@@ -58,11 +58,13 @@ class MysticToolbox:
         datasets = self._dataset_counts()
         recent_runs = self._recent_run_ids(limit=5)
         return {
-            "models": self.router.status_snapshot(),
+            "models": self._public_model_status_snapshot(),
             "tools": {
-                "python_verifier": "ready",
-                "integer_bruteforce": "ready",
-                "mcp_server": "ready",
+                "mystic_status": "ready",
+                "mystic_verify_answer": "ready",
+                "mystic_call_model": "ready",
+                "mystic_compare_models": "ready",
+                "mystic_run_research_table": "ready",
             },
             "datasets": datasets,
             "adapter_status": {
@@ -282,6 +284,12 @@ class MysticToolbox:
                     "structured_result": verification,
                 }
             )
+            final_status = verification["verdict"]
+            final_decision_source = "deterministic_verifier"
+        else:
+            verification = None
+            final_status = "MODEL_OUTPUTS_ONLY"
+            final_decision_source = "model_outputs"
         display_blocks = []
         for output in model_outputs:
             display_blocks.append(
@@ -306,6 +314,9 @@ class MysticToolbox:
             "problem": problem,
             "model_outputs": model_outputs,
             "tool_checks": tool_checks,
+            "verification": verification,
+            "final_status": final_status,
+            "final_decision_source": final_decision_source,
             "display_text": "\n\n".join(display_blocks),
         }
         artifact_path = self._write_artifact("compare", result, session_id=session_id)
@@ -462,6 +473,25 @@ class MysticToolbox:
     def _infer_variable_order_from_bounds(bounds: dict[str, Any], tuple_width: int) -> list[str]:
         variables = [str(key) for key in bounds.keys()]
         return variables[:tuple_width]
+
+    def _public_model_status_snapshot(self) -> dict[str, Any]:
+        snapshot = self.router.status_snapshot()
+        sanitized: dict[str, Any] = {}
+        for model_id, payload in snapshot.items():
+            status = payload.get("status", {})
+            sanitized[model_id] = {
+                "provider": payload.get("provider", ""),
+                "model_name": payload.get("model_name", model_id),
+                "status": {
+                    "state": status.get("state", "unknown"),
+                    "message": status.get("message", ""),
+                    "available": bool(status.get("available", False)),
+                    "authenticated": bool(status.get("authenticated", False)),
+                },
+                "role_defaults": payload.get("role_defaults", []),
+                "enabled": bool(payload.get("enabled", True)),
+            }
+        return sanitized
 
     @staticmethod
     def _parse_bounds(raw: Any) -> tuple[int, int]:

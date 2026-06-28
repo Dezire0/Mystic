@@ -10,9 +10,9 @@ TOOL_SCHEMAS = {
     "mystic_verify_answer": {
         "type": "object",
         "properties": {
-            "problem": {"type": "string"},
-            "candidate_answer": {"type": "string"},
-            "constraints": {"type": "array", "items": {"type": "string"}},
+            "problem": {"type": "string", "minLength": 1},
+            "candidate_answer": {"type": "string", "minLength": 1},
+            "constraints": {"type": "array", "items": {"type": "string"}, "maxItems": 12},
             "bounds": {"type": "object"},
         },
         "required": ["problem", "candidate_answer"],
@@ -56,12 +56,12 @@ TOOL_SCHEMAS = {
     "mystic_call_model": {
         "type": "object",
         "properties": {
-            "model_id": {"type": "string"},
+            "model_id": {"type": "string", "minLength": 1},
             "role": {"type": "string", "enum": ["draft", "critique", "revise", "judge", "summarize"]},
-            "task": {"type": "string"},
-            "problem": {"type": "string"},
+            "task": {"type": "string", "minLength": 1},
+            "problem": {"type": "string", "minLength": 1},
             "context": {"type": "string"},
-            "max_tokens": {"type": "integer"},
+            "max_tokens": {"type": "integer", "minimum": 1},
             "temperature": {"type": "number"},
         },
         "required": ["model_id", "role", "task", "problem"],
@@ -70,11 +70,11 @@ TOOL_SCHEMAS = {
     "mystic_compare_models": {
         "type": "object",
         "properties": {
-            "problem": {"type": "string"},
-            "models": {"type": "array", "items": {"type": "string"}},
-            "task": {"type": "string"},
+            "problem": {"type": "string", "minLength": 1},
+            "models": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 3},
+            "task": {"type": "string", "minLength": 1},
             "include_verifier": {"type": "boolean"},
-            "max_output_chars_per_model": {"type": "integer"},
+            "max_output_chars_per_model": {"type": "integer", "minimum": 64},
         },
         "required": ["problem", "models", "task", "include_verifier"],
         "additionalProperties": False,
@@ -95,12 +95,12 @@ TOOL_SCHEMAS = {
     "mystic_run_research_table": {
         "type": "object",
         "properties": {
-            "problem": {"type": "string"},
-            "participants": {"type": "array", "items": {"type": "string"}},
-            "mode": {"type": "string"},
-            "max_rounds": {"type": "integer"},
+            "problem": {"type": "string", "minLength": 1},
+            "participants": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 4},
+            "mode": {"type": "string", "enum": ["discovery_debate", "discovery_only"]},
+            "max_rounds": {"type": "integer", "minimum": 1, "maximum": 6},
             "enable_tools": {"type": "boolean"},
-            "tools": {"type": "array", "items": {"type": "string"}},
+            "tools": {"type": "array", "items": {"type": "string", "enum": ["mystic_verify_answer"]}, "maxItems": 4},
             "controller": {"type": "string"},
         },
         "required": ["problem", "participants", "mode", "max_rounds", "enable_tools", "tools"],
@@ -187,3 +187,15 @@ TOOL_DEFINITIONS = [
         "inputSchema": TOOL_SCHEMAS["mystic_import_teacher_label"],
     },
 ]
+
+
+PUBLIC_TOOL_NAMES = [
+    "mystic_status",
+    "mystic_verify_answer",
+    "mystic_call_model",
+    "mystic_compare_models",
+    "mystic_run_research_table",
+]
+
+
+PUBLIC_TOOL_DEFINITIONS = [tool for tool in TOOL_DEFINITIONS if tool["name"] in PUBLIC_TOOL_NAMES]

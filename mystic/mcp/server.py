@@ -4,8 +4,9 @@ import json
 import sys
 from typing import Any
 
-from mystic.mcp.schemas import TOOL_DEFINITIONS
+from mystic.mcp.schemas import PUBLIC_TOOL_DEFINITIONS, PUBLIC_TOOL_NAMES, TOOL_SCHEMAS
 from mystic.mcp.tools import MysticToolbox
+from mystic.mcp.validation import validate_json_schema
 
 
 class MysticMCPServer:
@@ -34,7 +35,7 @@ class MysticMCPServer:
         if method == "ping":
             return self._response(request_id, {})
         if method == "tools/list":
-            return self._response(request_id, {"tools": TOOL_DEFINITIONS})
+            return self._response(request_id, {"tools": PUBLIC_TOOL_DEFINITIONS})
         if method == "tools/call":
             params = payload.get("params", {})
             name = params.get("name")
@@ -69,6 +70,13 @@ class MysticMCPServer:
         return 0
 
     def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name not in PUBLIC_TOOL_NAMES:
+            raise KeyError(f"Unknown tool: {name}")
+        if not isinstance(arguments, dict):
+            raise ValueError("Tool arguments must be a JSON object.")
+        errors = validate_json_schema(arguments, TOOL_SCHEMAS[name])
+        if errors:
+            raise ValueError("Invalid params: " + "; ".join(errors))
         handler = getattr(self.toolbox, name, None)
         if handler is None:
             raise KeyError(f"Unknown tool: {name}")
