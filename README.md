@@ -140,6 +140,21 @@ The fixed public endpoints are expected to be:
 - `https://mystic.dexproject.workers.dev/health`
 - `https://mystic.dexproject.workers.dev/mcp`
 
+`/mcp` is a JSON-RPC endpoint. Plain browser `GET` requests are not the protocol and may be rejected. Verify the public ingress with MCP `POST` requests instead:
+
+```bash
+python scripts/test_mystic_mcp_client.py --base-url http://127.0.0.1:8765 --scenario ping
+python scripts/test_mystic_mcp_client.py --base-url http://127.0.0.1:8765 --scenario public-tool-suite
+```
+
+The first public MCP tool layer exposes:
+
+- `mystic_status`
+- `mystic_verify_answer`
+- `mystic_call_model`
+- `mystic_compare_models`
+- `mystic_run_research_table`
+
 ## Discord Bot
 
 Install the Discord bot dependency:

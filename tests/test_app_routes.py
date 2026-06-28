@@ -149,14 +149,25 @@ class AppRouteTests(unittest.TestCase):
 
     def test_health_and_mcp_routes_respond(self):
         health = self.client.get("/health")
+        rejected_get = self.client.get("/mcp")
         initialize = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+        ping = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "ping"})
         tools = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        status_call = self.client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "mystic_status", "arguments": {}}},
+        )
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json()["status"], "ok")
+        self.assertEqual(rejected_get.status_code, 405)
         self.assertEqual(initialize.status_code, 200)
         self.assertEqual(initialize.json()["result"]["serverInfo"]["name"], "mystic-mcp")
+        self.assertEqual(ping.status_code, 200)
+        self.assertEqual(ping.json()["result"], {})
         self.assertEqual(tools.status_code, 200)
         self.assertIn("tools", tools.json()["result"])
+        self.assertEqual(status_call.status_code, 200)
+        self.assertIn("structuredContent", status_call.json()["result"])
 
     def test_start_page_renders_participants_and_auth_cards(self):
         response = self.client.get("/research-table/start")

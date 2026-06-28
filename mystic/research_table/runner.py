@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, Callable
+import uuid
 
 from mystic.debate.turn import DebateTurn
 from mystic.research_table.discovery import DiscoveryItem, VerificationRequest
@@ -29,7 +31,7 @@ class ResearchTableRunner:
         tools: list[str],
         controller: str,
     ) -> dict[str, Any]:
-        session_id = f"research-{mode}-{len(participants)}-{max_rounds}"
+        session_id = f"research-{mode}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
         turns: list[DebateTurn] = []
         discoveries: list[dict[str, Any]] = []
         verification_requests: list[dict[str, Any]] = []
@@ -100,6 +102,9 @@ class ResearchTableRunner:
 
         accepted_discoveries: list[dict[str, Any]] = []
         rejected_discoveries: list[dict[str, Any]] = []
+        verification: dict[str, Any] | None = None
+        final_status = "MODEL_OUTPUTS_ONLY"
+        final_decision_source = "model_outputs"
         if enable_tools and "mystic_verify_answer" in tools:
             verification = self.verify_answer(
                 problem=problem,
@@ -124,14 +129,18 @@ class ResearchTableRunner:
             turns.append(tool_turn)
             if verification["verdict"] == "VALID":
                 accepted_discoveries = discoveries[:]
-            else:
+            elif verification["verdict"] == "INVALID":
                 rejected_discoveries = discoveries[:]
+            final_status = verification["verdict"]
+            final_decision_source = "deterministic_verifier"
 
         final_synthesis_package = {
             "controller": controller,
             "accepted_discoveries": accepted_discoveries,
             "rejected_discoveries": rejected_discoveries,
             "recommended_next_tool_calls": tools,
+            "final_status": final_status,
+            "final_decision_source": final_decision_source,
         }
         payload = {
             "session_id": session_id,
@@ -143,6 +152,9 @@ class ResearchTableRunner:
             "verification_requests": verification_requests,
             "accepted_discoveries": accepted_discoveries,
             "rejected_discoveries": rejected_discoveries,
+            "verification": verification,
+            "final_status": final_status,
+            "final_decision_source": final_decision_source,
             "final_synthesis_package": final_synthesis_package,
         }
         saved_path = self.storage.save_session(session_id, payload)

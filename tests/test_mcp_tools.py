@@ -54,7 +54,8 @@ class MCPToolsTests(unittest.TestCase):
         toolbox = self._make_toolbox()
         status = toolbox.mystic_status()
         self.assertIn("local_prime", status["models"])
-        self.assertEqual(status["tools"]["mcp_server"], "ready")
+        self.assertEqual(status["tools"]["mystic_status"], "ready")
+        self.assertNotIn("details", status["models"]["local_prime"]["status"])
 
     def test_verify_answer_flags_invalid_egyptian_fraction_set(self):
         toolbox = self._make_toolbox()
@@ -107,6 +108,7 @@ class MCPToolsTests(unittest.TestCase):
         )
         self.assertEqual(len(result["model_outputs"]), 2)
         self.assertIn("[local_prime / mock / mock-prime / draft / DRAFT_ONLY]", result["display_text"])
+        self.assertEqual(result["final_decision_source"], "model_outputs")
 
     def test_run_debate_creates_threaded_turns(self):
         toolbox = self._make_toolbox()
@@ -143,6 +145,32 @@ class MCPToolsTests(unittest.TestCase):
         self.assertIn("confidence", first)
         self.assertIn("needs_verification", first)
         self.assertTrue(result["verification_requests"])
+        self.assertTrue(result["saved_artifact_path"].endswith("session.json"))
+        self.assertIn("mystic_data/research_table_sessions", result["saved_artifact_path"])
+
+    def test_compare_models_uses_verifier_as_final_decision_source(self):
+        toolbox = self._make_toolbox()
+        result = toolbox.mystic_compare_models(
+            problem="positive integers x, y satisfy x + y = 5",
+            models=["local_prime", "local_forge"],
+            task="Give one valid ordered pair.",
+            include_verifier=True,
+        )
+        self.assertEqual(result["final_decision_source"], "deterministic_verifier")
+        self.assertEqual(result["final_status"], result["verification"]["verdict"])
+
+    def test_research_table_uses_verifier_as_final_decision_source_when_enabled(self):
+        toolbox = self._make_toolbox()
+        result = toolbox.mystic_run_research_table(
+            problem="positive integers x, y satisfy x + y = 5",
+            participants=["local_prime", "local_raven"],
+            mode="discovery_debate",
+            max_rounds=2,
+            enable_tools=True,
+            tools=["mystic_verify_answer"],
+        )
+        self.assertEqual(result["final_decision_source"], "deterministic_verifier")
+        self.assertEqual(result["final_status"], result["verification"]["verdict"])
 
     def test_teacher_packet_export_and_import_persist(self):
         toolbox = self._make_toolbox()
