@@ -259,9 +259,9 @@ def layout(*, title: str, subtitle: str, body: str, nav: str = "") -> str:
 def ParticipantSelector(*, participants: list[dict[str, Any]]) -> str:
     cards = []
     for participant in participants:
-        auth_badge = ""
-        if participant.get("auth_state") == "not_authenticated":
-            auth_badge = "<span class='badge auth'>Auth Required</span>"
+        auth_state = str(participant.get("auth_state", "unknown"))
+        auth_badge = f"<span class='badge {escape(_participant_status_badge_class(auth_state))}'>{escape(_participant_status_label(auth_state))}</span>"
+        auth_message = str(participant.get("auth_message", "")).strip()
         cards.append(
             "<label class='participant-card'>"
             f"<input type='checkbox' name='participants' value='{escape(str(participant['model_id']))}' "
@@ -269,6 +269,7 @@ def ParticipantSelector(*, participants: list[dict[str, Any]]) -> str:
             "<div>"
             f"<div><strong>{escape(str(participant['label']))}</strong> {auth_badge}</div>"
             f"<div class='small muted'>{escape(str(participant['provider']))} / {escape(str(participant['model_name']))}</div>"
+            f"{f'<div class=\"small muted\">{escape(auth_message)}</div>' if auth_message else ''}"
             f"<div class='meta-row'>{''.join(f'<span class=\"chip\">{escape(role)}</span>' for role in participant.get('roles', []))}</div>"
             "</div></label>"
         )
@@ -276,17 +277,30 @@ def ParticipantSelector(*, participants: list[dict[str, Any]]) -> str:
 
 
 def ProviderAuthCard(*, model_id: str, status: dict[str, Any], action_href: str) -> str:
-    action_label = "Login"
+    state = str(status.get("state", "unknown"))
+    action_label = "Review Status"
     message = str(status.get("message", "Authentication required."))
+    badge_class = _participant_status_badge_class(state)
+    badge_label = _participant_status_label(state)
+    action_html = ""
     if "Google" in message:
         action_label = "Login with Google"
+        action_html = f"<a class='action primary' href='{escape(action_href)}'>{escape(action_label)}</a>"
     elif "Claude" in message:
         action_label = "Login with Claude"
+        action_html = f"<a class='action primary' href='{escape(action_href)}'>{escape(action_label)}</a>"
+    elif state == "ready":
+        action_html = "<span class='action'>Ready</span>"
+    elif state == "missing":
+        action_html = "<span class='action'>CLI missing</span>"
+    elif state == "error":
+        action_html = "<span class='action'>Error</span>"
     return (
         "<article class='panel'>"
         f"<h3>{escape(_display_model_name(model_id))}</h3>"
+        f"<div class='meta-row'><span class='badge {escape(badge_class)}'>{escape(badge_label)}</span></div>"
         f"<p class='muted'>{escape(message)}</p>"
-        f"<div class='action-row'><a class='action primary' href='{escape(action_href)}'>{escape(action_label)}</a></div>"
+        f"<div class='action-row'>{action_html}</div>"
         "</article>"
     )
 
@@ -535,3 +549,21 @@ def _turn_anchor_id(turn_id: str) -> str:
         return "turn-unknown"
     normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", turn_id).strip("-")
     return f"turn-{normalized or 'unknown'}"
+
+
+def _participant_status_label(state: str) -> str:
+    return {
+        "ready": "Ready",
+        "not_authenticated": "Login Required",
+        "missing": "CLI Missing",
+        "error": "Error",
+    }.get(state, state.replace("_", " ").title())
+
+
+def _participant_status_badge_class(state: str) -> str:
+    return {
+        "ready": "accepted",
+        "not_authenticated": "auth",
+        "missing": "refuted",
+        "error": "refuted",
+    }.get(state, "badge")

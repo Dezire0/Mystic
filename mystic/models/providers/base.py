@@ -164,6 +164,16 @@ def unavailable_status(message: str, **details: Any) -> ProviderStatus:
     )
 
 
+def missing_status(message: str, **details: Any) -> ProviderStatus:
+    return ProviderStatus(
+        state="missing",
+        message=message,
+        available=False,
+        authenticated=False,
+        details=details,
+    )
+
+
 def disabled_status(message: str, **details: Any) -> ProviderStatus:
     return ProviderStatus(
         state="disabled",
@@ -190,6 +200,16 @@ def ready_status(message: str, authenticated: bool = True, **details: Any) -> Pr
         message=message,
         available=True,
         authenticated=authenticated,
+        details=details,
+    )
+
+
+def error_status(message: str, **details: Any) -> ProviderStatus:
+    return ProviderStatus(
+        state="error",
+        message=message,
+        available=False,
+        authenticated=False,
         details=details,
     )
 
@@ -231,8 +251,10 @@ __all__ = [
     "command_exists",
     "DEFAULT_TIMEOUT_SECONDS",
     "disabled_status",
+    "error_status",
     "extract_text_from_json",
     "get_json",
+    "missing_status",
     "post_json",
     "provider_auth_required",
     "provider_error",

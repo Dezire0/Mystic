@@ -30,16 +30,33 @@ class AppPagesTests(unittest.TestCase):
                     "model_name": "gemini_cli",
                     "roles": ["draft", "critique"],
                     "auth_state": "not_authenticated",
+                    "auth_message": "Login with Google.",
+                    "checked": False,
+                },
+                {
+                    "model_id": "claude_cli",
+                    "label": "Claude CLI",
+                    "provider": "cli",
+                    "model_name": "claude_cli",
+                    "roles": ["critique"],
+                    "auth_state": "missing",
+                    "auth_message": "CLI command 'claude' is not installed.",
                     "checked": False,
                 },
             ],
-            auth_cards=["Gemini CLI is not authenticated. Login with Google."],
+            auth_cards=[
+                "<article class='panel'>Gemini CLI Login Required Login with Google</article>",
+                "<article class='panel'>Claude CLI CLI Missing</article>",
+            ],
             controller={"model_id": "gpt_controller", "provider": "controller", "model_name": "GPT Controller"},
         )
         self.assertIn("ResearchTableStartPage", html)
         self.assertIn("local_prime (deepseek-r1-distill-14b)", html)
         self.assertIn("Gemini CLI", html)
+        self.assertIn("Claude CLI", html)
         self.assertIn("Login with Google", html)
+        self.assertIn("Login Required", html)
+        self.assertIn("CLI Missing", html)
         self.assertIn("GPT Controller", html)
 
     def test_research_table_page_renders_discoveries_and_metadata(self):
