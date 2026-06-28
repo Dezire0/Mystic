@@ -60,23 +60,31 @@ def ResearchTableStartPage(*, participants: list[dict[str, Any]], auth_cards: li
 
 
 def ResearchTableSessionPage(*, session: dict[str, Any]) -> str:
+    session_id = str(session.get("session_id", ""))
     turns = session.get("turns", [])
     discoveries = session.get("discoveries", [])
     discoveries_by_turn = _discoveries_by_turn(discoveries)
     grouped = _group_turns_by_phase(turns)
-    discoveries = "".join(DiscoveryCard(discovery=item) for item in session.get("discoveries", []))
+    discoveries = "".join(DiscoveryCard(discovery=item, session_id=session_id) for item in session.get("discoveries", []))
     verification_requests = "".join(
         VerificationRequestCard(request=request)
         for request in session.get("verification_requests", [])
     )
     phase_sections = "".join(
-        ResearchPhaseSection(phase=phase, turns=phase_turns, discoveries_by_turn=discoveries_by_turn)
+        ResearchPhaseSection(phase=phase, turns=phase_turns, discoveries_by_turn=discoveries_by_turn, session_id=session_id)
         for phase, phase_turns in grouped
     )
     tool_evidence_cards = "".join(
-        ToolEvidenceCard(turn=turn)
+        ToolEvidenceCard(turn=turn, session_id=session_id)
         for turn in turns
         if str(turn.get("speaker_type", "")) == "tool"
+    )
+    flash_message = str(session.get("flash_message", "")).strip()
+    flash_level = str(session.get("flash_level", "info")).strip()
+    flash_panel = (
+        f"<section class='panel'><div class='meta-row'><span class='badge'>{escape(flash_level)}</span></div><p>{escape(flash_message)}</p></section>"
+        if flash_message
+        else ""
     )
     participant_models = session.get("participant_models", [])
     participant_cards = "".join(
@@ -98,6 +106,7 @@ def ResearchTableSessionPage(*, session: dict[str, Any]) -> str:
         f"<div class='stack'>{phase_sections}</div>"
         "</article>"
         "<div class='stack'>"
+        f"{flash_panel}"
         "<section class='panel'><h2>Selected Participants</h2>"
         f"<div class='stack'>{participant_cards or '<p class=\"muted\">No participant metadata recorded.</p>'}</div>"
         f"<div class='meta-row'><span class='badge'>controller</span><span class='badge'>{escape(str(controller.get('model_name', 'GPT Controller')))}</span><span class='badge'>{escape(str(controller.get('model_id', 'gpt_controller')))}</span></div>"
@@ -108,7 +117,7 @@ def ResearchTableSessionPage(*, session: dict[str, Any]) -> str:
         f"<div class='stack'>{verification_requests or '<p class=\"muted\">No verification requests recorded.</p>'}</div></section>"
         "<section class='panel'><h2>Tool Evidence</h2>"
         f"<div class='stack'>{tool_evidence_cards or '<p class=\"muted\">No tool evidence recorded.</p>'}</div></section>"
-        f"{FinalSynthesisPanel(synthesis=session.get('final_synthesis_package', {}))}"
+        f"{FinalSynthesisPanel(synthesis=session.get('final_synthesis_package', {}), session_id=session_id)}"
         f"{DisagreementPanel(rejected_discoveries=session.get('rejected_discoveries', []))}"
         "</div></section>"
     )

@@ -94,6 +94,8 @@ class _StubToolbox:
         session_id = "research-test-session"
         session_dir = self.root_path / "mystic_data" / "research_table_sessions" / session_id
         session_dir.mkdir(parents=True, exist_ok=True)
+        first_participant = participants[0]
+        first_model = self.mystic_status()["models"][first_participant]
         payload = {
             "session_id": session_id,
             "problem": problem,
@@ -114,9 +116,9 @@ class _StubToolbox:
                     "round_index": 1,
                     "phase": "independent_discovery",
                     "speaker_type": "model",
-                    "speaker_id": "gemini_cli",
-                    "provider": "cli",
-                    "model_name": "gemini_cli",
+                    "speaker_id": first_participant,
+                    "provider": first_model["provider"],
+                    "model_name": first_model["model_name"],
                     "role": "solver",
                     "status": "DRAFT_ONLY",
                     "content": "Discovery: candidate",
@@ -138,6 +140,7 @@ class _StubToolbox:
             ],
             "discoveries": [
                 {
+                    "discovery_id": "discovery-candidate",
                     "claim": "candidate",
                     "rationale": "from turn 1",
                     "confidence": "low",
@@ -165,6 +168,75 @@ class _StubToolbox:
         (session_dir / "verification_requests.json").write_text(json.dumps(payload["verification_requests"]), encoding="utf-8")
         (session_dir / "final_synthesis.json").write_text(json.dumps(payload["final_synthesis_package"]), encoding="utf-8")
         return {"session_id": session_id}
+
+    def mystic_call_model(
+        self,
+        *,
+        model_id: str,
+        role: str,
+        task: str,
+        problem: str,
+        context: str = "",
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ):
+        if model_id == "gemini_cli":
+            return {
+                "output_id": "auth-required-output",
+                "model_id": model_id,
+                "provider": "cli",
+                "model_name": "gemini_cli",
+                "role": role,
+                "content": "",
+                "status": "AUTH_REQUIRED",
+                "latency_sec": 0.01,
+                "artifact_path": str(self.root_path / "mystic_data" / "runs" / "auth-required.json"),
+                "auth_message": "Login with Google",
+            }
+        return {
+            "output_id": f"{model_id}-{role}",
+            "model_id": model_id,
+            "provider": self.mystic_status()["models"].get(model_id, {}).get("provider", "ollama"),
+            "model_name": self.mystic_status()["models"].get(model_id, {}).get("model_name", model_id),
+            "role": role,
+            "content": f"{role} response from {model_id}",
+            "status": {"critique": "CRITIQUE_ONLY", "revise": "REVISION"}.get(role, "DRAFT_ONLY"),
+            "latency_sec": 0.01,
+            "artifact_path": str(self.root_path / "mystic_data" / "runs" / f"{model_id}-{role}.json"),
+            "auth_message": None,
+        }
+
+    def mystic_verify_answer(self, *, problem: str, candidate_answer: str, constraints=None, bounds=None):
+        verdict = "VALID" if "existing" in candidate_answer or "candidate" not in candidate_answer else "INVALID"
+        reasoning = "Deterministic verifier supported the discovery." if verdict == "VALID" else "Deterministic verifier refuted the discovery."
+        return {
+            "valid": verdict == "VALID",
+            "verdict": verdict,
+            "reasoning": reasoning,
+            "saved_artifact_path": str(self.root_path / "mystic_data" / "runs" / f"verify-{verdict.lower()}.json"),
+        }
+
+    def mystic_import_teacher_label(
+        self,
+        *,
+        packet_id: str,
+        label_json: dict[str, object],
+        source_model: str,
+        target_agent: str,
+    ):
+        path = self.root_path / "mystic_data" / "teacher_labels" / "saved-from-action.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "packet_id": packet_id,
+                    "source_model": source_model,
+                    "target_agent": target_agent,
+                    "label": label_json,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return {"saved": True, "saved_path": str(path), "label_id": "label-action"}
 
 
 class AppRouteTests(unittest.TestCase):
@@ -214,7 +286,7 @@ class AppRouteTests(unittest.TestCase):
             encoding="utf-8",
         )
         (self.root / "mystic_data" / "research_table_sessions" / "research-existing" / "discoveries.json").write_text(
-            json.dumps([{"claim": "existing", "rationale": "stored", "confidence": "low", "needs_verification": False, "status": "accepted", "type": "strategy", "source_turn_id": "turn-existing"}]),
+            json.dumps([{"discovery_id": "discovery-existing", "claim": "existing", "rationale": "stored", "confidence": "low", "needs_verification": False, "status": "accepted", "type": "strategy", "source_turn_id": "turn-existing"}]),
             encoding="utf-8",
         )
         (self.root / "mystic_data" / "research_table_sessions" / "research-existing" / "verification_requests.json").write_text(
@@ -324,13 +396,72 @@ class AppRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("unavailable", response.text)
 
+    def test_challenge_action_creates_new_reply_turn(self):
+        response = self.client.post(
+            "/research-table/research-existing/discoveries/discovery-existing/challenge",
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+        payload = json.loads((self.root / "mystic_data" / "research_table_sessions" / "research-existing" / "turns.json").read_text(encoding="utf-8"))
+        self.assertEqual(payload[-1]["phase"], "interactive_follow_up")
+        self.assertIn("turn-existing", payload[-1]["reply_to"])
+        self.assertIn("discovery-existing", payload[-1]["reply_to"])
+
+    def test_extend_action_creates_new_reply_turn(self):
+        response = self.client.post(
+            "/research-table/research-existing/discoveries/discovery-existing/extend",
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+        payload = json.loads((self.root / "mystic_data" / "research_table_sessions" / "research-existing" / "turns.json").read_text(encoding="utf-8"))
+        self.assertEqual(payload[-1]["phase"], "interactive_follow_up")
+        self.assertIn("turn-existing", payload[-1]["reply_to"])
+
+    def test_verify_action_updates_discovery_status(self):
+        response = self.client.post(
+            "/research-table/research-existing/discoveries/discovery-existing/verify",
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+        discoveries = json.loads((self.root / "mystic_data" / "research_table_sessions" / "research-existing" / "discoveries.json").read_text(encoding="utf-8"))
+        self.assertEqual(discoveries[0]["status"], "verified")
+        turns = json.loads((self.root / "mystic_data" / "research_table_sessions" / "research-existing" / "turns.json").read_text(encoding="utf-8"))
+        self.assertEqual(turns[-1]["speaker_type"], "tool")
+
+    def test_save_teacher_label_writes_teacher_labels_directory(self):
+        response = self.client.post(
+            "/research-table/research-existing/turns/turn-existing/save-teacher-label",
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue((self.root / "mystic_data" / "teacher_labels" / "saved-from-action.json").exists())
+
+    def test_auth_required_action_does_not_crash(self):
+        create = self.client.get(
+            "/research-table/start/run",
+            params=[
+                ("problem", "Auth required flow"),
+                ("participants", "local_prime"),
+                ("participants", "gemini_cli"),
+            ],
+            follow_redirects=False,
+        )
+        self.assertEqual(create.status_code, 302)
+        response = self.client.post(
+            "/research-table/research-test-session/discoveries/discovery-candidate/challenge",
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+        turns = json.loads((self.root / "mystic_data" / "research_table_sessions" / "research-test-session" / "turns.json").read_text(encoding="utf-8"))
+        self.assertEqual(turns[-1]["status"], "AUTH_REQUIRED")
+
     def test_existing_research_table_session_route_renders(self):
         response = self.client.get("/research-table/sessions/research-existing")
         self.assertEqual(response.status_code, 200)
         self.assertIn("ResearchTableSessionPage", response.text)
         self.assertIn("Claude CLI", response.text)
         self.assertIn("Accepted Discoveries", response.text)
-        self.assertIn("Export teacher packet", response.text)
+        self.assertIn("Save as Forge experiment task", response.text)
 
     def test_debate_and_teacher_routes_render(self):
         debate = self.client.get("/debate/sessions/debate-test")

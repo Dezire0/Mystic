@@ -125,7 +125,7 @@ class AppPagesTests(unittest.TestCase):
         self.assertIn("Accepted Discoveries", html)
         self.assertIn("Rejected Discoveries", html)
         self.assertIn("Save as Prime strategy data", html)
-        self.assertIn("Export teacher packet", html)
+        self.assertIn("Save as Forge experiment task", html)
         self.assertIn("href='#turn-turn-1'", html)
         self.assertIn("Ask model to extend discovery", html)
         self.assertIn("Selected Participants", html)

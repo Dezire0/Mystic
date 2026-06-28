@@ -13,6 +13,27 @@ class ResearchTableStorage:
 
     def save_session(self, session_id: str, payload: dict[str, Any]) -> dict[str, str]:
         session_dir = self.base_dir / session_id
+        return self.save_session_dir(session_dir=session_dir, payload=payload)
+
+    def load_session(self, session_id: str) -> dict[str, Any]:
+        session_dir = self.base_dir / session_id
+        session_path = session_dir / "session.json"
+        if not session_path.exists():
+            raise FileNotFoundError(session_path)
+        payload = json.loads(session_path.read_text(encoding="utf-8"))
+        payload["turns"] = self._load_optional_json(session_dir / "turns.json", payload.get("turns", []))
+        payload["discoveries"] = self._load_optional_json(session_dir / "discoveries.json", payload.get("discoveries", []))
+        payload["verification_requests"] = self._load_optional_json(
+            session_dir / "verification_requests.json",
+            payload.get("verification_requests", []),
+        )
+        payload["final_synthesis_package"] = self._load_optional_json(
+            session_dir / "final_synthesis.json",
+            payload.get("final_synthesis_package", {}),
+        )
+        return payload
+
+    def save_session_dir(self, *, session_dir: Path, payload: dict[str, Any]) -> dict[str, str]:
         session_dir.mkdir(parents=True, exist_ok=True)
         session_path = session_dir / "session.json"
         turns_path = session_dir / "turns.json"
@@ -32,3 +53,12 @@ class ResearchTableStorage:
             "verification_requests": str(requests_path),
             "final_synthesis": str(synthesis_path),
         }
+
+    @staticmethod
+    def _load_optional_json(path: Path, default: Any) -> Any:
+        if not path.exists():
+            return default
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return default
