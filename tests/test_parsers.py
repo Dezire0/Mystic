@@ -7,6 +7,7 @@ from mystic.final_answer_verifier import (
     extract_candidate_tuples,
     verify_final_answer,
 )
+from mystic.verification.integer_bruteforce import search_integer_solutions
 from mystic.parsers import parse_raven_output
 
 
@@ -53,6 +54,8 @@ class ParserTests(unittest.TestCase):
         )
         assert verification is not None
         self.assertEqual(verification["verdict"], "VALID")
+        self.assertTrue(verification["valid"])
+        self.assertEqual(verification["passed_candidates"], ["(2, 3)"])
 
     def test_generic_substitution_verifier_rejects_invalid_tuple(self):
         verification = verify_final_answer(
@@ -62,6 +65,8 @@ class ParserTests(unittest.TestCase):
         assert verification is not None
         self.assertEqual(verification["verdict"], "INVALID")
         self.assertIn("(2, 2)", verification["first_fatal_error"])
+        self.assertFalse(verification["valid"])
+        self.assertEqual(verification["failed_candidates"], ["(2, 2)"])
 
     def test_generic_substitution_verifier_skips_when_problem_uses_unknown_variable(self):
         verification = verify_final_answer(
@@ -69,6 +74,14 @@ class ParserTests(unittest.TestCase):
             answer_text="Candidate solution: (2,3)",
         )
         self.assertIsNone(verification)
+
+    def test_integer_search_finds_small_ordered_solution_set(self):
+        result = search_integer_solutions(
+            problem="positive integers x, y satisfy x + y = 5, x <= y",
+            variable_order=["x", "y"],
+            bounds={"x": (1, 4), "y": (1, 4)},
+        )
+        self.assertEqual(result.solutions, [(1, 4), (2, 3)])
 
     def test_parse_raven_output_marks_invalid_when_candidate_fails_substitution(self):
         problem = "1/x + 1/y + 1/z = 1, x <= y <= z, positive integers"
@@ -106,6 +119,16 @@ class ParserTests(unittest.TestCase):
         self.assertIn("(4, 5, 7)", combined)
         self.assertIn("83/140 != 1", combined)
         self.assertIn("Missing valid solutions: (2, 3, 6), (2, 4, 4), (3, 3, 3)", combined)
+
+    def test_final_verifier_reports_missing_complete_solution_set(self):
+        verification = verify_final_answer(
+            problem="1/x + 1/y + 1/z = 1, x <= y <= z, positive integers",
+            answer_text="All ordered solutions are (2,3,6), (3,3,3).",
+        )
+        assert verification is not None
+        self.assertEqual(verification["verdict"], "INVALID")
+        self.assertEqual(verification["missing_candidates"], ["(2, 4, 4)"])
+        self.assertIn("Bounded integer search", verification["reasoning"])
 
     def test_parse_raven_output_accepts_complete_egyptian_fraction_solution_set(self):
         problem = "1/x + 1/y + 1/z = 1, x <= y <= z, positive integers"
