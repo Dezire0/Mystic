@@ -67,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--local-url", default=DEFAULT_LOCAL_URL)
     common.add_argument("--gist-id", required=True)
     common.add_argument("--gist-file", default="mystic-origin.json")
-    common.add_argument("--public-url", default="https://mystic-gateway.dexproject.workers.dev")
+    common.add_argument("--public-url", default="https://mystic.dexproject.workers.dev")
 
     install_parser = subparsers.add_parser("install", parents=[common], help="Write plist and start the Mystic public tunnel service.")
     install_parser.set_defaults(func=install_agent)

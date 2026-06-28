@@ -17,7 +17,7 @@ class MysticPublicTunnelServiceTests(unittest.TestCase):
             local_url="http://127.0.0.1:8765",
             gist_id="gist-123",
             gist_file="mystic-origin.json",
-            public_url="https://mystic-gateway.dexproject.workers.dev",
+            public_url="https://mystic.dexproject.workers.dev",
         )
         with patch("scripts.manage_mystic_public_tunnel_service.ROOT", Path("/repo")):
             command = daemon_command(args)
@@ -36,7 +36,7 @@ class MysticPublicTunnelServiceTests(unittest.TestCase):
                 local_url="http://127.0.0.1:8765",
                 gist_id="gist-123",
                 gist_file="mystic-origin.json",
-                public_url="https://mystic-gateway.dexproject.workers.dev",
+                public_url="https://mystic.dexproject.workers.dev",
             )
             with patch("scripts.manage_mystic_public_tunnel_service.ROOT", Path("/repo")):
                 payload = plist_payload(args)
