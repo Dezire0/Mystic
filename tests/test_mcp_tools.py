@@ -77,6 +77,15 @@ class MCPToolsTests(unittest.TestCase):
         self.assertEqual(result["count"], 2)
         self.assertEqual(result["solutions"], [{"x": 1, "y": 4}, {"x": 2, "y": 3}])
 
+    def test_python_check_task_mode_supports_safe_evaluation(self):
+        toolbox = self._make_toolbox()
+        result = toolbox.mystic_run_python_check(
+            code_or_task="evaluate: 2 + 3 * 4",
+            mode="task",
+        )
+        self.assertEqual(result["status"], "PASS")
+        self.assertIn("14", result["stdout"])
+
     def test_run_local_agent_returns_agent_status_contract(self):
         toolbox = self._make_toolbox()
         result = toolbox.mystic_run_local_agent(

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import re
 import uuid
 from typing import Any
 
@@ -155,14 +156,23 @@ class MysticToolbox:
     ) -> dict[str, Any]:
         timeout = timeout_seconds or 10
         if mode == "task":
-            return {
-                "status": "ERROR",
-                "stdout": "",
-                "stderr": "",
-                "result_summary": "Task mode is not yet safely compiled into Python. Use mode='code'.",
-                "saved_artifact_path": str(self._write_artifact("python_check", {"mode": mode, "status": "ERROR"})),
-            }
-        result = self.python_runner.run(code_or_task, timeout_seconds=timeout)
+            code = self._build_python_task(code_or_task)
+            if code is None:
+                return {
+                    "status": "ERROR",
+                    "stdout": "",
+                    "stderr": "",
+                    "result_summary": (
+                        "Task mode supports `evaluate:`, `simplify:`, `factor:`, `expand:`, and "
+                        "`solve: <equation> for <variable>`."
+                    ),
+                    "saved_artifact_path": str(
+                        self._write_artifact("python_check", {"mode": mode, "status": "ERROR", "task": code_or_task})
+                    ),
+                }
+        else:
+            code = code_or_task
+        result = self.python_runner.run(code, timeout_seconds=timeout)
         status = "PASS" if result.success else "FAILED"
         if result.blocked or result.timeout:
             status = "ERROR"
@@ -520,6 +530,48 @@ class MysticToolbox:
             "archive",
         ]:
             (self.data_root / relative).mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _build_python_task(task: str) -> str | None:
+        stripped = task.strip()
+        lowered = stripped.lower()
+        if lowered.startswith("simplify:"):
+            expr = stripped.split(":", 1)[1].strip()
+            return (
+                "from sympy import sympify, simplify\n"
+                f"expr = sympify({expr!r})\n"
+                "print(simplify(expr))\n"
+            )
+        if lowered.startswith("factor:"):
+            expr = stripped.split(":", 1)[1].strip()
+            return (
+                "from sympy import sympify, factor\n"
+                f"expr = sympify({expr!r})\n"
+                "print(factor(expr))\n"
+            )
+        if lowered.startswith("expand:"):
+            expr = stripped.split(":", 1)[1].strip()
+            return (
+                "from sympy import sympify, expand\n"
+                f"expr = sympify({expr!r})\n"
+                "print(expand(expr))\n"
+            )
+        if lowered.startswith("evaluate:"):
+            expr = stripped.split(":", 1)[1].strip()
+            return f"print({expr})\n"
+        solve_match = re.match(r"solve:\s*(.+?)\s+for\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", stripped, re.IGNORECASE)
+        if solve_match:
+            equation = solve_match.group(1).strip()
+            variable = solve_match.group(2).strip()
+            if "=" in equation:
+                left, right = equation.split("=", 1)
+                return (
+                    "from sympy import Eq, Symbol, solve, sympify\n"
+                    f"{variable} = Symbol({variable!r})\n"
+                    f"equation = Eq(sympify({left.strip()!r}), sympify({right.strip()!r}))\n"
+                    f"print(solve(equation, {variable}))\n"
+                )
+        return None
 
     def _collect_teacher_cases(self, *, limit: int, filter_text: str, target_agent: str | None) -> list[dict[str, Any]]:
         runs_dir = self.data_root / "runs"
