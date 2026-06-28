@@ -11,9 +11,12 @@ from mystic.app.components import (
     DiscoveryCard,
     DisagreementPanel,
     FinalJudgePanel,
+    FinalSynthesisPanel,
     ParticipantSelector,
     ProviderAuthCard,
+    ResearchPhaseSection,
     RunVerifierButton,
+    ToolEvidenceCard,
     VerificationRequestCard,
     layout,
 )
@@ -53,24 +56,39 @@ def ResearchTableStartPage(*, participants: list[dict[str, Any]], auth_cards: li
 
 
 def ResearchTableSessionPage(*, session: dict[str, Any]) -> str:
+    turns = session.get("turns", [])
+    discoveries = session.get("discoveries", [])
+    discoveries_by_turn = _discoveries_by_turn(discoveries)
+    grouped = _group_turns_by_phase(turns)
     discoveries = "".join(DiscoveryCard(discovery=item) for item in session.get("discoveries", []))
     verification_requests = "".join(
         VerificationRequestCard(request=request)
         for request in session.get("verification_requests", [])
+    )
+    phase_sections = "".join(
+        ResearchPhaseSection(phase=phase, turns=phase_turns, discoveries_by_turn=discoveries_by_turn)
+        for phase, phase_turns in grouped
+    )
+    tool_evidence_cards = "".join(
+        ToolEvidenceCard(turn=turn)
+        for turn in turns
+        if str(turn.get("speaker_type", "")) == "tool"
     )
     body = (
         "<section class='grid'>"
         "<article class='panel'>"
         "<h2>Research Table Timeline</h2>"
         f"<p class='muted'>{session.get('problem', '')}</p>"
-        f"{DebateTimeline(turns=session.get('turns', []))}"
+        f"<div class='stack'>{phase_sections}</div>"
         "</article>"
         "<div class='stack'>"
         "<section class='panel'><h2>Discoveries</h2>"
         f"<div class='discovery-grid'>{discoveries or '<p class=\"muted\">No discoveries recorded.</p>'}</div></section>"
         "<section class='panel'><h2>Verification Requests</h2>"
         f"<div class='stack'>{verification_requests or '<p class=\"muted\">No verification requests recorded.</p>'}</div></section>"
-        f"{FinalJudgePanel(content=json.dumps(session.get('final_synthesis_package', {}), ensure_ascii=False, indent=2))}"
+        "<section class='panel'><h2>Tool Evidence</h2>"
+        f"<div class='stack'>{tool_evidence_cards or '<p class=\"muted\">No tool evidence recorded.</p>'}</div></section>"
+        f"{FinalSynthesisPanel(synthesis=session.get('final_synthesis_package', {}))}"
         f"{DisagreementPanel(rejected_discoveries=session.get('rejected_discoveries', []))}"
         "</div></section>"
     )
@@ -186,3 +204,29 @@ def ProviderAuthPage(*, model_id: str, status: dict[str, Any]) -> str:
 
 def escape_path_label(value: Any) -> str:
     return str(value)
+
+
+def _group_turns_by_phase(turns: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for turn in turns:
+        phase = str(turn.get("phase", ""))
+        grouped.setdefault(phase, []).append(turn)
+    ordered: list[tuple[str, list[dict[str, Any]]]] = []
+    seen: set[str] = set()
+    for turn in turns:
+        phase = str(turn.get("phase", ""))
+        if phase in seen:
+            continue
+        seen.add(phase)
+        ordered.append((phase, grouped.get(phase, [])))
+    return ordered
+
+
+def _discoveries_by_turn(discoveries: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    mapping: dict[str, list[dict[str, Any]]] = {}
+    for item in discoveries:
+        source = str(item.get("source_turn_id", ""))
+        if not source:
+            continue
+        mapping.setdefault(source, []).append(item)
+    return mapping

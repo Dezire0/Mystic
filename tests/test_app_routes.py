@@ -91,13 +91,62 @@ class _StubToolbox:
             "problem": problem,
             "participants": participants,
             "rounds": max_rounds,
-            "turns": [],
-            "discoveries": [],
-            "verification_requests": [],
-            "rejected_discoveries": [],
-            "final_synthesis_package": {"mode": mode, "tools": tools, "enable_tools": enable_tools},
+            "turns": [
+                {
+                    "turn_id": "turn-1",
+                    "round_index": 1,
+                    "phase": "independent_discovery",
+                    "speaker_type": "model",
+                    "speaker_id": "gemini_cli",
+                    "provider": "cli",
+                    "model_name": "gemini_cli",
+                    "role": "solver",
+                    "status": "DRAFT_ONLY",
+                    "content": "Discovery: candidate",
+                    "reply_to": [],
+                },
+                {
+                    "turn_id": "turn-2",
+                    "round_index": 2,
+                    "phase": "tool_verification",
+                    "speaker_type": "tool",
+                    "speaker_id": "mystic_verify_answer",
+                    "provider": "tool",
+                    "model_name": "deterministic_verifier",
+                    "role": "verifier",
+                    "status": "VERIFICATION_RESULT",
+                    "content": "Verifier refuted candidate",
+                    "reply_to": ["turn-1"],
+                },
+            ],
+            "discoveries": [
+                {
+                    "claim": "candidate",
+                    "rationale": "from turn 1",
+                    "confidence": "low",
+                    "needs_verification": True,
+                    "status": "refuted",
+                    "type": "candidate_answer",
+                    "source_turn_id": "turn-1",
+                }
+            ],
+            "verification_requests": [{"tool": "brute_force", "status": "refuted", "question": "Check candidate", "target_turn_id": "turn-1"}],
+            "rejected_discoveries": [{"claim": "candidate", "status": "refuted", "type": "candidate_answer", "rationale": "from turn 1"}],
+            "final_synthesis_package": {
+                "mode": mode,
+                "tools": tools,
+                "enable_tools": enable_tools,
+                "accepted_discoveries": [],
+                "rejected_discoveries": [{"claim": "candidate", "status": "refuted", "type": "candidate_answer", "rationale": "from turn 1"}],
+                "final_status": "INVALID",
+                "final_decision_source": "deterministic_verifier",
+            },
         }
         (session_dir / "session.json").write_text(json.dumps(payload), encoding="utf-8")
+        (session_dir / "turns.json").write_text(json.dumps(payload["turns"]), encoding="utf-8")
+        (session_dir / "discoveries.json").write_text(json.dumps(payload["discoveries"]), encoding="utf-8")
+        (session_dir / "verification_requests.json").write_text(json.dumps(payload["verification_requests"]), encoding="utf-8")
+        (session_dir / "final_synthesis.json").write_text(json.dumps(payload["final_synthesis_package"]), encoding="utf-8")
         return {"session_id": session_id}
 
 
@@ -125,6 +174,38 @@ class AppRouteTests(unittest.TestCase):
         )
         (self.root / "mystic_data" / "research_table_sessions" / "research-existing" / "session.json").write_text(
             json.dumps({"session_id": "research-existing", "problem": "research", "turns": [], "discoveries": [], "verification_requests": [], "rejected_discoveries": [], "final_synthesis_package": {}}),
+            encoding="utf-8",
+        )
+        (self.root / "mystic_data" / "research_table_sessions" / "research-existing" / "turns.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "turn_id": "turn-existing",
+                        "round_index": 1,
+                        "phase": "independent_discovery",
+                        "speaker_type": "model",
+                        "speaker_id": "claude_cli",
+                        "provider": "cli",
+                        "model_name": "claude_cli",
+                        "role": "solver",
+                        "status": "DRAFT_ONLY",
+                        "content": "Discovery: existing",
+                        "reply_to": [],
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (self.root / "mystic_data" / "research_table_sessions" / "research-existing" / "discoveries.json").write_text(
+            json.dumps([{"claim": "existing", "rationale": "stored", "confidence": "low", "needs_verification": False, "status": "accepted", "type": "strategy", "source_turn_id": "turn-existing"}]),
+            encoding="utf-8",
+        )
+        (self.root / "mystic_data" / "research_table_sessions" / "research-existing" / "verification_requests.json").write_text(
+            json.dumps([{"tool": "brute_force", "status": "verified", "question": "Check existing", "target_turn_id": "turn-existing"}]),
+            encoding="utf-8",
+        )
+        (self.root / "mystic_data" / "research_table_sessions" / "research-existing" / "final_synthesis.json").write_text(
+            json.dumps({"accepted_discoveries": [{"claim": "existing", "status": "accepted", "type": "strategy", "rationale": "stored"}], "rejected_discoveries": [], "final_status": "VALID", "final_decision_source": "deterministic_verifier"}),
             encoding="utf-8",
         )
         (self.root / "mystic_data" / "runs" / "compare-test" / "tool_checks" / "compare-abc.json").write_text(
@@ -193,6 +274,9 @@ class AppRouteTests(unittest.TestCase):
         response = self.client.get("/research-table/sessions/research-existing")
         self.assertEqual(response.status_code, 200)
         self.assertIn("ResearchTableSessionPage", response.text)
+        self.assertIn("Claude CLI", response.text)
+        self.assertIn("Accepted Discoveries", response.text)
+        self.assertIn("Export teacher packet", response.text)
 
     def test_debate_and_teacher_routes_render(self):
         debate = self.client.get("/debate/sessions/debate-test")
