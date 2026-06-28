@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from html import escape
 from typing import Any
 
@@ -190,6 +191,45 @@ textarea { min-height: 140px; resize: vertical; }
   background: rgba(255,255,255,0.78);
   padding: 16px;
 }
+.phase-section {
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: rgba(255,255,255,0.44);
+  padding: 18px;
+}
+.phase-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  margin-bottom: 12px;
+}
+.turn-alert {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(171, 45, 45, 0.2);
+  background: rgba(171, 45, 45, 0.08);
+}
+.turn-discoveries {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.turn-discovery {
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.7);
+}
+.turn-discovery.refuted {
+  border-color: rgba(171, 45, 45, 0.25);
+  background: rgba(171, 45, 45, 0.08);
+}
+.turn-discovery.verified, .turn-discovery.accepted {
+  border-color: rgba(38, 98, 69, 0.25);
+  background: rgba(38, 98, 69, 0.08);
+}
 .page-nav {
   display: flex;
   gap: 10px;
@@ -244,7 +284,7 @@ def ProviderAuthCard(*, model_id: str, status: dict[str, Any], action_href: str)
         action_label = "Login with Claude"
     return (
         "<article class='panel'>"
-        f"<h3>{escape(model_id)}</h3>"
+        f"<h3>{escape(_display_model_name(model_id))}</h3>"
         f"<p class='muted'>{escape(message)}</p>"
         f"<div class='action-row'><a class='action primary' href='{escape(action_href)}'>{escape(action_label)}</a></div>"
         "</article>"
@@ -252,52 +292,64 @@ def ProviderAuthCard(*, model_id: str, status: dict[str, Any], action_href: str)
 
 
 def _turn_shell(turn: dict[str, Any], inner: str, extra_class: str = "") -> str:
-    reply_text = ", ".join(turn.get("reply_to", [])) or "none"
+    turn_id = str(turn.get("turn_id", ""))
+    reply_text = _reply_to_links(turn.get("reply_to", []))
     classes = "turn" + (f" {extra_class}" if extra_class else "")
+    speaker_type = str(turn.get("speaker_type", "model"))
+    speaker_label = "Tool Evidence" if speaker_type == "tool" else escape(str(turn.get("speaker_id", "")))
     return (
-        f"<article class='{classes}'>"
+        f"<article class='{classes}' id='{escape(_turn_anchor_id(turn_id))}'>"
         f"<div class='meta-row'>"
         f"<span class='badge'>{escape(str(turn.get('phase', '')))}</span>"
-        f"<span class='badge'>{escape(str(turn.get('speaker_id', '')))}</span>"
+        f"<span class='badge'>{speaker_label}</span>"
         f"<span class='badge'>{escape(str(turn.get('provider', '')))}</span>"
-        f"<span class='badge'>{escape(str(turn.get('model_name', '')))}</span>"
+        f"<span class='badge'>{escape(_display_model_name(turn.get('model_name', '')))}</span>"
         f"<span class='badge'>{escape(str(turn.get('role', '')))}</span>"
         f"<span class='badge'>{escape(str(turn.get('status', '')))}</span>"
         f"</div>"
-        f"<p class='small muted'>Replies to: <code>{escape(reply_text)}</code></p>"
+        f"<p class='small muted'>Replies to: {reply_text}</p>"
         f"{inner}</article>"
     )
 
 
-def ModelTurnCard(*, turn: dict[str, Any]) -> str:
+def ModelTurnCard(*, turn: dict[str, Any], prelude_html: str = "") -> str:
     return _turn_shell(
         turn,
-        f"<div class='content'>{escape(str(turn.get('content', '')))}</div>",
+        f"{prelude_html}<div class='content'>{escape(str(turn.get('content', '')))}</div>",
     )
 
 
-def CritiqueTurnCard(*, turn: dict[str, Any]) -> str:
+def CritiqueTurnCard(*, turn: dict[str, Any], prelude_html: str = "") -> str:
     return _turn_shell(
         turn,
-        f"<div class='content'>{escape(str(turn.get('content', '')))}</div>",
+        f"{prelude_html}<div class='content'>{escape(str(turn.get('content', '')))}</div>",
         extra_class="critic",
     )
 
 
-def ToolEvidenceCard(*, turn: dict[str, Any]) -> str:
+def ToolEvidenceCard(*, turn: dict[str, Any], prelude_html: str = "") -> str:
     return _turn_shell(
         turn,
+        f"{prelude_html}<div class='meta-row'><span class='badge tool'>Tool Evidence</span></div>"
         f"<div class='content'>{escape(str(turn.get('content', '')))}</div>",
         extra_class="tool",
     )
 
 
-def DebateTurnCard(*, turn: dict[str, Any]) -> str:
+def DebateTurnCard(*, turn: dict[str, Any], discoveries: list[dict[str, Any]] | None = None) -> str:
+    discoveries = discoveries or []
+    highlighted = _highlighted_discoveries(discoveries)
+    discovery_blocks = "".join(_turn_discovery_block(item) for item in discoveries)
+    shell_content = ""
+    if highlighted:
+        shell_content += highlighted
+    if discovery_blocks:
+        shell_content += f"<div class='turn-discoveries'>{discovery_blocks}</div>"
     if turn.get("speaker_type") == "tool":
-        return ToolEvidenceCard(turn=turn)
+        return ToolEvidenceCard(turn=turn, prelude_html=shell_content)
     if turn.get("role") == "critic":
-        return CritiqueTurnCard(turn=turn)
-    return ModelTurnCard(turn=turn)
+        return CritiqueTurnCard(turn=turn, prelude_html=shell_content)
+    return ModelTurnCard(turn=turn, prelude_html=shell_content)
 
 
 def DebateRound(*, round_index: int, phase: str, turns: list[dict[str, Any]]) -> str:
@@ -321,6 +373,8 @@ def DebateTimeline(*, turns: list[dict[str, Any]]) -> str:
 
 def DiscoveryCard(*, discovery: dict[str, Any]) -> str:
     status_class = {
+        "proposed": "discovery",
+        "challenged": "verify",
         "verified": "accepted",
         "accepted": "accepted",
         "refuted": "refuted",
@@ -338,7 +392,7 @@ def DiscoveryCard(*, discovery: dict[str, Any]) -> str:
         f"<p class='discovery-claim'><strong>{escape(str(discovery.get('claim', '')))}</strong></p>"
         f"<p class='small muted'>{escape(str(discovery.get('rationale', '')))}</p>"
         f"<div class='action-row'>{AskAnotherModelToCritiqueButton()} {AskModelToExtendDiscoveryButton()} "
-        f"{AskModelToFormalizeDiscoveryButton()} {RunVerifierButton()} {SaveTeacherLabelButton()}</div>"
+        f"{RunVerifierButton()} {SaveRavenTrainingDataButton()} {SavePrimeStrategyDataButton()} {ExportTeacherPacketButton()}</div>"
         "</article>"
     )
 
@@ -348,12 +402,45 @@ def VerificationRequestCard(*, request: dict[str, Any]) -> str:
         "<article class='request-card'>"
         f"<div class='meta-row'><span class='badge verify'>{escape(str(request.get('tool', '')))}</span>"
         f"<span class='badge'>{escape(str(request.get('status', 'pending')))}</span></div>"
-        f"<p class='request-question'>{escape(str(request.get('question', '')))}</p></article>"
+        f"<p class='request-question'>{escape(str(request.get('question', '')))}</p>"
+        f"<p class='small muted'>Target turn: <code>{escape(str(request.get('target_turn_id', '')) or '-')}</code></p>"
+        f"</article>"
     )
 
 
 def FinalJudgePanel(*, content: str) -> str:
     return f"<section class='panel'><h2>Final Judge</h2><div class='content'>{escape(content)}</div></section>"
+
+
+def FinalSynthesisPanel(*, synthesis: dict[str, Any]) -> str:
+    accepted = "".join(DiscoveryCard(discovery=item) for item in synthesis.get("accepted_discoveries", []))
+    rejected = "".join(DiscoveryCard(discovery=item) for item in synthesis.get("rejected_discoveries", []))
+    return (
+        "<section class='panel'>"
+        "<h2>FinalSynthesisPanel</h2>"
+        f"<div class='meta-row'><span class='badge'>{escape(str(synthesis.get('final_status', 'UNKNOWN')))}</span>"
+        f"<span class='badge'>{escape(str(synthesis.get('final_decision_source', 'model_outputs')))}</span></div>"
+        "<div class='grid'>"
+        f"<section><h3>Accepted Discoveries</h3><div class='discovery-grid'>{accepted or '<p class=\"muted\">No accepted discoveries.</p>'}</div></section>"
+        f"<section><h3>Rejected Discoveries</h3><div class='discovery-grid'>{rejected or '<p class=\"muted\">No rejected discoveries.</p>'}</div></section>"
+        "</div>"
+        f"<div class='action-row'>{RunVerifierButton()} {AskAnotherModelToCritiqueButton()} {AskModelToExtendDiscoveryButton()} "
+        f"{SaveRavenTrainingDataButton()} {SavePrimeStrategyDataButton()} {ExportTeacherPacketButton()}</div>"
+        "</section>"
+    )
+
+
+def ResearchPhaseSection(*, phase: str, turns: list[dict[str, Any]], discoveries_by_turn: dict[str, list[dict[str, Any]]]) -> str:
+    cards = "".join(
+        DebateTurnCard(turn=turn, discoveries=discoveries_by_turn.get(str(turn.get("turn_id", "")), []))
+        for turn in turns
+    )
+    return (
+        "<section class='phase-section'>"
+        f"<div class='phase-header'><h3>{escape(phase)}</h3><span class='small muted'>{len(turns)} turns</span></div>"
+        f"<div class='stack'>{cards or '<p class=\"muted\">No turns recorded.</p>'}</div>"
+        "</section>"
+    )
 
 
 def DisagreementPanel(*, rejected_discoveries: list[dict[str, Any]]) -> str:
@@ -367,6 +454,18 @@ def SaveTeacherLabelButton() -> str:
     return "<span class='action'>Save as Raven training data</span>"
 
 
+def SaveRavenTrainingDataButton() -> str:
+    return "<span class='action'>Save as Raven training data</span>"
+
+
+def SavePrimeStrategyDataButton() -> str:
+    return "<span class='action'>Save as Prime strategy data</span>"
+
+
+def ExportTeacherPacketButton() -> str:
+    return "<span class='action'>Export teacher packet</span>"
+
+
 def RunVerifierButton() -> str:
     return "<span class='action'>Re-run verifier</span>"
 
@@ -376,7 +475,7 @@ def AskAnotherModelToCritiqueButton() -> str:
 
 
 def AskModelToExtendDiscoveryButton() -> str:
-    return "<span class='action'>Ask another model to extend this discovery</span>"
+    return "<span class='action'>Ask model to extend discovery</span>"
 
 
 def AskModelToFormalizeDiscoveryButton() -> str:
@@ -385,3 +484,54 @@ def AskModelToFormalizeDiscoveryButton() -> str:
 
 def AskModelToReviseAfterEvidenceButton() -> str:
     return "<span class='action'>Ask model to revise after evidence</span>"
+
+
+def _display_model_name(value: Any) -> str:
+    raw = str(value)
+    lowered = raw.lower()
+    if lowered == "gemini cli" or lowered == "gemini_cli":
+        return "Gemini CLI"
+    if lowered == "claude cli" or lowered == "claude_cli":
+        return "Claude CLI"
+    return raw
+
+
+def _turn_discovery_block(discovery: dict[str, Any]) -> str:
+    status = str(discovery.get("status", "proposed")).lower()
+    badges = [
+        f"<span class='badge'>{escape(status)}</span>",
+        f"<span class='badge'>{escape(str(discovery.get('type', 'strategy')))}</span>",
+    ]
+    return (
+        f"<div class='turn-discovery {escape(status)}'>"
+        f"<div class='meta-row'>{''.join(badges)}</div>"
+        f"<p class='small'><strong>{escape(str(discovery.get('claim', '')))}</strong></p>"
+        f"<p class='small muted'>{escape(str(discovery.get('rationale', '')))}</p>"
+        "</div>"
+    )
+
+
+def _highlighted_discoveries(discoveries: list[dict[str, Any]]) -> str:
+    refuted = [item for item in discoveries if str(item.get("status", "")).lower() == "refuted"]
+    if not refuted:
+        return ""
+    body = "".join(f"<p class='small'><strong>{escape(str(item.get('claim', '')))}</strong></p>" for item in refuted[:3])
+    return f"<div class='turn-alert'><div class='meta-row'><span class='badge refuted'>refuted</span></div>{body}</div>"
+
+
+def _reply_to_links(reply_to: list[Any]) -> str:
+    values = [str(item) for item in reply_to if str(item)]
+    if not values:
+        return "<code>none</code>"
+    links = [
+        f"<a href='#{escape(_turn_anchor_id(value))}'><code>{escape(value)}</code></a>"
+        for value in values
+    ]
+    return ", ".join(links)
+
+
+def _turn_anchor_id(turn_id: str) -> str:
+    if not turn_id:
+        return "turn-unknown"
+    normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", turn_id).strip("-")
+    return f"turn-{normalized or 'unknown'}"

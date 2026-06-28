@@ -46,6 +46,7 @@ class AppPagesTests(unittest.TestCase):
                 "problem": "Test problem",
                 "turns": [
                     {
+                        "turn_id": "turn-1",
                         "round_index": 1,
                         "phase": "independent_discovery",
                         "speaker_type": "model",
@@ -58,6 +59,7 @@ class AppPagesTests(unittest.TestCase):
                         "reply_to": [],
                     },
                     {
+                        "turn_id": "turn-2",
                         "round_index": 2,
                         "phase": "tool_verification",
                         "speaker_type": "tool",
@@ -76,19 +78,32 @@ class AppPagesTests(unittest.TestCase):
                         "rationale": "Observed in round 1.",
                         "confidence": "medium",
                         "needs_verification": True,
-                        "status": "proposed",
+                        "status": "refuted",
                         "type": "invariant",
+                        "source_turn_id": "turn-1",
                     }
                 ],
-                "verification_requests": [{"tool": "brute_force", "status": "pending", "question": "Check invariant"}],
-                "rejected_discoveries": [],
-                "final_synthesis_package": {"final_verdict": "UNKNOWN"},
+                "verification_requests": [{"tool": "brute_force", "status": "pending", "question": "Check invariant", "target_turn_id": "turn-1"}],
+                "rejected_discoveries": [{"claim": "A useful invariant appears.", "status": "refuted", "type": "invariant", "rationale": "Observed in round 1."}],
+                "final_synthesis_package": {
+                    "final_status": "INVALID",
+                    "final_decision_source": "deterministic_verifier",
+                    "accepted_discoveries": [{"claim": "Supported idea", "status": "accepted", "type": "strategy", "rationale": "kept"}],
+                    "rejected_discoveries": [{"claim": "A useful invariant appears.", "status": "refuted", "type": "invariant", "rationale": "Observed in round 1."}],
+                },
             }
         )
         self.assertIn("deepseek-r1-distill-14b", html)
-        self.assertIn("deterministic_verifier", html)
+        self.assertIn("Tool Evidence", html)
         self.assertIn("New Discovery", html)
-        self.assertIn("Needs Verification", html)
+        self.assertIn("refuted", html)
+        self.assertIn("FinalSynthesisPanel", html)
+        self.assertIn("Accepted Discoveries", html)
+        self.assertIn("Rejected Discoveries", html)
+        self.assertIn("Save as Prime strategy data", html)
+        self.assertIn("Export teacher packet", html)
+        self.assertIn("href='#turn-turn-1'", html)
+        self.assertIn("Ask model to extend discovery", html)
 
     def test_debate_page_renders_threading_and_tool_evidence(self):
         html = DebateSessionPage(
@@ -126,6 +141,48 @@ class AppPagesTests(unittest.TestCase):
         self.assertIn("Replies to", html)
         self.assertIn("This misses a case.", html)
         self.assertIn("Final Judge", html)
+
+    def test_research_table_page_preserves_cli_model_labels(self):
+        html = ResearchTableSessionPage(
+            session={
+                "problem": "CLI test",
+                "turns": [
+                    {
+                        "turn_id": "turn-cli",
+                        "round_index": 1,
+                        "phase": "independent_discovery",
+                        "speaker_type": "model",
+                        "speaker_id": "gemini_cli",
+                        "provider": "cli",
+                        "model_name": "gemini_cli",
+                        "role": "solver",
+                        "status": "DRAFT_ONLY",
+                        "content": "Discovery: test",
+                        "reply_to": [],
+                    },
+                    {
+                        "turn_id": "turn-claude",
+                        "round_index": 2,
+                        "phase": "cross_critique",
+                        "speaker_type": "model",
+                        "speaker_id": "claude_cli",
+                        "provider": "cli",
+                        "model_name": "claude_cli",
+                        "role": "critic",
+                        "status": "CRITIQUE_ONLY",
+                        "content": "Critique: test",
+                        "reply_to": ["turn-cli"],
+                    },
+                ],
+                "discoveries": [],
+                "verification_requests": [],
+                "rejected_discoveries": [],
+                "final_synthesis_package": {"accepted_discoveries": [], "rejected_discoveries": []},
+            }
+        )
+        self.assertIn("Gemini CLI", html)
+        self.assertIn("Claude CLI", html)
+        self.assertIn("href='#turn-turn-cli'", html)
 
     def test_teacher_labels_page_lists_packets_and_labels(self):
         html = TeacherLabelsPage(

@@ -103,7 +103,7 @@ def create_app(
 
     @app.get("/research-table/sessions/{session_id}", response_class=HTMLResponse)
     def research_table_session(session_id: str):
-        session = _load_json(root_path / "mystic_data/research_table_sessions" / session_id / "session.json")
+        session = _load_research_table_session(root_path / "mystic_data/research_table_sessions" / session_id)
         return ResearchTableSessionPage(session=session)
 
     @app.get("/debate/sessions/{session_id}", response_class=HTMLResponse)
@@ -233,6 +233,38 @@ def _load_json(path: Path) -> dict:
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"session file not found: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_optional_json(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return default
+
+
+def _load_research_table_session(session_dir: Path) -> dict[str, Any]:
+    session = _load_json(session_dir / "session.json")
+    session["turns"] = _load_optional_json(session_dir / "turns.json", session.get("turns", []))
+    session["discoveries"] = _load_optional_json(session_dir / "discoveries.json", session.get("discoveries", []))
+    session["verification_requests"] = _load_optional_json(
+        session_dir / "verification_requests.json",
+        session.get("verification_requests", []),
+    )
+    session["final_synthesis_package"] = _load_optional_json(
+        session_dir / "final_synthesis.json",
+        session.get("final_synthesis_package", {}),
+    )
+    session["accepted_discoveries"] = session["final_synthesis_package"].get(
+        "accepted_discoveries",
+        session.get("accepted_discoveries", []),
+    )
+    session["rejected_discoveries"] = session["final_synthesis_package"].get(
+        "rejected_discoveries",
+        session.get("rejected_discoveries", []),
+    )
+    return session
 
 
 def _load_json_dir(path: Path) -> list[dict]:
