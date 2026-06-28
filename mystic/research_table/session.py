@@ -42,6 +42,8 @@ class ResearchTableSession:
     participants: list[str]
     mode: str
     requested_rounds: int
+    participant_models: list[dict[str, Any]] = field(default_factory=list)
+    controller: dict[str, Any] = field(default_factory=dict)
     turns: list[dict[str, Any]] = field(default_factory=list)
     discoveries: list[dict[str, Any]] = field(default_factory=list)
     verification_requests: list[dict[str, Any]] = field(default_factory=list)

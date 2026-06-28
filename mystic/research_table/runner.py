@@ -45,6 +45,8 @@ class ResearchTableRunner:
             participants=participants,
             mode=mode,
             requested_rounds=max_rounds,
+            participant_models=self._participant_models(participants),
+            controller=self._controller_metadata(controller),
         )
         discovery_index: dict[str, dict[str, Any]] = {}
         discovery_by_claim: dict[str, dict[str, Any]] = {}
@@ -192,6 +194,40 @@ class ResearchTableRunner:
         payload["saved_artifact_path"] = saved_paths["session"]
         payload["saved_artifacts"] = saved_paths
         return payload
+
+    def _participant_models(self, participants: list[str]) -> list[dict[str, Any]]:
+        snapshot = self.router.status_snapshot() if hasattr(self.router, "status_snapshot") else {}
+        models: list[dict[str, Any]] = []
+        for model_id in participants:
+            status = snapshot.get(model_id)
+            if status is None:
+                models.append(
+                    {
+                        "model_id": model_id,
+                        "provider": "unknown",
+                        "model_name": model_id,
+                        "role_defaults": [],
+                    }
+                )
+                continue
+            models.append(
+                {
+                    "model_id": model_id,
+                    "provider": status.get("provider", ""),
+                    "model_name": status.get("model_name", model_id),
+                    "role_defaults": status.get("role_defaults", []),
+                }
+            )
+        return models
+
+    @staticmethod
+    def _controller_metadata(controller: str) -> dict[str, Any]:
+        return {
+            "model_id": controller,
+            "provider": "controller",
+            "model_name": "GPT Controller" if controller == "gpt_controller" else controller,
+            "role": "judge",
+        }
 
     @staticmethod
     def _extract_discoveries(turn: ResearchTurn) -> list[dict[str, Any]]:

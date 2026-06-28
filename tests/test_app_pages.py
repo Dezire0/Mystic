@@ -16,7 +16,7 @@ class AppPagesTests(unittest.TestCase):
             participants=[
                 {
                     "model_id": "local_prime",
-                    "label": "Local DeepSeek-R1-Distill-14B",
+                    "label": "local_prime (deepseek-r1-distill-14b)",
                     "provider": "ollama",
                     "model_name": "deepseek-r1-distill-14b",
                     "roles": ["draft", "revise"],
@@ -34,16 +34,23 @@ class AppPagesTests(unittest.TestCase):
                 },
             ],
             auth_cards=["Gemini CLI is not authenticated. Login with Google."],
+            controller={"model_id": "gpt_controller", "provider": "controller", "model_name": "GPT Controller"},
         )
         self.assertIn("ResearchTableStartPage", html)
-        self.assertIn("Local DeepSeek-R1-Distill-14B", html)
+        self.assertIn("local_prime (deepseek-r1-distill-14b)", html)
         self.assertIn("Gemini CLI", html)
         self.assertIn("Login with Google", html)
+        self.assertIn("GPT Controller", html)
 
     def test_research_table_page_renders_discoveries_and_metadata(self):
         html = ResearchTableSessionPage(
             session={
                 "problem": "Test problem",
+                "participant_models": [
+                    {"model_id": "local_prime", "provider": "ollama", "model_name": "deepseek-r1-distill-14b"},
+                    {"model_id": "gemini_cli", "provider": "cli", "model_name": "gemini_cli"},
+                ],
+                "controller": {"model_id": "gpt_controller", "provider": "controller", "model_name": "GPT Controller"},
                 "turns": [
                     {
                         "turn_id": "turn-1",
@@ -104,6 +111,8 @@ class AppPagesTests(unittest.TestCase):
         self.assertIn("Export teacher packet", html)
         self.assertIn("href='#turn-turn-1'", html)
         self.assertIn("Ask model to extend discovery", html)
+        self.assertIn("Selected Participants", html)
+        self.assertIn("gpt_controller", html)
 
     def test_debate_page_renders_threading_and_tool_evidence(self):
         html = DebateSessionPage(
@@ -146,6 +155,11 @@ class AppPagesTests(unittest.TestCase):
         html = ResearchTableSessionPage(
             session={
                 "problem": "CLI test",
+                "participant_models": [
+                    {"model_id": "gemini_cli", "provider": "cli", "model_name": "gemini_cli"},
+                    {"model_id": "claude_cli", "provider": "cli", "model_name": "claude_cli"},
+                ],
+                "controller": {"model_id": "gpt_controller", "provider": "controller", "model_name": "GPT Controller"},
                 "turns": [
                     {
                         "turn_id": "turn-cli",
