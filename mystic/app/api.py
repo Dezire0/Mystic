@@ -4,11 +4,26 @@ from __future__ import annotations
 
 try:
     from fastapi import FastAPI, HTTPException
+    from fastapi.responses import HTMLResponse, RedirectResponse
 except ImportError:  # pragma: no cover
     FastAPI = None
     HTTPException = RuntimeError
+    HTMLResponse = None
+    RedirectResponse = None
 
+from mystic.app.pages import (
+    DebateSessionPage,
+    ModelComparePage,
+    ResearchTableSessionPage,
+    ResearchTableStartPage,
+    SessionDetailPage,
+    TeacherLabelsPage,
+)
+from mystic.app.components import ProviderAuthCard
+from mystic.mcp.tools import MysticToolbox
 from mystic.core.orchestrator import MysticOrchestrator
+from pathlib import Path
+import json
 
 
 def create_app():
@@ -17,6 +32,8 @@ def create_app():
 
     app = FastAPI(title="Mystic API", version="0.1.0")
     orchestrator = MysticOrchestrator()
+    root_path = Path(__file__).resolve().parents[2]
+    toolbox = MysticToolbox(root_path=root_path)
 
     @app.post("/sessions")
     def create_session(payload: dict):
@@ -58,5 +75,172 @@ def create_app():
         kind = str(payload.get("kind", "all"))
         return {"paths": orchestrator.export_dataset(kind)}
 
+    @app.get("/", response_class=HTMLResponse)
+    def home():
+        return RedirectResponse(url="/research-table/start", status_code=302)
+
+    @app.get("/research-table/start", response_class=HTMLResponse)
+    def research_table_start():
+        status = toolbox.mystic_status()
+        participants = _participant_options(status)
+        auth_cards = [
+            ProviderAuthCard(
+                model_id=model_id,
+                status=model_status["status"],
+                action_href=f"/providers/auth/{model_id}",
+            )
+            for model_id, model_status in status["models"].items()
+            if model_status["provider"] == "cli" and model_status["status"]["state"] == "not_authenticated"
+        ]
+        return ResearchTableStartPage(participants=participants, auth_cards=auth_cards)
+
+    @app.get("/research-table/start/run", response_class=HTMLResponse)
+    def research_table_run(
+        problem: str,
+        participants: list[str] | None = None,
+        mode: str = "discovery_debate",
+        max_rounds: int = 3,
+        num_models: int = 3,
+    ):
+        selected = (participants or [])[:max(2, min(num_models, 4))]
+        if not problem.strip():
+            raise HTTPException(status_code=400, detail="problem is required")
+        if len(selected) < 2:
+            raise HTTPException(status_code=400, detail="at least two participants are required")
+        session = toolbox.mystic_run_research_table(
+            problem=problem,
+            participants=selected,
+            mode=mode,
+            max_rounds=max_rounds,
+            enable_tools=True,
+            tools=["mystic_verify_answer"],
+        )
+        return RedirectResponse(url=f"/research-table/sessions/{session['session_id']}", status_code=302)
+
+    @app.get("/research-table/sessions/{session_id}", response_class=HTMLResponse)
+    def research_table_session(session_id: str):
+        session = _load_json(root_path / "mystic_data/research_table_sessions" / session_id / "session.json")
+        return ResearchTableSessionPage(session=session)
+
+    @app.get("/debate/sessions/{session_id}", response_class=HTMLResponse)
+    def debate_session(session_id: str):
+        session = _load_json(root_path / "mystic_data/debate_sessions" / session_id / "session.json")
+        return DebateSessionPage(session=session)
+
+    @app.get("/model-compare", response_class=HTMLResponse)
+    def model_compare():
+        comparisons = _load_tool_results(root_path / "mystic_data/runs", prefix="compare")
+        return ModelComparePage(comparisons=comparisons)
+
+    @app.get("/teacher-labels", response_class=HTMLResponse)
+    def teacher_labels():
+        packets = _load_json_dir(root_path / "mystic_data/teacher_packets")
+        labels = _load_json_dir(root_path / "mystic_data/teacher_labels")
+        return TeacherLabelsPage(packets=packets, labels=labels)
+
+    @app.get("/sessions/detail", response_class=HTMLResponse)
+    def session_detail():
+        sessions = _collect_session_index(root_path)
+        return SessionDetailPage(sessions=sessions)
+
+    @app.get("/providers/auth/{model_id}", response_class=HTMLResponse)
+    def provider_auth(model_id: str):
+        status = toolbox.mystic_status()["models"].get(model_id)
+        if status is None:
+            raise HTTPException(status_code=404, detail=f"unknown model: {model_id}")
+        from mystic.app.pages import ProviderAuthPage
+
+        return ProviderAuthPage(model_id=model_id, status=status["status"])
+
     return app
 
+
+def _participant_options(status: dict) -> list[dict]:
+    options = []
+    preferred = ["local_prime", "local_qwen", "local_raven", "gemini_cli", "claude_cli"]
+    for model_id in preferred:
+        model = status["models"].get(model_id)
+        if model is None:
+            continue
+        options.append(
+            {
+                "model_id": model_id,
+                "label": _participant_label(model_id),
+                "provider": model["provider"],
+                "model_name": model["model_name"],
+                "roles": model.get("role_defaults", []),
+                "auth_state": model["status"]["state"],
+                "checked": model_id in {"local_prime", "local_qwen", "local_raven"},
+            }
+        )
+    return options
+
+
+def _participant_label(model_id: str) -> str:
+    labels = {
+        "local_prime": "Local DeepSeek-R1-Distill-14B",
+        "local_qwen": "Local Qwen3-14B",
+        "local_raven": "Local Raven LoRA",
+        "gemini_cli": "Gemini CLI",
+        "claude_cli": "Claude CLI",
+    }
+    return labels.get(model_id, model_id)
+
+
+def _load_json(path: Path) -> dict:
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"session file not found: {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_json_dir(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    payloads = []
+    for item in sorted(path.glob("*.json"), reverse=True):
+        try:
+            payload = json.loads(item.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        payloads.append(payload)
+    return payloads
+
+
+def _load_tool_results(path: Path, *, prefix: str) -> list[dict]:
+    if not path.exists():
+        return []
+    payloads = []
+    for item in sorted(path.rglob(f"{prefix}-*.json"), reverse=True):
+        try:
+            payload = json.loads(item.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        payloads.append(payload)
+    return payloads[:10]
+
+
+def _collect_session_index(root_path: Path) -> list[dict]:
+    sessions: list[dict] = []
+    for session_type, base in [
+        ("research_table", root_path / "mystic_data/research_table_sessions"),
+        ("debate", root_path / "mystic_data/debate_sessions"),
+    ]:
+        if not base.exists():
+            continue
+        for item in sorted(base.iterdir(), reverse=True):
+            session_path = item / "session.json"
+            if not session_path.exists():
+                continue
+            try:
+                payload = json.loads(session_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            sessions.append(
+                {
+                    "type": session_type,
+                    "session_id": payload.get("session_id", item.name),
+                    "problem": payload.get("problem", ""),
+                    "path": str(session_path),
+                }
+            )
+    return sessions
