@@ -8,12 +8,13 @@ from pathlib import Path
 import shutil
 
 try:
-    from fastapi import FastAPI, HTTPException, Request
+    from fastapi import FastAPI, HTTPException, Request, Response
     from fastapi.responses import HTMLResponse, RedirectResponse
 except ImportError:  # pragma: no cover
     FastAPI = None
     HTTPException = RuntimeError
     Request = RuntimeError
+    Response = RuntimeError
     HTMLResponse = None
     RedirectResponse = None
 
@@ -27,6 +28,7 @@ from mystic.app.pages import (
 )
 from mystic.app.components import ProviderAuthCard
 from mystic.mcp.tools import MysticToolbox
+from mystic.mcp.server import MysticMCPServer
 from mystic.core.orchestrator import MysticOrchestrator
 
 
@@ -44,10 +46,22 @@ def create_app(
     root_path = _resolve_runtime_root(source_root)
     orchestrator = orchestrator or MysticOrchestrator(root_path=root_path)
     toolbox = toolbox or MysticToolbox(root_path=root_path)
+    mcp_server = MysticMCPServer(toolbox=toolbox)
 
     @app.get("/", response_class=HTMLResponse)
     def home():
         return RedirectResponse(url="/research-table/start", status_code=302)
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    @app.post("/mcp")
+    def mcp_http(payload: dict):
+        response = mcp_server.handle_request(payload)
+        if response is None:
+            return Response(status_code=202)
+        return response
 
     @app.get("/research-table/start", response_class=HTMLResponse)
     def research_table_start():

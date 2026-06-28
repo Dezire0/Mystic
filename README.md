@@ -102,6 +102,20 @@ python -m pip install -e '.[api]'
 uvicorn mystic.app.main:app --host 127.0.0.1 --port 8765
 ```
 
+## Persistent Local Service
+
+For always-on local use without serverless execution limits, run the FastAPI app under `launchd` on macOS:
+
+```bash
+python scripts/manage_mystic_web_service.py install --host 127.0.0.1 --port 8765
+python scripts/manage_mystic_web_service.py status --host 127.0.0.1 --port 8765
+```
+
+This keeps the web app running after terminal exit and reboot. It also exposes:
+
+- `http://127.0.0.1:8765/health` for local health checks
+- `http://127.0.0.1:8765/mcp` for persistent HTTP access to Mystic MCP JSON-RPC requests
+
 ## Discord Bot
 
 Install the Discord bot dependency:
