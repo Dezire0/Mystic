@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 try:
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import HTMLResponse, RedirectResponse
 except ImportError:  # pragma: no cover
     FastAPI = None
     HTTPException = RuntimeError
+    Request = RuntimeError
     HTMLResponse = None
     RedirectResponse = None
 
@@ -26,54 +27,19 @@ from pathlib import Path
 import json
 
 
-def create_app():
+def create_app(
+    *,
+    root_path: Path | None = None,
+    orchestrator: MysticOrchestrator | None = None,
+    toolbox: MysticToolbox | None = None,
+):
     if FastAPI is None:  # pragma: no cover
         raise RuntimeError("fastapi is not installed; install mystic[api] to use the API")
 
     app = FastAPI(title="Mystic API", version="0.1.0")
-    orchestrator = MysticOrchestrator()
-    root_path = Path(__file__).resolve().parents[2]
-    toolbox = MysticToolbox(root_path=root_path)
-
-    @app.post("/sessions")
-    def create_session(payload: dict):
-        problem = str(payload.get("problem", "")).strip()
-        if not problem:
-            raise HTTPException(status_code=400, detail="problem is required")
-        result = orchestrator.run_problem(problem)
-        return {"session_id": result.session_id, "selected_agents": result.selected_agents}
-
-    @app.post("/sessions/{session_id}/run")
-    def rerun_session(session_id: str, payload: dict):
-        problem = str(payload.get("problem", "")).strip()
-        if not problem:
-            raise HTTPException(status_code=400, detail="problem is required")
-        result = orchestrator.run_problem(problem)
-        return {"requested_session_id": session_id, "new_session_id": result.session_id}
-
-    @app.get("/sessions/{session_id}")
-    def get_session(session_id: str):
-        try:
-            return orchestrator.get_session(session_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    @app.get("/sessions")
-    def list_sessions():
-        return orchestrator.list_sessions()
-
-    @app.get("/agents")
-    def list_agents():
-        return orchestrator.available_agents()
-
-    @app.get("/config/models")
-    def get_model_config():
-        return orchestrator.available_agents()
-
-    @app.post("/datasets/export")
-    def export_datasets(payload: dict):
-        kind = str(payload.get("kind", "all"))
-        return {"paths": orchestrator.export_dataset(kind)}
+    root_path = Path(root_path or Path(__file__).resolve().parents[2])
+    orchestrator = orchestrator or MysticOrchestrator(root_path=root_path)
+    toolbox = toolbox or MysticToolbox(root_path=root_path)
 
     @app.get("/", response_class=HTMLResponse)
     def home():
@@ -96,13 +62,13 @@ def create_app():
 
     @app.get("/research-table/start/run", response_class=HTMLResponse)
     def research_table_run(
+        request: Request,
         problem: str,
-        participants: list[str] | None = None,
         mode: str = "discovery_debate",
         max_rounds: int = 3,
         num_models: int = 3,
     ):
-        selected = (participants or [])[:max(2, min(num_models, 4))]
+        selected = request.query_params.getlist("participants")[: max(2, min(num_models, 4))]
         if not problem.strip():
             raise HTTPException(status_code=400, detail="problem is required")
         if len(selected) < 2:
@@ -142,6 +108,46 @@ def create_app():
     def session_detail():
         sessions = _collect_session_index(root_path)
         return SessionDetailPage(sessions=sessions)
+
+    @app.post("/sessions")
+    def create_session(payload: dict):
+        problem = str(payload.get("problem", "")).strip()
+        if not problem:
+            raise HTTPException(status_code=400, detail="problem is required")
+        result = orchestrator.run_problem(problem)
+        return {"session_id": result.session_id, "selected_agents": result.selected_agents}
+
+    @app.post("/sessions/{session_id}/run")
+    def rerun_session(session_id: str, payload: dict):
+        problem = str(payload.get("problem", "")).strip()
+        if not problem:
+            raise HTTPException(status_code=400, detail="problem is required")
+        result = orchestrator.run_problem(problem)
+        return {"requested_session_id": session_id, "new_session_id": result.session_id}
+
+    @app.get("/sessions")
+    def list_sessions():
+        return orchestrator.list_sessions()
+
+    @app.get("/agents")
+    def list_agents():
+        return orchestrator.available_agents()
+
+    @app.get("/config/models")
+    def get_model_config():
+        return orchestrator.available_agents()
+
+    @app.post("/datasets/export")
+    def export_datasets(payload: dict):
+        kind = str(payload.get("kind", "all"))
+        return {"paths": orchestrator.export_dataset(kind)}
+
+    @app.get("/sessions/{session_id}")
+    def get_session(session_id: str):
+        try:
+            return orchestrator.get_session(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/providers/auth/{model_id}", response_class=HTMLResponse)
     def provider_auth(model_id: str):
