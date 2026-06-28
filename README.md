@@ -116,6 +116,30 @@ This keeps the web app running after terminal exit and reboot. It also exposes:
 - `http://127.0.0.1:8765/health` for local health checks
 - `http://127.0.0.1:8765/mcp` for persistent HTTP access to Mystic MCP JSON-RPC requests
 
+## Fixed Public Endpoint
+
+For a stable public URL in front of the always-on local service, this repo also supports:
+
+- a Cloudflare Worker on `workers.dev` as the fixed public hostname
+- a launchd-managed `cloudflared` quick tunnel that keeps the current tunnel origin published into a GitHub Gist
+
+Install the public tunnel service with:
+
+```bash
+python scripts/manage_mystic_public_tunnel_service.py install \
+  --gist-id 778759ccca8f7d9a54c1f98662b6a9ec \
+  --public-url https://mystic-gateway.dexproject.workers.dev
+
+python scripts/manage_mystic_public_tunnel_service.py status \
+  --gist-id 778759ccca8f7d9a54c1f98662b6a9ec \
+  --public-url https://mystic-gateway.dexproject.workers.dev
+```
+
+The fixed public endpoints are expected to be:
+
+- `https://mystic-gateway.dexproject.workers.dev/health`
+- `https://mystic-gateway.dexproject.workers.dev/mcp`
+
 ## Discord Bot
 
 Install the Discord bot dependency:
