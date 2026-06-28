@@ -81,6 +81,11 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--max-length", type=int, default=2048)
     common.add_argument("--run-limit", type=int, default=20)
     common.add_argument("--compare-limit", type=int, default=100)
+    common.add_argument(
+        "--allow-system-sleep",
+        action="store_true",
+        help="Do not wrap the daemon in caffeinate. Default behavior prevents idle/system sleep while the service runs.",
+    )
 
     install_parser = subparsers.add_parser("install", parents=[common], help="Write plist and start the remote cycle service.")
     install_parser.set_defaults(func=install_agent)
@@ -150,13 +155,27 @@ def daemon_command(args: argparse.Namespace) -> list[str]:
     ]
 
 
+def service_program_arguments(args: argparse.Namespace) -> list[str]:
+    command = daemon_command(args)
+    if getattr(args, "allow_system_sleep", False):
+        return command
+    return ["/usr/bin/caffeinate", "-i", "-s", *command]
+
+
+def installed_sleep_prevention_mode() -> str:
+    if not PLIST_PATH.exists():
+        return "unknown"
+    text = PLIST_PATH.read_text(encoding="utf-8")
+    return "caffeinate" if "/usr/bin/caffeinate" in text else "disabled"
+
+
 def plist_payload(args: argparse.Namespace) -> dict[str, Any]:
     base_dir = Path(args.base_dir).resolve()
     logs_dir = base_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     return {
         "Label": REMOTE_LAUNCHD_LABEL,
-        "ProgramArguments": daemon_command(args),
+        "ProgramArguments": service_program_arguments(args),
         "WorkingDirectory": str(ROOT),
         "EnvironmentVariables": {
             "PYTHONUNBUFFERED": "1",
@@ -215,6 +234,7 @@ def status_agent(args: argparse.Namespace) -> int:
         "label": REMOTE_LAUNCHD_LABEL,
         "plist_path": str(PLIST_PATH),
         "plist_exists": PLIST_PATH.exists(),
+        "sleep_prevention": installed_sleep_prevention_mode(),
         "launchctl_returncode": launchctl_status.returncode,
         "launchctl_stdout": launchctl_status.stdout,
         "launchctl_stderr": launchctl_status.stderr,

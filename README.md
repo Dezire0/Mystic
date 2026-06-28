@@ -603,6 +603,22 @@ Run the loop again with the same input to skip IDs already recorded in `mystic_d
 python scripts/mystic_loop.py --limit 10 --backend ollama
 ```
 
+## Power Behavior
+
+Persistent local training and remote cycle services can be installed with the launchd helpers:
+
+```bash
+python scripts/manage_continuous_training.py install
+python scripts/manage_remote_cycle_service.py install
+```
+
+By default these services run under `/usr/bin/caffeinate -i -s` so macOS idle/system sleep does not pause training while the machine stays powered on.
+
+- This helps with screen-off / idle sleep.
+- `RunAtLoad` and `KeepAlive` make the services restart after login or reboot.
+- A completely powered-off Mac cannot keep running local training jobs; it can only resume after boot.
+- If you explicitly want sleep to be allowed, install with `--allow-system-sleep`.
+
 ## Troubleshooting
 
 - If `ollama` requests fail, confirm the daemon is running and `http://localhost:11434` is reachable.
