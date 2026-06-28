@@ -79,6 +79,54 @@ TOOL_SCHEMAS = {
         "required": ["problem", "models", "task", "include_verifier"],
         "additionalProperties": False,
     },
+    "mystic_run_debate": {
+        "type": "object",
+        "properties": {
+            "problem": {"type": "string"},
+            "participants": {"type": "array"},
+            "rounds": {"type": "integer"},
+            "tools": {"type": "array", "items": {"type": "string"}},
+            "judge": {"type": "string"},
+            "max_turns": {"type": "integer"},
+        },
+        "required": ["problem", "participants", "rounds", "tools"],
+        "additionalProperties": False,
+    },
+    "mystic_run_research_table": {
+        "type": "object",
+        "properties": {
+            "problem": {"type": "string"},
+            "participants": {"type": "array", "items": {"type": "string"}},
+            "mode": {"type": "string"},
+            "max_rounds": {"type": "integer"},
+            "enable_tools": {"type": "boolean"},
+            "tools": {"type": "array", "items": {"type": "string"}},
+            "controller": {"type": "string"},
+        },
+        "required": ["problem", "participants", "mode", "max_rounds", "enable_tools", "tools"],
+        "additionalProperties": False,
+    },
+    "mystic_export_teacher_packet": {
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer"},
+            "filter": {"type": "string"},
+            "target_agent": {"type": "string"},
+        },
+        "required": ["limit", "filter"],
+        "additionalProperties": False,
+    },
+    "mystic_import_teacher_label": {
+        "type": "object",
+        "properties": {
+            "packet_id": {"type": "string"},
+            "label_json": {"type": "object"},
+            "source_model": {"type": "string"},
+            "target_agent": {"type": "string", "enum": ["raven", "prime", "forge", "report"]},
+        },
+        "required": ["packet_id", "label_json", "source_model", "target_agent"],
+        "additionalProperties": False,
+    },
 }
 
 
@@ -117,5 +165,25 @@ TOOL_DEFINITIONS = [
         "name": "mystic_compare_models",
         "description": "Call multiple models and optionally append deterministic verifier output.",
         "inputSchema": TOOL_SCHEMAS["mystic_compare_models"],
+    },
+    {
+        "name": "mystic_run_debate",
+        "description": "Run a threaded multi-model debate with critique, tool evidence, revision, and final judgment.",
+        "inputSchema": TOOL_SCHEMAS["mystic_run_debate"],
+    },
+    {
+        "name": "mystic_run_research_table",
+        "description": "Run the Research Table discovery workflow with structured discoveries and verification requests.",
+        "inputSchema": TOOL_SCHEMAS["mystic_run_research_table"],
+    },
+    {
+        "name": "mystic_export_teacher_packet",
+        "description": "Export recent uncertain or failing cases for teacher labeling.",
+        "inputSchema": TOOL_SCHEMAS["mystic_export_teacher_packet"],
+    },
+    {
+        "name": "mystic_import_teacher_label",
+        "description": "Import teacher labels for local agents and persist them under mystic_data.",
+        "inputSchema": TOOL_SCHEMAS["mystic_import_teacher_label"],
     },
 ]
