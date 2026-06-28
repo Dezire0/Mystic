@@ -99,6 +99,68 @@ class MCPToolsTests(unittest.TestCase):
         self.assertEqual(len(result["model_outputs"]), 2)
         self.assertIn("[local_prime / mock / mock-prime / draft / DRAFT_ONLY]", result["display_text"])
 
+    def test_run_debate_creates_threaded_turns(self):
+        toolbox = self._make_toolbox()
+        result = toolbox.mystic_run_debate(
+            problem="1/x + 1/y + 1/z = 1, x <= y <= z, positive integers",
+            participants=[
+                {"model_id": "local_prime", "role": "solver"},
+                {"model_id": "local_raven", "role": "critic"},
+            ],
+            rounds=3,
+            tools=["mystic_verify_answer"],
+            max_turns=8,
+        )
+        self.assertTrue(result["turns"])
+        critique_turns = [turn for turn in result["turns"] if turn["phase"] == "cross_critique"]
+        self.assertTrue(critique_turns)
+        self.assertTrue(critique_turns[0]["reply_to"])
+        tool_turns = [turn for turn in result["turns"] if turn["speaker_type"] == "tool"]
+        self.assertTrue(tool_turns)
+
+    def test_run_research_table_extracts_discoveries(self):
+        toolbox = self._make_toolbox()
+        result = toolbox.mystic_run_research_table(
+            problem="Investigate patterns in x + y = 5 over positive integers.",
+            participants=["local_prime", "local_raven"],
+            mode="discovery_debate",
+            max_rounds=3,
+            enable_tools=True,
+            tools=["mystic_verify_answer"],
+        )
+        self.assertTrue(result["discoveries"])
+        first = result["discoveries"][0]
+        self.assertIn("claim", first)
+        self.assertIn("confidence", first)
+        self.assertIn("needs_verification", first)
+        self.assertTrue(result["verification_requests"])
+
+    def test_teacher_packet_export_and_import_persist(self):
+        toolbox = self._make_toolbox()
+        toolbox.mystic_call_model(
+            model_id="local_prime",
+            role="draft",
+            task="Draft",
+            problem="x + y = 5",
+        )
+        packet = toolbox.mystic_export_teacher_packet(limit=1, filter="mock-prime")
+        self.assertEqual(len(packet["cases"]), 1)
+        imported = toolbox.mystic_import_teacher_label(
+            packet_id=packet["packet_id"],
+            label_json={
+                "verdict": "NEEDS_MORE_DETAIL",
+                "first_fatal_error": "missing proof",
+                "critique": "too shallow",
+                "corrected_reasoning": "enumerate the integer cases",
+                "training_target": "raven",
+                "training_value": "medium",
+            },
+            source_model="gpt_controller",
+            target_agent="raven",
+        )
+        self.assertTrue(imported["saved"])
+        self.assertTrue(Path(imported["saved_path"]).exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,6 +25,8 @@ class MCPServerTests(unittest.TestCase):
         names = [tool["name"] for tool in response["result"]["tools"]]
         self.assertIn("mystic_status", names)
         self.assertIn("mystic_call_model", names)
+        self.assertIn("mystic_run_debate", names)
+        self.assertIn("mystic_run_research_table", names)
 
     def test_tools_call_returns_structured_content(self):
         server = MysticMCPServer(toolbox=_StubToolbox())

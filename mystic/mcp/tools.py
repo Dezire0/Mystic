@@ -6,8 +6,10 @@ from pathlib import Path
 import uuid
 from typing import Any
 
+from mystic.debate.runner import DebateRunner
 from mystic.final_answer_verifier import extract_candidate_tuples, verify_final_answer
 from mystic.models.router import ModelRouter
+from mystic.research_table.runner import ResearchTableRunner
 from mystic.tools.python_runner import PythonRunner
 from mystic.verification.integer_bruteforce import search_integer_solutions
 
@@ -38,6 +40,16 @@ class MysticToolbox:
         self.data_root = self.root_path / "mystic_data"
         self.router = router or ModelRouter(root_path=self.root_path)
         self.python_runner = PythonRunner()
+        self.debate_runner = DebateRunner(
+            root_path=str(self.root_path),
+            router=self.router,
+            verify_answer=self.mystic_verify_answer,
+        )
+        self.research_table_runner = ResearchTableRunner(
+            root_path=str(self.root_path),
+            router=self.router,
+            verify_answer=self.mystic_verify_answer,
+        )
         self._ensure_data_dirs()
 
     def mystic_status(self) -> dict[str, Any]:
@@ -290,6 +302,110 @@ class MysticToolbox:
         result["saved_artifact_path"] = str(artifact_path)
         return result
 
+    def mystic_run_debate(
+        self,
+        *,
+        problem: str,
+        participants: list[dict[str, Any]],
+        rounds: int,
+        tools: list[str],
+        judge: str = "gpt_controller",
+        max_turns: int | None = None,
+    ) -> dict[str, Any]:
+        return self.debate_runner.run(
+            problem=problem,
+            participants=participants,
+            rounds=rounds,
+            tools=tools,
+            judge=judge,
+            max_turns=max_turns or self.router.policy.max_turns_per_debate,
+        )
+
+    def mystic_run_research_table(
+        self,
+        *,
+        problem: str,
+        participants: list[str],
+        mode: str,
+        max_rounds: int,
+        enable_tools: bool,
+        tools: list[str],
+        controller: str = "gpt_controller",
+    ) -> dict[str, Any]:
+        return self.research_table_runner.run(
+            problem=problem,
+            participants=participants,
+            mode=mode,
+            max_rounds=max_rounds,
+            enable_tools=enable_tools,
+            tools=tools,
+            controller=controller,
+        )
+
+    def mystic_export_teacher_packet(
+        self,
+        *,
+        limit: int,
+        filter: str,
+        target_agent: str | None = None,
+    ) -> dict[str, Any]:
+        cases = self._collect_teacher_cases(limit=limit, filter_text=filter, target_agent=target_agent)
+        packet_id = f"packet-{uuid.uuid4().hex[:10]}"
+        payload = {
+            "packet_id": packet_id,
+            "filter": filter,
+            "target_agent": target_agent,
+            "cases": cases,
+            "requested_strict_json_label_schema": {
+                "verdict": [
+                    "VALID_COMPLETE_PROOF",
+                    "INVALID",
+                    "PARTIAL_RESULT_ONLY",
+                    "INTERESTING_BUT_UNPROVEN_FRAMEWORK",
+                    "UNCLEAR",
+                    "NEEDS_MORE_DETAIL",
+                ],
+                "first_fatal_error": "string",
+                "critique": "string",
+                "corrected_reasoning": "string",
+                "training_target": "string",
+                "training_value": ["high", "medium", "low"],
+            },
+        }
+        path = self.data_root / "teacher_packets" / f"{packet_id}.json"
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return {
+            "packet_id": packet_id,
+            "content": json.dumps(payload, indent=2),
+            "cases": cases,
+            "saved_path": str(path),
+        }
+
+    def mystic_import_teacher_label(
+        self,
+        *,
+        packet_id: str,
+        label_json: dict[str, Any],
+        source_model: str,
+        target_agent: str,
+    ) -> dict[str, Any]:
+        label_id = f"label-{uuid.uuid4().hex[:10]}"
+        payload = {
+            "label_id": label_id,
+            "packet_id": packet_id,
+            "source_model": source_model,
+            "target_agent": target_agent,
+            "label": label_json,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        path = self.data_root / "teacher_labels" / f"{label_id}.json"
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return {
+            "saved": True,
+            "saved_path": str(path),
+            "label_id": label_id,
+        }
+
     def _bounded_candidate_check(
         self,
         *,
@@ -404,3 +520,33 @@ class MysticToolbox:
             "archive",
         ]:
             (self.data_root / relative).mkdir(parents=True, exist_ok=True)
+
+    def _collect_teacher_cases(self, *, limit: int, filter_text: str, target_agent: str | None) -> list[dict[str, Any]]:
+        runs_dir = self.data_root / "runs"
+        cases: list[dict[str, Any]] = []
+        if not runs_dir.exists():
+            return cases
+        for path in sorted(runs_dir.rglob("*.json"), reverse=True):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            serialized = json.dumps(payload, ensure_ascii=False)
+            if filter_text and filter_text.lower() not in serialized.lower():
+                continue
+            model_id = str(payload.get("model_id", ""))
+            if target_agent and target_agent not in model_id and target_agent not in serialized:
+                continue
+            cases.append(
+                {
+                    "problem": payload.get("problem", payload.get("task", "")),
+                    "local_model_output": payload.get("content", ""),
+                    "verifier_result": payload.get("status", ""),
+                    "critique_result": payload.get("summary", ""),
+                    "known_failure": payload.get("auth_message", ""),
+                    "source_path": str(path),
+                }
+            )
+            if len(cases) >= limit:
+                break
+        return cases
