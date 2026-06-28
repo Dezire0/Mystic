@@ -147,6 +147,17 @@ class AppRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.headers["location"], "/research-table/start")
 
+    def test_health_and_mcp_routes_respond(self):
+        health = self.client.get("/health")
+        initialize = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+        tools = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(health.json()["status"], "ok")
+        self.assertEqual(initialize.status_code, 200)
+        self.assertEqual(initialize.json()["result"]["serverInfo"]["name"], "mystic-mcp")
+        self.assertEqual(tools.status_code, 200)
+        self.assertIn("tools", tools.json()["result"])
+
     def test_start_page_renders_participants_and_auth_cards(self):
         response = self.client.get("/research-table/start")
         self.assertEqual(response.status_code, 200)
