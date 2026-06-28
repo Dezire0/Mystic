@@ -16,6 +16,7 @@ from mystic.execution_history import (
     parse_timestamp,
     source_agents_by_slug,
 )
+from mystic.training.continuous import continuous_progress_path, read_json_if_exists
 from mystic.training.blueprints import ARCHITECTURE_TRAINING_TARGETS
 
 
@@ -85,6 +86,7 @@ class ExpertSnapshot:
     stage: str
     dataset_covered_count: int
     dataset_expected_count: int
+    remaining_dataset_count: int
     dataset_progress_text: str
     status_detail: str
     progress_reason: str
@@ -140,11 +142,17 @@ def save_subscriber(base_dir: str | Path, *, user_id: int, username: str) -> dic
     return payload
 
 
+def load_local_cycle_progress(base_dir: str | Path) -> dict[str, Any]:
+    payload = read_json_if_exists(continuous_progress_path(base_dir))
+    return payload if isinstance(payload, dict) else {}
+
+
 def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
     base = Path(base_dir)
     records = collect_execution_records(base)
     continuous_status = load_continuous_status(base)
     remote_status = load_remote_cycle_status(base)
+    local_progress = normalize_local_cycle_progress(load_local_cycle_progress(base), continuous_status)
     active_slug = str(continuous_status.get("active_slug", "") or "")
     active_agents = source_agents_by_slug().get(active_slug, set())
 
@@ -195,6 +203,8 @@ def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
             dataset_progress=dataset_progress,
             stage=stage,
             remote_status=remote_status,
+            train_ready_rows=train_ready_rows,
+            local_progress=local_progress,
         )
         progress_percent = infer_progress_percent(
             agent=agent,
@@ -204,6 +214,7 @@ def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
             train_ready_rows=train_ready_rows,
             remote_status=remote_status,
             dataset_progress=dataset_progress,
+            local_progress=local_progress,
         )
         experts.append(
             ExpertSnapshot(
@@ -237,19 +248,50 @@ def load_dashboard_snapshot(base_dir: str | Path) -> dict[str, Any]:
                 stage=stage,
                 dataset_covered_count=int(dataset_progress["covered"]),
                 dataset_expected_count=int(dataset_progress["expected"]),
+                remaining_dataset_count=max(int(dataset_progress["expected"]) - int(dataset_progress["covered"]), 0),
                 dataset_progress_text=f"{dataset_progress['covered']}/{dataset_progress['expected']} datasets",
                 status_detail=status_detail,
-                progress_reason=infer_progress_reason(agent=agent, is_active=is_active, stage=stage),
+                progress_reason=infer_progress_reason(
+                    agent=agent,
+                    is_active=is_active,
+                    stage=stage,
+                    local_progress=local_progress,
+                ),
             )
         )
+
+    trainable_experts = [expert for expert in experts if expert.stage != "tool_only"]
+    total_dataset_covered = sum(expert.dataset_covered_count for expert in trainable_experts)
+    total_dataset_expected = sum(expert.dataset_expected_count for expert in trainable_experts)
+    total_train_ready_rows = sum(expert.train_ready_rows for expert in trainable_experts)
+    overall_progress_percent = (
+        int(round((total_dataset_covered / max(total_dataset_expected, 1)) * 100))
+        if trainable_experts
+        else 0
+    )
 
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "continuous_status": continuous_status,
         "remote_status": remote_status,
+        "local_progress": local_progress,
+        "total_dataset_covered": total_dataset_covered,
+        "total_dataset_expected": total_dataset_expected,
+        "total_train_ready_rows": total_train_ready_rows,
+        "overall_progress_percent": overall_progress_percent,
         "experts": experts,
         "total_pages": max(1, (len(experts) + PAGE_SIZE - 1) // PAGE_SIZE),
     }
+
+
+def normalize_local_cycle_progress(progress: dict[str, Any], continuous_status: dict[str, Any]) -> dict[str, Any]:
+    if not progress:
+        return {}
+    current_run_id = str(continuous_status.get("current_run_id", "") or "")
+    progress_run_id = str(progress.get("run_id", "") or "")
+    if current_run_id and progress_run_id and current_run_id != progress_run_id:
+        return {}
+    return progress
 
 
 def count_agent_rows(base_dir: Path, agent: str) -> int:
@@ -353,6 +395,8 @@ def infer_status_detail(
     dataset_progress: dict[str, int],
     stage: str,
     remote_status: dict[str, Any],
+    train_ready_rows: int,
+    local_progress: dict[str, Any],
 ) -> str:
     if status_kind == RED:
         return "최근 실행 실패"
@@ -362,10 +406,13 @@ def infer_status_detail(
         phase = str(remote_status.get("current_phase", "") or "")
         return PHASE_LABELS.get(phase, phase or "원격 실행 중")
     if is_active:
-        return dataset or "로컬 학습 실행 중"
+        local_detail = local_cycle_step_text(local_progress)
+        if local_detail:
+            return local_detail
+        return f"{dataset or '로컬 학습 실행 중'} · {train_ready_rows} rows"
     if stage == "tool_only":
         return "도구 준비"
-    return f"{dataset_progress['covered']}/{dataset_progress['expected']} 데이터셋"
+    return f"{dataset_progress['covered']}/{dataset_progress['expected']} 데이터셋 · {train_ready_rows} rows"
 
 
 def infer_progress_percent(
@@ -377,39 +424,61 @@ def infer_progress_percent(
     train_ready_rows: int,
     remote_status: dict[str, Any],
     dataset_progress: dict[str, int],
+    local_progress: dict[str, Any],
 ) -> int:
     if stage == "tool_only":
         return 0
     if agent == "raven" and is_active:
         phase = str(remote_status.get("current_phase", "") or "")
         return REMOTE_PHASE_PROGRESS.get(phase, 65)
+    if is_active and local_progress:
+        return max(3, min(int(local_progress.get("progress_percent", 0) or 0), 99))
 
-    row_progress = min(train_ready_rows / 100.0, 1.0)
+    row_target = max(dataset_progress["expected"] * 20, 40)
+    row_progress = min(train_ready_rows / row_target, 1.0)
     dataset_ratio = dataset_progress["covered"] / max(dataset_progress["expected"], 1)
-    progress = int(round(max(row_progress * 0.35, dataset_ratio) * 90))
+    progress = int(round((dataset_ratio * 0.75 + row_progress * 0.25) * 100))
     if latest is not None and latest.success and dataset_progress["covered"] >= dataset_progress["expected"]:
-        progress = max(progress, 100)
-    elif latest is not None and latest.success:
-        progress = max(progress, 60)
+        return 100
     elif is_active:
-        progress = max(progress, 72)
+        progress = max(progress, 12)
     elif latest is not None and not latest.success:
-        progress = max(progress, 35 if train_ready_rows > 0 else 10)
-    elif train_ready_rows > 0:
-        progress = max(progress, 45)
-    else:
+        progress = max(progress, 8 if train_ready_rows > 0 else 3)
+    elif train_ready_rows > 0 or dataset_progress["covered"] > 0:
         progress = max(progress, 5)
-    return min(progress, 100)
+    return min(progress, 99)
 
 
-def infer_progress_reason(*, agent: str, is_active: bool, stage: str) -> str:
+def infer_progress_reason(*, agent: str, is_active: bool, stage: str, local_progress: dict[str, Any]) -> str:
     if stage == "tool_only":
         return "학습 퍼센트 없음"
     if is_active and agent == "raven":
         return "원격 사이클 단계 기준"
+    if is_active and local_progress:
+        return "현재 로컬 단계 기준"
     if is_active:
         return "현재 로컬 학습 기준"
-    return "데이터셋 커버리지 기준"
+    return "데이터셋/rows 기준"
+
+
+def local_cycle_step_text(progress: dict[str, Any]) -> str:
+    if not progress:
+        return ""
+    total_steps = max(int(progress.get("total_steps", 0) or 0), 0)
+    completed_steps = max(int(progress.get("completed_steps", 0) or 0), 0)
+    current_step_index = max(int(progress.get("current_step_index", 0) or 0), 0)
+    iteration = max(int(progress.get("iteration", 0) or 0), 0)
+    iterations_total = max(int(progress.get("iterations_total", 0) or 0), 0)
+    label = str(progress.get("current_step_label", "") or "").strip()
+    status = str(progress.get("status", "") or "").lower()
+    iteration_text = f"{iteration}/{iterations_total} 반복 · " if iterations_total else ""
+    if total_steps <= 0:
+        return f"{iteration_text}단계 정보 없음".strip()
+    if status == "complete":
+        return f"{iteration_text}{completed_steps}/{total_steps} 단계 완료".strip()
+    if status == "error":
+        return f"{iteration_text}{current_step_index}/{total_steps} 단계 실패 · {label}".strip(" ·")
+    return f"{iteration_text}{current_step_index}/{total_steps} 단계 · {label}".strip(" ·")
 
 
 def infer_eta_text(
@@ -508,6 +577,12 @@ def overview_page(snapshot: dict[str, Any], page: int) -> dict[str, Any]:
     continuous = snapshot["continuous_status"]
     remote = snapshot["remote_status"]
     description = "\n\n".join(lines) if lines else "표시할 전문가가 없습니다."
+    total_dataset_text = (
+        f"{snapshot['total_dataset_covered']}/{snapshot['total_dataset_expected']} datasets"
+        if snapshot["total_dataset_expected"]
+        else "0/0 datasets"
+    )
+    local_progress_text = local_cycle_step_text(snapshot.get("local_progress", {})) or "-"
     return {
         "title": f"Mystic 학습 개요 ({current_page + 1}/{total_pages})",
         "description": description,
@@ -535,8 +610,13 @@ def overview_page(snapshot: dict[str, Any], page: int) -> dict[str, Any]:
                 "inline": True,
             },
             {
-                "name": "표시 규칙",
-                "value": "🟡 학습 중/대기\n🟢 완료/도구\n🔴 실패/오류\n⚪ 오프라인/점검",
+                "name": "전체 진행",
+                "value": (
+                    f"전문가 기준: `{total_dataset_text}`\n"
+                    f"rows: `{snapshot['total_train_ready_rows']}`\n"
+                    f"진행률: `{snapshot['overall_progress_percent']}%`\n"
+                    f"현재 단계: `{local_progress_text}`"
+                ),
                 "inline": True,
             },
         ],
@@ -569,6 +649,7 @@ def expert_detail_page(snapshot: dict[str, Any], agent: str) -> dict[str, Any]:
             {"name": "모델", "value": expert.model or "-", "inline": True},
             {"name": "어댑터", "value": expert.adapter or "-", "inline": True},
             {"name": "총 학습 데이터셋", "value": f"{expert.dataset_covered_count}개", "inline": True},
+            {"name": "남은 데이터셋", "value": f"{expert.remaining_dataset_count}개", "inline": True},
             {"name": "train_ready rows", "value": str(expert.train_ready_rows), "inline": True},
             {"name": "데이터셋 진행", "value": expert.dataset_progress_text, "inline": True},
             {"name": "성공 / 실패", "value": f"{expert.success_count} / {expert.failure_count}", "inline": True},

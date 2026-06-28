@@ -38,6 +38,10 @@ def continuous_status_html_path(base_dir: str | Path) -> Path:
     return Path(base_dir) / "reports" / "continuous_training_status.html"
 
 
+def continuous_progress_path(base_dir: str | Path) -> Path:
+    return Path(base_dir) / "state" / "continuous_training_progress.json"
+
+
 def specialist_history_log_path(base_dir: str | Path) -> Path:
     return Path(base_dir) / "logs" / "specialist_training_history.jsonl"
 
@@ -91,6 +95,12 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_json_if_exists(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    return read_json(path)
 
 
 def append_jsonl(path: Path, payload: dict[str, Any]) -> None:

@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from mystic.execution_history import write_execution_history_outputs
+from mystic.training.continuous import continuous_progress_path
 
 
 DEFAULT_SLUGS = [
@@ -102,6 +103,12 @@ def write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def write_progress(base_dir: Path, payload: dict[str, Any]) -> None:
+    path = continuous_progress_path(base_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+
+
 def decode_process_stream(value: Any) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
@@ -129,6 +136,63 @@ def has_cached_hf_rows(base_dir: Path, slug: str) -> bool:
         return True
     snapshot_manifest = base_dir / "raw" / slug / "snapshot_manifest.json"
     return snapshot_manifest.exists()
+
+
+def step_label(command: list[str]) -> str:
+    if any("download_numina_sample.py" in part for part in command):
+        return "Numina 샘플 다운로드"
+    if any("download_hf_samples.py" in part for part in command):
+        slug = ""
+        if "--slugs" in command:
+            slug_index = command.index("--slugs") + 1
+            if slug_index < len(command):
+                slug = str(command[slug_index])
+        return f"Hugging Face 샘플 다운로드 · {slug}" if slug else "Hugging Face 샘플 다운로드"
+    if any("prepare_public_train_ready.py" in part for part in command):
+        return "공개 train_ready 생성"
+    if any("run_all_specialists.py" in part for part in command):
+        return "전문가 학습 배치 실행"
+    return "학습 단계 실행"
+
+
+def build_progress_payload(
+    *,
+    run_id: str,
+    run_label: str,
+    iteration: int,
+    iterations_total: int,
+    total_steps: int,
+    completed_steps: int,
+    current_step_index: int,
+    current_step_label: str,
+    status: str,
+    started_at: str,
+    effective_numina_limit: int,
+    effective_hf_rows: int,
+    effective_public_rows: int,
+    last_error: str = "",
+    current_step_started_at: str = "",
+) -> dict[str, Any]:
+    progress_percent = 100 if total_steps <= 0 else int(round((completed_steps / total_steps) * 100))
+    return {
+        "run_id": run_id,
+        "run_label": run_label,
+        "status": status,
+        "started_at": started_at,
+        "updated_at": now_iso(),
+        "iteration": iteration,
+        "iterations_total": iterations_total,
+        "total_steps": total_steps,
+        "completed_steps": completed_steps,
+        "current_step_index": current_step_index,
+        "current_step_label": current_step_label,
+        "current_step_started_at": current_step_started_at,
+        "progress_percent": progress_percent,
+        "effective_numina_limit": effective_numina_limit,
+        "effective_hf_rows": effective_hf_rows,
+        "effective_public_max_rows_per_agent": effective_public_rows,
+        "last_error": last_error,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -243,7 +307,49 @@ def main(argv: list[str] | None = None) -> int:
             ]
         )
 
+        total_steps = len(iteration_payload["skipped_steps"]) + len(commands)
+        completed_steps = len(iteration_payload["skipped_steps"])
+        write_progress(
+            base_dir,
+            build_progress_payload(
+                run_id=args.run_id,
+                run_label=args.run_label or args.run_id,
+                iteration=iteration,
+                iterations_total=args.iterations,
+                total_steps=total_steps,
+                completed_steps=completed_steps,
+                current_step_index=completed_steps + 1 if completed_steps < total_steps else total_steps,
+                current_step_label="대기 중" if total_steps else "실행할 단계 없음",
+                status="running",
+                started_at=started_at,
+                effective_numina_limit=effective_numina_limit,
+                effective_hf_rows=effective_hf_rows,
+                effective_public_rows=effective_public_rows,
+            ),
+        )
+
         for step_index, command in enumerate(commands, start=1):
+            step_started_at = now_iso()
+            current_step_index = len(iteration_payload["skipped_steps"]) + step_index
+            write_progress(
+                base_dir,
+                build_progress_payload(
+                    run_id=args.run_id,
+                    run_label=args.run_label or args.run_id,
+                    iteration=iteration,
+                    iterations_total=args.iterations,
+                    total_steps=total_steps,
+                    completed_steps=completed_steps,
+                    current_step_index=current_step_index,
+                    current_step_label=step_label(command),
+                    status="running",
+                    started_at=started_at,
+                    effective_numina_limit=effective_numina_limit,
+                    effective_hf_rows=effective_hf_rows,
+                    effective_public_rows=effective_public_rows,
+                    current_step_started_at=step_started_at,
+                ),
+            )
             stdout_log = run_dir / "logs" / f"iteration_{iteration:03d}_step_{step_index:02d}.stdout.log"
             stderr_log = run_dir / "logs" / f"iteration_{iteration:03d}_step_{step_index:02d}.stderr.log"
             try:
@@ -264,6 +370,26 @@ def main(argv: list[str] | None = None) -> int:
                 }
                 iteration_payload["steps"].append(step_payload)
                 write_json(run_dir / f"iteration_{iteration:03d}.json", iteration_payload)
+                write_progress(
+                    base_dir,
+                    build_progress_payload(
+                        run_id=args.run_id,
+                        run_label=args.run_label or args.run_id,
+                        iteration=iteration,
+                        iterations_total=args.iterations,
+                        total_steps=total_steps,
+                        completed_steps=completed_steps,
+                        current_step_index=current_step_index,
+                        current_step_label=step_label(command),
+                        status="error",
+                        started_at=started_at,
+                        effective_numina_limit=effective_numina_limit,
+                        effective_hf_rows=effective_hf_rows,
+                        effective_public_rows=effective_public_rows,
+                        last_error=repr(exc),
+                        current_step_started_at=step_started_at,
+                    ),
+                )
                 if not args.continue_on_error:
                     summary["iterations"].append(iteration_payload)
                     summary["aborted_at"] = now_iso()
@@ -284,11 +410,49 @@ def main(argv: list[str] | None = None) -> int:
             }
             iteration_payload["steps"].append(step_payload)
             write_json(run_dir / f"iteration_{iteration:03d}.json", iteration_payload)
+            completed_steps += 1
+            write_progress(
+                base_dir,
+                build_progress_payload(
+                    run_id=args.run_id,
+                    run_label=args.run_label or args.run_id,
+                    iteration=iteration,
+                    iterations_total=args.iterations,
+                    total_steps=total_steps,
+                    completed_steps=completed_steps,
+                    current_step_index=min(completed_steps + 1, total_steps),
+                    current_step_label=step_label(command),
+                    status="running" if completed_steps < total_steps else "complete",
+                    started_at=started_at,
+                    effective_numina_limit=effective_numina_limit,
+                    effective_hf_rows=effective_hf_rows,
+                    effective_public_rows=effective_public_rows,
+                    current_step_started_at=step_started_at,
+                ),
+            )
 
         iteration_payload["finished_at"] = now_iso()
         summary["iterations"].append(iteration_payload)
         summary["history_outputs"] = write_execution_history_outputs(base_dir)
         write_json(run_dir / "summary.json", summary)
+        write_progress(
+            base_dir,
+            build_progress_payload(
+                run_id=args.run_id,
+                run_label=args.run_label or args.run_id,
+                iteration=iteration,
+                iterations_total=args.iterations,
+                total_steps=total_steps,
+                completed_steps=total_steps,
+                current_step_index=total_steps,
+                current_step_label="반복 완료",
+                status="complete",
+                started_at=started_at,
+                effective_numina_limit=effective_numina_limit,
+                effective_hf_rows=effective_hf_rows,
+                effective_public_rows=effective_public_rows,
+            ),
+        )
 
         if iteration < args.iterations and args.sleep_seconds > 0:
             time.sleep(args.sleep_seconds)
