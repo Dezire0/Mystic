@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+import shutil
+
 try:
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import HTMLResponse, RedirectResponse
@@ -23,8 +28,6 @@ from mystic.app.pages import (
 from mystic.app.components import ProviderAuthCard
 from mystic.mcp.tools import MysticToolbox
 from mystic.core.orchestrator import MysticOrchestrator
-from pathlib import Path
-import json
 
 
 def create_app(
@@ -37,7 +40,8 @@ def create_app(
         raise RuntimeError("fastapi is not installed; install mystic[api] to use the API")
 
     app = FastAPI(title="Mystic API", version="0.1.0")
-    root_path = Path(root_path or Path(__file__).resolve().parents[2])
+    source_root = Path(root_path or Path(__file__).resolve().parents[2])
+    root_path = _resolve_runtime_root(source_root)
     orchestrator = orchestrator or MysticOrchestrator(root_path=root_path)
     toolbox = toolbox or MysticToolbox(root_path=root_path)
 
@@ -191,6 +195,24 @@ def _participant_label(model_id: str) -> str:
         "claude_cli": "Claude CLI",
     }
     return labels.get(model_id, model_id)
+
+
+def _resolve_runtime_root(source_root: Path) -> Path:
+    if not os.getenv("VERCEL"):
+        return source_root
+
+    runtime_root = Path(os.getenv("MYSTIC_RUNTIME_ROOT", "/tmp/mystic_runtime"))
+    shutil.copytree(source_root / "configs", runtime_root / "configs", dirs_exist_ok=True)
+    if (source_root / "mystic_data").exists():
+        shutil.copytree(source_root / "mystic_data", runtime_root / "mystic_data", dirs_exist_ok=True)
+    else:
+        (runtime_root / "mystic_data").mkdir(parents=True, exist_ok=True)
+
+    data_root = runtime_root / "data"
+    data_root.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("MYSTIC_DATA_DIR", str(data_root))
+    os.environ.setdefault("MYSTIC_DB_PATH", str(data_root / "mystic.sqlite3"))
+    return runtime_root
 
 
 def _load_json(path: Path) -> dict:

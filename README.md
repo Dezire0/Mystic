@@ -87,6 +87,21 @@ Use the existing Python 3.11 environment in this repo:
 .venv-training/bin/python scripts/download_numina_sample.py --limit 100
 ```
 
+## Deployment
+
+Mystic's web UX is deployable on Vercel as a Python FastAPI app.
+
+- Vercel uses the root [main.py](/Users/JYH/Documents/Mystic/main.py) entrypoint, which re-exports `mystic.app.main:app`.
+- The repo pins the deployment runtime with [.python-version](/Users/JYH/Documents/Mystic/.python-version).
+- `fastapi` is installed as a base dependency; `uvicorn` remains a local dev extra.
+
+For local web serving:
+
+```bash
+python -m pip install -e '.[api]'
+uvicorn mystic.app.main:app --host 127.0.0.1 --port 8765
+```
+
 ## Discord Bot
 
 Install the Discord bot dependency:
