@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import importlib.util
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from scripts.run_discord_bot import is_dm_message, normalize_message_question, progress_message_chunks, stage_title
+HAS_DISCORD = importlib.util.find_spec("discord") is not None
+
+if HAS_DISCORD:
+    from scripts.run_discord_bot import is_dm_message, normalize_message_question, progress_message_chunks, stage_title
+else:  # pragma: no cover - import is intentionally skipped without the optional dependency
+    is_dm_message = normalize_message_question = progress_message_chunks = stage_title = None
 
 
+@unittest.skipUnless(HAS_DISCORD, "discord.py is optional for this repository's core test suite.")
 class DiscordBotMessageTests(unittest.TestCase):
     def test_stage_title_maps_new_multi_critic_and_debate_stages(self):
         self.assertEqual(stage_title("planning_complete"), "3. Core 초기 계획 완료")

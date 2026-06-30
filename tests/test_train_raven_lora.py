@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import tempfile
 import unittest
@@ -9,6 +10,8 @@ from unittest.mock import patch
 from mystic.raven_training import load_jsonl
 from scripts.train_raven_lora import main as train_main
 from scripts.train_raven_lora import qlora_support_status, tokenize_rows
+
+HAS_TRANSFORMERS = importlib.util.find_spec("transformers") is not None
 
 
 class _FakeTokenizer:
@@ -72,6 +75,7 @@ class TrainRavenLoraTests(unittest.TestCase):
         self.assertEqual(len(tokenized), 1)
         self.assertGreaterEqual(lengths["avg"], 1.0)
 
+    @unittest.skipUnless(HAS_TRANSFORMERS, "transformers is optional unless running Raven training runtime tests.")
     def test_dry_run_writes_training_log_and_snapshot(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
