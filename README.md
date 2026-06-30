@@ -476,6 +476,12 @@ Show current local cycle state:
 
 For free GPU automation, Mystic now supports a Kaggle CLI flow inside [scripts/run_mystic_cycle.py](/Users/JYH/Documents/Mystic/scripts/run_mystic_cycle.py).
 
+Before starting a new Raven training run from Research Table data, check whether the local dataset, manifest, split files, and Kaggle package inputs are ready:
+
+```bash
+python scripts/check_raven_training_readiness.py --root-path /Users/JYH/Documents/Mystic
+```
+
 Install the Kaggle CLI and place credentials at `~/.kaggle/kaggle.json` or set `KAGGLE_USERNAME` and `KAGGLE_KEY`:
 
 ```bash
@@ -703,3 +709,9 @@ By default these services run under `/usr/bin/caffeinate -i -s` so macOS idle/sy
 ```bash
 python -m unittest discover -s tests
 ```
+
+Optional dependency behavior:
+
+- tests that exercise the Discord bot runtime skip when `discord.py` is not installed
+- tests that exercise the real Transformers-backed Raven training runtime skip when `transformers` is not installed
+- core JSONL, Research Table, MCP, router, and cycle tests still run normally without those optional packages
