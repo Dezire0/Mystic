@@ -1,0 +1,86 @@
+models:
+  local_prime:
+    provider: ollama
+    model: deepseek-r1-distill-14b
+    role_defaults:
+      - draft
+      - revise
+  local_qwen:
+    provider: ollama
+    model: qwen3-14b
+    role_defaults:
+      - draft
+      - summarize
+  local_forge:
+    provider: ollama
+    model: qwen3-coder
+    role_defaults:
+      - draft
+      - revise
+  local_raven:
+    provider: local_adapter
+    base_model: Qwen/Qwen2.5-0.5B-Instruct
+    adapter_path: mystic_data/adapters/raven_lora_v0
+    role_defaults:
+      - critique
+  local_report:
+    provider: ollama
+    model: qwen3-14b
+    role_defaults:
+      - summarize
+  gemini_cli:
+    provider: cli
+    command: gemini
+    auth: google_login
+    role_defaults:
+      - draft
+      - critique
+      - revise
+  claude_cli:
+    provider: cli
+    command: claude
+    auth: claude_login
+    role_defaults:
+      - critique
+      - revise
+      - judge
+  openai_api:
+    provider: api
+    api_provider: openai
+    model: gpt-4o-mini
+    api_key_env: OPENAI_API_KEY
+    enabled: false
+    role_defaults:
+      - judge
+      - summarize
+  anthropic_api:
+    provider: api
+    api_provider: anthropic
+    model: claude-3-5-sonnet-latest
+    api_key_env: ANTHROPIC_API_KEY
+    enabled: false
+    role_defaults:
+      - critique
+      - judge
+  gemini_api:
+    provider: api
+    api_provider: gemini
+    model: gemini-2.5-pro
+    api_key_env: GEMINI_API_KEY
+    enabled: false
+    role_defaults:
+      - draft
+      - critique
+      - summarize
+policy:
+  local_first: true
+  api_fallback_enabled: false
+  require_confirmation_for_api: true
+  prefer_login_cli: true
+  max_models_per_compare: 3
+  max_debate_rounds: 3
+  max_turns_per_debate: 12
+  timeout_per_model_seconds: 120
+  max_output_chars_per_model: 6000
+  save_full_outputs: true
+  return_summaries: true

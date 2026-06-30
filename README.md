@@ -1,16 +1,16 @@
 # Mystic v3
 
-Mystic v3 reinjects the trained Raven adapter into the live JSONL research loop and adds base-vs-adapter comparison plus promotion logic.
+Mystic v3 reinjects the trained Raven adapter into the live JSONL research loop, adds base-vs-adapter comparison plus promotion logic, and now exposes a local Research Table / debate UX through the FastAPI app and MCP server.
 
 It keeps the design intentionally narrow:
 
 - local folders under `mystic_data/`
 - append-only JSONL storage
 - resumable processing through `mystic_data/state/processed_ids.jsonl`
-- no frontend
+- no separate JS frontend bundle
 - no PostgreSQL
 - no vector DB
-- no web dashboard
+- no standalone web dashboard service outside the FastAPI app
 - no multi-agent orchestration yet
 
 ## Files
@@ -86,6 +86,74 @@ Use the existing Python 3.11 environment in this repo:
 .venv-training/bin/python scripts/setup_mystic_data.py
 .venv-training/bin/python scripts/download_numina_sample.py --limit 100
 ```
+
+## Deployment
+
+Mystic's web UX is deployable on Vercel as a Python FastAPI app.
+
+- Vercel uses the root [main.py](/Users/JYH/Documents/Mystic/main.py) entrypoint, which re-exports `mystic.app.main:app`.
+- The repo pins the deployment runtime with [.python-version](/Users/JYH/Documents/Mystic/.python-version).
+- `fastapi` is installed as a base dependency; `uvicorn` remains a local dev extra.
+
+For local web serving:
+
+```bash
+python -m pip install -e '.[api]'
+uvicorn mystic.app.main:app --host 127.0.0.1 --port 8765
+```
+
+## Persistent Local Service
+
+For always-on local use without serverless execution limits, run the FastAPI app under `launchd` on macOS:
+
+```bash
+python scripts/manage_mystic_web_service.py install --host 127.0.0.1 --port 8765
+python scripts/manage_mystic_web_service.py status --host 127.0.0.1 --port 8765
+```
+
+This keeps the web app running after terminal exit and reboot. It also exposes:
+
+- `http://127.0.0.1:8765/health` for local health checks
+- `http://127.0.0.1:8765/mcp` for persistent HTTP access to Mystic MCP JSON-RPC requests
+
+## Fixed Public Endpoint
+
+For a stable public URL in front of the always-on local service, this repo also supports:
+
+- a Cloudflare Worker on `workers.dev` as the fixed public hostname
+- a launchd-managed `cloudflared` quick tunnel that keeps the current tunnel origin published into a GitHub Gist
+
+Install the public tunnel service with:
+
+```bash
+python scripts/manage_mystic_public_tunnel_service.py install \
+  --gist-id 778759ccca8f7d9a54c1f98662b6a9ec \
+  --public-url https://mystic.dexproject.workers.dev
+
+python scripts/manage_mystic_public_tunnel_service.py status \
+  --gist-id 778759ccca8f7d9a54c1f98662b6a9ec \
+  --public-url https://mystic.dexproject.workers.dev
+```
+
+The fixed public endpoints are expected to be:
+
+- `https://mystic.dexproject.workers.dev/health`
+- `https://mystic.dexproject.workers.dev/mcp`
+
+`/mcp` is a JSON-RPC endpoint. Plain browser `GET` requests are not the protocol and may be rejected. Verify the public ingress with MCP `POST` requests instead:
+
+```bash
+python scripts/test_mystic_mcp_client.py --base-url http://127.0.0.1:8765 --scenario ping
+python scripts/test_mystic_mcp_client.py --base-url http://127.0.0.1:8765 --scenario public-tool-suite
+```
+
+The first public MCP tool layer exposes:
+
+- `mystic_status`
+- `mystic_verify_answer`
+- `mystic_call_model`
+- `mystic_compare_models`
+- `mystic_run_research_table`
 
 ## Discord Bot
 
@@ -404,9 +472,70 @@ Show current local cycle state:
   --limit 5
 ```
 
+## Raven vNext from Research Table Data
+
+Raven vNext combines verifier examples exported from Research Table sessions with deterministic adversarial referee cases. The default local path does not require API keys; Gemini CLI and Claude CLI participants are optional.
+
+Run Research Table sessions, then export their Raven rows:
+
+```bash
+python scripts/export_research_table_datasets.py \
+  --root-path /Users/JYH/Documents/Mystic
+```
+
+Generate the curated adversarial seed dataset:
+
+```bash
+python scripts/generate_raven_adversarial_seeds.py \
+  --root-path /Users/JYH/Documents/Mystic \
+  --allow-overwrite
+```
+
+Prepare the combined Raven chat-format dataset:
+
+```bash
+python scripts/prepare_research_table_training.py \
+  --root-path /Users/JYH/Documents/Mystic \
+  --target raven \
+  --include-adversarial-seeds
+```
+
+Package the same combined train/eval data for the existing cycle:
+
+```bash
+python scripts/run_mystic_cycle.py prepare \
+  --cycle-id raven_vnext \
+  --dataset-source research_table \
+  --target raven \
+  --include-adversarial-seeds
+```
+
+Check the resulting dataset, manifest, split files, and package contents:
+
+```bash
+python scripts/check_raven_training_readiness.py \
+  --root-path /Users/JYH/Documents/Mystic
+```
+
+The prepare command creates a Kaggle package and manual command file, but it does not submit or run Kaggle. Upload and run that package manually. After downloading the trained adapter tarball, reinject it and run the fixed before/after evaluation:
+
+```bash
+python scripts/run_raven_vnext_eval.py \
+  --root-path /Users/JYH/Documents/Mystic \
+  --adapter-tar /path/to/raven_lora_vnext.tar.gz
+```
+
+Generated datasets, training reports, E2E output, metrics, and Kaggle packages under `mystic_data/` are ignored by git. A low `INVALID` row warning means Raven may over-accept weak or false proofs; regenerate the adversarial seeds and prepare with `--include-adversarial-seeds`.
+
 ## Kaggle Automation
 
 For free GPU automation, Mystic now supports a Kaggle CLI flow inside [scripts/run_mystic_cycle.py](/Users/JYH/Documents/Mystic/scripts/run_mystic_cycle.py).
+
+Before starting a new Raven training run from Research Table data, check whether the local dataset, manifest, split files, and Kaggle package inputs are ready:
+
+```bash
+python scripts/check_raven_training_readiness.py --root-path /Users/JYH/Documents/Mystic
+```
 
 Install the Kaggle CLI and place credentials at `~/.kaggle/kaggle.json` or set `KAGGLE_USERNAME` and `KAGGLE_KEY`:
 
@@ -635,3 +764,9 @@ By default these services run under `/usr/bin/caffeinate -i -s` so macOS idle/sy
 ```bash
 python -m unittest discover -s tests
 ```
+
+Optional dependency behavior:
+
+- tests that exercise the Discord bot runtime skip when `discord.py` is not installed
+- tests that exercise the real Transformers-backed Raven training runtime skip when `transformers` is not installed
+- core JSONL, Research Table, MCP, router, and cycle tests still run normally without those optional packages
