@@ -350,6 +350,8 @@ class RunMysticCycleTests(unittest.TestCase):
                 base_dir=str(base_dir),
                 package_out="",
                 run_prepare_data=False,
+                dataset_source="default",
+                target="raven",
                 limit=0,
                 train_limit=1000,
                 eval_limit=100,
@@ -373,12 +375,97 @@ class RunMysticCycleTests(unittest.TestCase):
             payload = json.loads((base_dir / "cycles" / "cycle_1" / "prepare_summary.json").read_text(encoding="utf-8"))
             self.assertEqual(payload["requested_split"]["train_limit"], 1000)
             self.assertEqual(payload["requested_split"]["eval_limit"], 100)
+            self.assertEqual(payload["dataset_source"], "default")
+
+    def test_run_prepare_supports_research_table_dataset_source(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            base_dir = repo_root / "mystic_data"
+            (repo_root / "scripts").mkdir()
+            (repo_root / "configs").mkdir()
+            (base_dir / "datasets" / "raven").mkdir(parents=True)
+            (base_dir / "train_ready").mkdir(parents=True)
+            (base_dir / "eval_holdout").mkdir(parents=True)
+            (base_dir / "metadata").mkdir(parents=True)
+            (repo_root / "scripts" / "mystic_loop.py").write_text("", encoding="utf-8")
+            (repo_root / "scripts" / "compare_raven_models.py").write_text("", encoding="utf-8")
+            (repo_root / "scripts" / "register_model.py").write_text("", encoding="utf-8")
+            (repo_root / "scripts" / "train_raven_lora.py").write_text("", encoding="utf-8")
+            (repo_root / "scripts" / "evaluate_raven_lora.py").write_text("", encoding="utf-8")
+            (repo_root / "configs" / "models.json").write_text("{}", encoding="utf-8")
+            (repo_root / "README.md").write_text("README", encoding="utf-8")
+            (repo_root / "requirements-training.txt").write_text("torch\n", encoding="utf-8")
+
+            args = argparse.Namespace(
+                cycle_id="cycle_rt",
+                base_dir=str(base_dir),
+                package_out="",
+                run_prepare_data=True,
+                dataset_source="research_table",
+                target="raven",
+                limit=0,
+                train_limit=10,
+                eval_limit=1,
+                base_model="Qwen/Qwen2.5-0.5B-Instruct",
+                adapter_path="mystic_data/adapters/raven_lora_v1",
+                learning_rate=0.00015,
+                epochs=1,
+                batch_size=1,
+                max_length=2048,
+            )
+
+            prepared_rows = [
+                {
+                    "sample_id": "rt-1",
+                    "problem": "p1",
+                    "proof_attempt": "proof1",
+                    "messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}, {"role": "assistant", "content": "{\"verdict\":\"INVALID\"}"}],
+                    "assistant_output": "{\"verdict\":\"INVALID\"}",
+                    "target_verdict": "INVALID",
+                },
+                {
+                    "sample_id": "rt-2",
+                    "problem": "p2",
+                    "proof_attempt": "proof2",
+                    "messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}, {"role": "assistant", "content": "{\"verdict\":\"VALID\"}"}],
+                    "assistant_output": "{\"verdict\":\"VALID\"}",
+                    "target_verdict": "VALID",
+                },
+            ]
+
+            def fake_run_command(command, *, cwd):
+                self.assertTrue(any(part.endswith("prepare_research_table_training.py") for part in command))
+                output_index = command.index("--output") + 1
+                prepared_path = Path(command[output_index])
+                prepared_path.parent.mkdir(parents=True, exist_ok=True)
+                prepared_path.write_text("\n".join(json.dumps(row) for row in prepared_rows) + "\n", encoding="utf-8")
+                return (
+                    {"rows_written": 2, "output_path": str(prepared_path)},
+                    json.dumps({"rows_written": 2, "output_path": str(prepared_path)}),
+                )
+
+            with patch("scripts.run_mystic_cycle.ROOT", repo_root), patch(
+                "scripts.run_mystic_cycle.run_command",
+                side_effect=fake_run_command,
+            ):
+                result = run_prepare(args)
+
+            self.assertEqual(result, 0)
+            summary = json.loads((base_dir / "cycles" / "cycle_rt" / "prepare_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["dataset_source"], "research_table")
+            self.assertEqual(summary["target_agent"], "raven")
+            self.assertEqual(summary["training_split_payload"]["prepared_rows"], 2)
+            self.assertEqual(summary["export_payload"]["rows_written"], 2)
+            self.assertTrue((base_dir / "train_ready" / "raven_train.jsonl").exists())
+            self.assertTrue((base_dir / "eval_holdout" / "raven_eval.jsonl").exists())
 
     def test_run_full_chains_prepare_submit_poll_download_and_finish(self):
         args = argparse.Namespace(
             cycle_id="cycle_1",
             base_dir="/tmp/mystic_data",
             run_prepare_data=True,
+            dataset_source="default",
+            target="raven",
             limit=500,
             train_limit=1000,
             eval_limit=100,

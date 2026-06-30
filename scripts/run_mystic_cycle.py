@@ -16,6 +16,8 @@ import tempfile
 import time
 from typing import Any
 
+from mystic.raven_training import split_train_eval, write_jsonl
+
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON_BIN = sys.executable
 
@@ -190,6 +192,33 @@ def verify_export_file(base_dir: Path) -> Path:
     if not export_file.exists() or export_file.stat().st_size == 0:
         raise FileNotFoundError(f"Export file missing or empty: {export_file}")
     return export_file
+
+
+def verify_prepared_dataset_file(path: Path) -> Path:
+    if not path.exists() or path.stat().st_size == 0:
+        raise FileNotFoundError(f"Prepared dataset missing or empty: {path}")
+    return path
+
+
+def materialize_prepared_training_split(
+    *,
+    prepared_path: Path,
+    train_path: Path,
+    eval_path: Path,
+    eval_ratio: float,
+) -> dict[str, Any]:
+    rows = read_jsonl(prepared_path)
+    train_rows, eval_rows = split_train_eval(rows, eval_ratio)
+    write_jsonl(train_path, train_rows)
+    write_jsonl(eval_path, eval_rows)
+    return {
+        "prepared_rows": len(rows),
+        "train_rows": len(train_rows),
+        "eval_rows": len(eval_rows),
+        "prepared_path": str(prepared_path),
+        "train_path": str(train_path),
+        "eval_path": str(eval_path),
+    }
 
 
 def create_kaggle_package(root_dir: Path, output_tar: Path) -> Path:
@@ -838,6 +867,8 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--base-dir", default=str(ROOT / "mystic_data"))
     prepare.add_argument("--package-out", default="")
     prepare.add_argument("--run-prepare-data", action="store_true", help="Run prepare_raven_training_data.py before packaging.")
+    prepare.add_argument("--dataset-source", default="default", choices=["default", "research_table"])
+    prepare.add_argument("--target", default="raven", choices=["raven"])
     prepare.add_argument("--limit", type=int, default=0, help="Optional total row limit for prepare_raven_training_data.py.")
     prepare.add_argument("--train-limit", type=int, default=0, help="Requested train row target for larger cycles.")
     prepare.add_argument("--eval-limit", type=int, default=0, help="Requested eval row target for larger cycles.")
@@ -892,6 +923,8 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--cycle-id", required=True)
     full.add_argument("--base-dir", default=str(ROOT / "mystic_data"))
     full.add_argument("--run-prepare-data", action="store_true")
+    full.add_argument("--dataset-source", default="default", choices=["default", "research_table"])
+    full.add_argument("--target", default="raven", choices=["raven"])
     full.add_argument("--limit", type=int, default=0)
     full.add_argument("--train-limit", type=int, default=0)
     full.add_argument("--eval-limit", type=int, default=0)
@@ -927,15 +960,48 @@ def run_prepare(args: argparse.Namespace) -> int:
     cycle_root = cycle_dir(base_dir, args.cycle_id)
     cycle_root.mkdir(parents=True, exist_ok=True)
     targets = resolve_prepare_targets(limit=args.limit, train_limit=args.train_limit, eval_limit=args.eval_limit)
+    dataset_source = str(getattr(args, "dataset_source", "default") or "default")
+    target_agent = str(getattr(args, "target", "raven") or "raven")
 
-    export_command = [PYTHON_BIN, "scripts/export_raven_lora.py", "--base-dir", str(base_dir)]
-    if int(targets["total_limit"]) > 0:
-        export_command.extend(["--target-rows", str(int(targets["total_limit"]))])
-    export_payload, export_stdout = run_command(export_command, cwd=ROOT)
+    export_payload: dict[str, Any] | None = None
+    export_stdout = ""
+    prepared_dataset_path: Path | None = None
+    split_payload: dict[str, Any] | None = None
+
+    if dataset_source == "research_table":
+        if target_agent != "raven":
+            raise ValueError(f"Unsupported target for research_table dataset source: {target_agent}")
+        if args.run_prepare_data:
+            command = [
+                PYTHON_BIN,
+                "scripts/prepare_research_table_training.py",
+                "--target",
+                target_agent,
+                "--input",
+                str(base_dir / "datasets" / "raven" / "research_table_raven.jsonl"),
+                "--output",
+                str(base_dir / "training" / "raven" / "research_table_train.jsonl"),
+            ]
+            if int(targets["total_limit"]) > 0:
+                command.extend(["--max-rows", str(int(targets["total_limit"]))])
+            export_payload, export_stdout = run_command(command, cwd=ROOT)
+        prepared_dataset_path = verify_prepared_dataset_file(base_dir / "training" / "raven" / "research_table_train.jsonl")
+        split_payload = materialize_prepared_training_split(
+            prepared_path=prepared_dataset_path,
+            train_path=base_dir / "train_ready" / "raven_train.jsonl",
+            eval_path=base_dir / "eval_holdout" / "raven_eval.jsonl",
+            eval_ratio=float(targets["eval_ratio"]),
+        )
+    else:
+        export_command = [PYTHON_BIN, "scripts/export_raven_lora.py", "--base-dir", str(base_dir)]
+        if int(targets["total_limit"]) > 0:
+            export_command.extend(["--target-rows", str(int(targets["total_limit"]))])
+        export_payload, export_stdout = run_command(export_command, cwd=ROOT)
+        prepared_dataset_path = verify_export_file(base_dir)
 
     prepare_payload: dict[str, Any] | None = None
     prepare_stdout = ""
-    if args.run_prepare_data:
+    if args.run_prepare_data and dataset_source == "default":
         command = [
             PYTHON_BIN,
             "scripts/prepare_raven_training_data.py",
@@ -952,7 +1018,6 @@ def run_prepare(args: argparse.Namespace) -> int:
             command.extend(["--limit", str(int(targets["total_limit"]))])
         prepare_payload, prepare_stdout = run_command(command, cwd=ROOT)
 
-    export_file = verify_export_file(base_dir)
     training_files = verify_training_eval_files(base_dir)
     package_out = Path(args.package_out) if args.package_out else ROOT / f"mystic_gpu_train_package_{args.cycle_id}.tar.gz"
     package_path = create_kaggle_package(ROOT, package_out)
@@ -975,10 +1040,12 @@ def run_prepare(args: argparse.Namespace) -> int:
         "cycle_id": args.cycle_id,
         "project_root": str(ROOT),
         "base_dir": str(base_dir),
+        "dataset_source": dataset_source,
+        "target_agent": target_agent,
         "base_model": args.base_model,
         "adapter_path": args.adapter_path,
         "requested_split": targets,
-        "export_file": str(export_file),
+        "prepared_dataset_file": str(prepared_dataset_path) if prepared_dataset_path else "",
         "training_files": training_files,
         "package_path": str(package_path),
         "kaggle_commands_path": str(kaggle_commands_path(base_dir, args.cycle_id)),
@@ -986,8 +1053,9 @@ def run_prepare(args: argparse.Namespace) -> int:
         "ran_prepare_training_data": args.run_prepare_data,
         "export_payload": export_payload,
         "prepare_payload": prepare_payload,
+        "training_split_payload": split_payload,
         "stdout": {
-            "export_raven_lora": export_stdout,
+            "dataset_prepare": export_stdout,
             "prepare_raven_training_data": prepare_stdout,
         },
     }
