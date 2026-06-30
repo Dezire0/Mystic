@@ -31,6 +31,8 @@ AUTH_ERROR_SNIPPETS = [
     "sign-in",
     "auth required",
     "reauth",
+    '"loggedin": false',
+    '"authmethod": "none"',
 ]
 
 
