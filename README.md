@@ -472,6 +472,61 @@ Show current local cycle state:
   --limit 5
 ```
 
+## Raven vNext from Research Table Data
+
+Raven vNext combines verifier examples exported from Research Table sessions with deterministic adversarial referee cases. The default local path does not require API keys; Gemini CLI and Claude CLI participants are optional.
+
+Run Research Table sessions, then export their Raven rows:
+
+```bash
+python scripts/export_research_table_datasets.py \
+  --root-path /Users/JYH/Documents/Mystic
+```
+
+Generate the curated adversarial seed dataset:
+
+```bash
+python scripts/generate_raven_adversarial_seeds.py \
+  --root-path /Users/JYH/Documents/Mystic \
+  --allow-overwrite
+```
+
+Prepare the combined Raven chat-format dataset:
+
+```bash
+python scripts/prepare_research_table_training.py \
+  --root-path /Users/JYH/Documents/Mystic \
+  --target raven \
+  --include-adversarial-seeds
+```
+
+Package the same combined train/eval data for the existing cycle:
+
+```bash
+python scripts/run_mystic_cycle.py prepare \
+  --cycle-id raven_vnext \
+  --dataset-source research_table \
+  --target raven \
+  --include-adversarial-seeds
+```
+
+Check the resulting dataset, manifest, split files, and package contents:
+
+```bash
+python scripts/check_raven_training_readiness.py \
+  --root-path /Users/JYH/Documents/Mystic
+```
+
+The prepare command creates a Kaggle package and manual command file, but it does not submit or run Kaggle. Upload and run that package manually. After downloading the trained adapter tarball, reinject it and run the fixed before/after evaluation:
+
+```bash
+python scripts/run_raven_vnext_eval.py \
+  --root-path /Users/JYH/Documents/Mystic \
+  --adapter-tar /path/to/raven_lora_vnext.tar.gz
+```
+
+Generated datasets, training reports, E2E output, metrics, and Kaggle packages under `mystic_data/` are ignored by git. A low `INVALID` row warning means Raven may over-accept weak or false proofs; regenerate the adversarial seeds and prepare with `--include-adversarial-seeds`.
+
 ## Kaggle Automation
 
 For free GPU automation, Mystic now supports a Kaggle CLI flow inside [scripts/run_mystic_cycle.py](/Users/JYH/Documents/Mystic/scripts/run_mystic_cycle.py).

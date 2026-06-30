@@ -459,6 +459,104 @@ class RunMysticCycleTests(unittest.TestCase):
             self.assertTrue((base_dir / "train_ready" / "raven_train.jsonl").exists())
             self.assertTrue((base_dir / "eval_holdout" / "raven_eval.jsonl").exists())
 
+    def test_run_prepare_packages_combined_research_table_and_adversarial_counts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            base_dir = repo_root / "mystic_data"
+            (repo_root / "scripts").mkdir()
+            (repo_root / "mystic").mkdir()
+            (repo_root / "configs").mkdir()
+            (base_dir / "datasets" / "raven").mkdir(parents=True)
+            (base_dir / "train_ready").mkdir(parents=True)
+            (base_dir / "eval_holdout").mkdir(parents=True)
+            (base_dir / "metadata").mkdir(parents=True)
+            for script_name in [
+                "mystic_loop.py",
+                "compare_raven_models.py",
+                "register_model.py",
+                "train_raven_lora.py",
+                "evaluate_raven_lora.py",
+            ]:
+                (repo_root / "scripts" / script_name).write_text("", encoding="utf-8")
+            (repo_root / "configs" / "models.json").write_text("{}", encoding="utf-8")
+            (repo_root / "README.md").write_text("README", encoding="utf-8")
+            (repo_root / "requirements-training.txt").write_text("torch\n", encoding="utf-8")
+            adversarial_path = base_dir / "datasets" / "raven" / "adversarial_seed_raven.jsonl"
+            adversarial_path.write_text('{"agent":"raven"}\n', encoding="utf-8")
+
+            args = argparse.Namespace(
+                cycle_id="cycle_combined",
+                base_dir=str(base_dir),
+                package_out="",
+                run_prepare_data=False,
+                dataset_source="research_table",
+                target="raven",
+                include_adversarial_seeds=True,
+                adversarial_path=str(adversarial_path),
+                min_invalid_rows=5,
+                allow_low_invalid=False,
+                limit=0,
+                train_limit=10,
+                eval_limit=2,
+                base_model="Qwen/Qwen2.5-0.5B-Instruct",
+                adapter_path="mystic_data/adapters/raven_lora_vnext",
+                learning_rate=0.00015,
+                epochs=1,
+                batch_size=1,
+                max_length=2048,
+            )
+
+            prepared_rows = [
+                {
+                    "sample_id": f"combined-{index}",
+                    "problem": "p",
+                    "proof_attempt": "proof",
+                    "messages": [],
+                    "assistant_output": '{"verdict":"INVALID"}',
+                    "target_verdict": "INVALID",
+                    "metadata": {"dataset_source": "adversarial_seed"},
+                }
+                for index in range(6)
+            ]
+
+            def fake_run_command(command, *, cwd):
+                self.assertIn("--include-adversarial-seeds", command)
+                self.assertIn("--min-invalid-rows", command)
+                output_index = command.index("--output") + 1
+                prepared_path = Path(command[output_index])
+                prepared_path.parent.mkdir(parents=True, exist_ok=True)
+                prepared_path.write_text(
+                    "\n".join(json.dumps(row) for row in prepared_rows) + "\n",
+                    encoding="utf-8",
+                )
+                manifest = {
+                    "rows_written": 6,
+                    "research_table_rows": 1,
+                    "adversarial_seed_rows": 5,
+                    "combined_rows": 6,
+                    "invalid_rows_count": 6,
+                }
+                (prepared_path.parent / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+                return manifest, json.dumps(manifest)
+
+            with patch("scripts.run_mystic_cycle.ROOT", repo_root), patch(
+                "scripts.run_mystic_cycle.run_command",
+                side_effect=fake_run_command,
+            ):
+                result = run_prepare(args)
+
+            self.assertEqual(result, 0)
+            summary_path = base_dir / "cycles" / "cycle_combined" / "prepare_summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            self.assertEqual(summary["package_manifest"]["adversarial_seed_rows"], 5)
+            self.assertEqual(summary["package_manifest"]["combined_rows"], 6)
+            package_path = Path(summary["package_path"])
+            with tarfile.open(package_path, "r:gz") as archive:
+                names = archive.getnames()
+            self.assertIn("mystic_data/train_ready/raven_train.jsonl", names)
+            self.assertIn("mystic_data/eval_holdout/raven_eval.jsonl", names)
+            self.assertIn("mystic_data/training/raven/package_manifest.json", names)
+
     def test_run_full_chains_prepare_submit_poll_download_and_finish(self):
         args = argparse.Namespace(
             cycle_id="cycle_1",

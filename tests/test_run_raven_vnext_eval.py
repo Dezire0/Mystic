@@ -100,10 +100,46 @@ class RunRavenVnextEvalTests(unittest.TestCase):
             )
 
             self.assertEqual(report["workflow_status"], "instructions_only")
+            self.assertTrue(report["after_metrics_unavailable"])
+            self.assertFalse(report["finish_ran"])
+            self.assertFalse(report["e2e_reran"])
             self.assertEqual(report["baseline"]["quality_fields"]["raven_invalid_recall"], 1.0)
             self.assertEqual(report["quality_comparison"]["parseable_critique_rate"]["before"], 1.0)
+            self.assertIsNone(report["quality_comparison"]["parseable_critique_rate"]["after"])
             self.assertTrue((root / "mystic_data" / "training" / "raven" / "vnext_eval_report.json").exists())
             self.assertTrue((root / "mystic_data" / "training" / "raven" / "vnext_eval_report.md").exists())
+
+    def test_report_includes_adversarial_training_manifest_fields(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._write_readiness(root, ready=True)
+            manifest_path = root / "mystic_data" / "training" / "raven" / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "adversarial_seed_rows": 12,
+                        "invalid_rows_count": 10,
+                        "first_fatal_error_coverage_for_invalid": {"covered": 10, "total": 10, "rate": 1.0},
+                        "tool_evidence_coverage_for_verifier_rows": {"covered": 12, "total": 12, "rate": 1.0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = run_raven_vnext_eval(
+                root_path=root,
+                skip_cycle_prepare=True,
+                metrics_loader=lambda _: _metrics_payload("baseline", turns=1, discoveries=1, verified=0, refuted=0, override=False),
+                comparison_loader=lambda _: _comparison_snapshot("baseline", []),
+                e2e_loader=lambda _: {},
+            )
+
+            self.assertEqual(report["adversarial_seed_rows"], 12)
+            self.assertEqual(report["invalid_rows_count"], 10)
+            self.assertEqual(report["first_fatal_error_coverage"]["rate"], 1.0)
+            self.assertEqual(report["tool_evidence_coverage"]["rate"], 1.0)
+            self.assertEqual(report["training_manifest_path"], str(manifest_path))
+            self.assertTrue(report["after_metrics_unavailable"])
 
     def test_post_reinjection_report_compares_before_and_after_metrics(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -153,6 +189,9 @@ class RunRavenVnextEvalTests(unittest.TestCase):
             )
 
             self.assertEqual(report["workflow_status"], "post_reinjection_complete")
+            self.assertFalse(report["after_metrics_unavailable"])
+            self.assertTrue(report["finish_ran"])
+            self.assertTrue(report["e2e_reran"])
             self.assertEqual(report["quality_comparison"]["raven_invalid_recall"]["before"], 0.0)
             self.assertEqual(report["quality_comparison"]["raven_invalid_recall"]["after"], 1.0)
             self.assertGreater(report["quality_comparison"]["bad_candidate_refutation_rate"]["delta"], 0.0)
