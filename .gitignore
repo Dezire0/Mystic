@@ -25,6 +25,7 @@ mystic_data/overnight_runs/*
 mystic_data/adapters/*
 mystic_data/logs/*
 mystic_data/reports/*
+mystic_data/e2e/*
 mystic_data/state/*
 mystic_gpu_train_package*.tar.gz
 raven_lora*_qwen.tar.gz
@@ -48,6 +49,7 @@ raven_lora*_qwen.tar.gz
 !mystic_data/adapters/.gitkeep
 !mystic_data/logs/.gitkeep
 !mystic_data/reports/.gitkeep
+!mystic_data/e2e/.gitkeep
 !mystic_data/state/.gitkeep
 !mystic_data/metadata/
 !mystic_data/metadata/**
