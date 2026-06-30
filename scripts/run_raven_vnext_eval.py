@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from mystic.research_table.metrics import summarize_research_table_metrics
+from mystic.research_table.training_quality import DEFAULT_MIN_INVALID_ROWS, evaluate_raven_training_quality
 from scripts.check_raven_training_readiness import render_console_summary
 from scripts.run_mystic_cycle import extract_last_json_object
 from scripts.run_research_table_e2e import run_research_table_e2e
@@ -59,6 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--adapter-tar", default="", help="Optional trained adapter tarball path. When provided, run finish + post-E2E.")
     parser.add_argument("--run-limit", type=int, default=20)
     parser.add_argument("--compare-limit", type=int, default=100)
+    parser.add_argument("--include-adversarial-seeds", action="store_true")
     return parser
 
 
@@ -72,6 +74,10 @@ def vnext_report_paths(root_path: Path) -> dict[str, Path]:
         "json": base / "vnext_eval_report.json",
         "markdown": base / "vnext_eval_report.md",
     }
+
+
+def training_manifest_path(root_path: Path) -> Path:
+    return root_path / "mystic_data" / "training" / "raven" / "manifest.json"
 
 
 def load_readiness_status(root_path: Path) -> dict[str, Any]:
@@ -252,7 +258,8 @@ def compare_metric_snapshots(before: dict[str, Any], after: dict[str, Any]) -> d
 
 def build_kaggle_instructions(*, cycle_id: str, base_model: str, adapter_path: str, model_id: str) -> list[str]:
     return [
-        f"python scripts/run_mystic_cycle.py prepare --cycle-id {cycle_id} --dataset-source research_table --target raven --run-prepare-data --base-model {base_model} --adapter-path {adapter_path}",
+        "python scripts/generate_raven_adversarial_seeds.py --root-path . --allow-overwrite",
+        f"python scripts/run_mystic_cycle.py prepare --cycle-id {cycle_id} --dataset-source research_table --target raven --run-prepare-data --include-adversarial-seeds --base-model {base_model} --adapter-path {adapter_path}",
         f"python scripts/run_mystic_cycle.py submit --cycle-id {cycle_id} --base-model {base_model} --adapter-path {adapter_path}",
         f"python scripts/run_mystic_cycle.py poll --cycle-id {cycle_id}",
         f"python scripts/run_mystic_cycle.py download --cycle-id {cycle_id}",
@@ -267,6 +274,9 @@ def render_vnext_report_markdown(report: dict[str, Any]) -> str:
         f"- Generated at: `{report.get('generated_at', '')}`",
         f"- Workflow status: `{report.get('workflow_status', '')}`",
         f"- Readiness status: `{report.get('readiness_status', '')}`",
+        f"- Adversarial seed rows: `{report.get('adversarial_seed_rows', 0)}`",
+        f"- INVALID rows: `{report.get('invalid_rows_count', 0)}`",
+        f"- After metrics unavailable: `{report.get('after_metrics_unavailable', True)}`",
         f"- Root path: `{report.get('root_path', '')}`",
         "",
         "## Quality Comparison",
@@ -313,7 +323,14 @@ def run_json_command(command: list[str], *, cwd: Path) -> tuple[dict[str, Any], 
     return payload, stdout
 
 
-def default_cycle_prepare_runner(*, root_path: Path, cycle_id: str, base_model: str, adapter_path: str) -> dict[str, Any]:
+def default_cycle_prepare_runner(
+    *,
+    root_path: Path,
+    cycle_id: str,
+    base_model: str,
+    adapter_path: str,
+    include_adversarial_seeds: bool = False,
+) -> dict[str, Any]:
     command = [
         sys.executable,
         "scripts/run_mystic_cycle.py",
@@ -332,6 +349,8 @@ def default_cycle_prepare_runner(*, root_path: Path, cycle_id: str, base_model: 
         "--adapter-path",
         adapter_path,
     ]
+    if include_adversarial_seeds:
+        command.append("--include-adversarial-seeds")
     payload, stdout = run_json_command(command, cwd=root_path)
     return {
         "command": command,
@@ -392,6 +411,7 @@ def run_raven_vnext_eval(
     adapter_tar: str = "",
     run_limit: int = 20,
     compare_limit: int = 100,
+    include_adversarial_seeds: bool = False,
     metrics_loader: Callable[[str | Path], dict[str, Any]] = summarize_research_table_metrics,
     comparison_loader: Callable[[Path], dict[str, Any]] = load_latest_raven_comparison_snapshot,
     e2e_loader: Callable[[Path], dict[str, Any]] = load_latest_e2e_summary,
@@ -404,6 +424,27 @@ def run_raven_vnext_eval(
     readiness_status = str(readiness.get("status", "")).strip().upper()
     if readiness_status != "READY" and not force:
         raise ValueError(f"Refusing to continue because readiness status is {readiness_status}, not READY.")
+
+    manifest_path = training_manifest_path(root)
+    training_manifest = load_json(manifest_path) if manifest_path.exists() else {}
+    prepared_path_value = str(training_manifest.get("output_path", "") or "")
+    prepared_path = Path(prepared_path_value) if prepared_path_value else (
+        root / "mystic_data" / "training" / "raven" / "research_table_train.jsonl"
+    )
+    if not prepared_path.is_absolute():
+        prepared_path = root / prepared_path
+    prepared_rows = load_jsonl(prepared_path)
+    training_quality_gate = evaluate_raven_training_quality(
+        prepared_rows,
+        min_invalid_rows=DEFAULT_MIN_INVALID_ROWS,
+    ) if prepared_rows else {
+        "passed": False,
+        "warnings": ["Prepared training rows are unavailable for vNext quality inspection."],
+        "errors": [],
+        "stats": {},
+    }
+    adversarial_seed_rows = int(training_manifest.get("adversarial_seed_rows", 0) or 0)
+    use_adversarial_seeds = include_adversarial_seeds or adversarial_seed_rows > 0
 
     baseline_metrics_payload = metrics_loader(root)
     baseline_comparison = comparison_loader(root)
@@ -421,6 +462,7 @@ def run_raven_vnext_eval(
             cycle_id=cycle_id,
             base_model=base_model,
             adapter_path=adapter_path,
+            include_adversarial_seeds=use_adversarial_seeds,
         )
         workflow_status = "cycle_prepared"
     else:
@@ -428,9 +470,9 @@ def run_raven_vnext_eval(
 
     finish_result: dict[str, Any] | None = None
     post_e2e_result: dict[str, Any] | None = None
-    after_metrics_payload = baseline_metrics_payload
-    after_comparison = baseline_comparison
-    after_e2e = baseline_e2e
+    after_metrics_payload: dict[str, Any] = {}
+    after_comparison: dict[str, Any] = {}
+    after_e2e: dict[str, Any] = {}
     if adapter_tar:
         finish_result = cycle_finish_runner(
             root_path=root,
@@ -455,13 +497,61 @@ def run_raven_vnext_eval(
         e2e_summary=after_e2e,
     )
     quality_comparison = compare_metric_snapshots(baseline_quality, after_quality)
+    baseline_run_id = str(baseline_comparison.get("run_id", "") or "")
+    after_run_id = str(after_comparison.get("run_id", "") or "")
+    comparison_is_fresh = bool(after_run_id) and (not baseline_run_id or after_run_id != baseline_run_id)
+    after_metrics_unavailable = (
+        not adapter_tar
+        or not bool(after_comparison.get("rows"))
+        or not comparison_is_fresh
+    )
 
-    warnings = list(dict.fromkeys([*(readiness.get("warnings", []) or [])]))
+    warnings = list(
+        dict.fromkeys(
+            [
+                *(readiness.get("warnings", []) or []),
+                *(training_quality_gate.get("warnings", []) or []),
+            ]
+        )
+    )
+    invalid_rows_count = int(
+        training_manifest.get(
+            "invalid_rows_count",
+            readiness.get("invalid_rows_count", 0),
+        )
+        or 0
+    )
+    if invalid_rows_count < DEFAULT_MIN_INVALID_ROWS:
+        warnings.append(
+            f"Raven vNext training data has only {invalid_rows_count} INVALID rows; "
+            "generate and include adversarial seeds before training."
+        )
+    first_fatal_error_coverage = training_manifest.get(
+        "first_fatal_error_coverage_for_invalid",
+        readiness.get("first_fatal_error_coverage", {}),
+    )
+    tool_evidence_coverage = training_manifest.get(
+        "tool_evidence_coverage_for_verifier_rows",
+        readiness.get("tool_evidence_coverage", {}),
+    )
     report = {
         "generated_at": now_iso(),
         "root_path": str(root),
+        "baseline_metrics_path": str(root / "mystic_data" / "metrics" / "research_table_metrics.json"),
+        "readiness_report_path": str(readiness_report_path(root)),
+        "training_manifest_path": str(manifest_path),
         "readiness_status": readiness_status,
         "readiness_report": readiness,
+        "training_manifest": training_manifest,
+        "training_quality_gate": training_quality_gate,
+        "adversarial_seed_rows": adversarial_seed_rows,
+        "invalid_rows_count": invalid_rows_count,
+        "first_fatal_error_coverage": first_fatal_error_coverage,
+        "tool_evidence_coverage": tool_evidence_coverage,
+        "adapter_tar": adapter_tar,
+        "finish_ran": finish_result is not None,
+        "e2e_reran": post_e2e_result is not None,
+        "after_metrics_unavailable": after_metrics_unavailable,
         "workflow_status": workflow_status,
         "baseline": {
             "research_table_metrics": compact_research_table_metrics(baseline_metrics_payload),
@@ -487,13 +577,14 @@ def run_raven_vnext_eval(
             "quality_fields": after_quality,
         },
         "quality_comparison": quality_comparison,
+        "before_after_metrics": quality_comparison,
         "kaggle_workflow_instructions": build_kaggle_instructions(
             cycle_id=cycle_id,
             base_model=base_model,
             adapter_path=adapter_path,
             model_id=model_id,
         ),
-        "warnings": warnings,
+        "warnings": list(dict.fromkeys(warnings)),
     }
 
     paths = vnext_report_paths(root)
@@ -517,6 +608,7 @@ def main(argv: list[str] | None = None) -> int:
             adapter_tar=args.adapter_tar,
             run_limit=args.run_limit,
             compare_limit=args.compare_limit,
+            include_adversarial_seeds=args.include_adversarial_seeds,
         )
     except (FileNotFoundError, ValueError, subprocess.CalledProcessError) as exc:
         print(str(exc))

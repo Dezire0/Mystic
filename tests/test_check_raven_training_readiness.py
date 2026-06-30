@@ -62,6 +62,42 @@ class CheckRavenTrainingReadinessTests(unittest.TestCase):
 
             self.assertTrue(report["ready"])
             self.assertTrue(any("Too few INVALID rows" in warning for warning in report["warnings"]))
+            self.assertTrue(any("--include-adversarial-seeds" in item for item in report["recommendations"]))
+
+    def test_included_adversarial_seeds_improve_invalid_quality(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._write_source_dataset(root)
+            adversarial_path = root / "mystic_data" / "datasets" / "raven" / "adversarial_seed_raven.jsonl"
+            adversarial_path.write_text(
+                "\n".join(json.dumps({"seed": index}) for index in range(5)) + "\n",
+                encoding="utf-8",
+            )
+            adversarial_manifest = adversarial_path.parent / "adversarial_seed_manifest.json"
+            adversarial_manifest.write_text(json.dumps({"rows_written": 5}), encoding="utf-8")
+            self._write_prepared_rows(
+                root,
+                [
+                    self._prepared_row(
+                        f"seed-{index}",
+                        "INVALID",
+                        f"fatal {index}",
+                        f"evidence {index}",
+                        True,
+                        dataset_source="adversarial_seed",
+                    )
+                    for index in range(5)
+                ]
+                + [self._prepared_row("rt-valid", "VALID", "", "", False)],
+                adversarial_seed_rows=5,
+            )
+
+            report = check_raven_training_readiness(root)
+
+            self.assertTrue(report["ready"])
+            self.assertEqual(report["adversarial_seed_status"]["status"], "included")
+            self.assertTrue(report["invalid_row_quality"]["sufficient"])
+            self.assertFalse(any("--include-adversarial-seeds" in item for item in report["warnings"]))
 
     def test_missing_first_fatal_error_creates_warning(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -99,7 +135,13 @@ class CheckRavenTrainingReadinessTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def _write_prepared_rows(self, root: Path, rows: list[dict[str, object]]) -> None:
+    def _write_prepared_rows(
+        self,
+        root: Path,
+        rows: list[dict[str, object]],
+        *,
+        adversarial_seed_rows: int = 0,
+    ) -> None:
         prepared_path = root / "mystic_data" / "training" / "raven" / "research_table_train.jsonl"
         manifest_path = prepared_path.parent / "manifest.json"
         prepared_path.parent.mkdir(parents=True, exist_ok=True)
@@ -112,6 +154,9 @@ class CheckRavenTrainingReadinessTests(unittest.TestCase):
                     "output_path": str(prepared_path),
                     "rows_total": len(rows),
                     "rows_written": len(rows),
+                    "research_table_rows": len(rows) - adversarial_seed_rows,
+                    "adversarial_seed_rows": adversarial_seed_rows,
+                    "combined_rows": len(rows),
                     "verdict_distribution": {},
                     "source_counts": {},
                     "created_at": "2026-06-30T00:00:00+00:00",
@@ -128,6 +173,7 @@ class CheckRavenTrainingReadinessTests(unittest.TestCase):
         first_fatal_error: str,
         tool_evidence: str,
         verifier_derived: bool,
+        dataset_source: str = "research_table",
     ) -> dict[str, object]:
         return {
             "sample_id": sample_id,
@@ -146,6 +192,8 @@ class CheckRavenTrainingReadinessTests(unittest.TestCase):
             ),
             "target_verdict": verdict,
             "metadata": {
+                "dataset_source": dataset_source,
+                "target_agent": "raven",
                 "research_table": {
                     "first_fatal_error": first_fatal_error,
                     "tool_evidence": tool_evidence,

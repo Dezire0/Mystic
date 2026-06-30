@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.prepare_research_table_training import MIN_INVALID_ROWS_WARNING_THRESHOLD, prepare_research_table_training
 from scripts.run_mystic_cycle import create_kaggle_package, materialize_prepared_training_split
+from mystic.research_table.training_quality import evaluate_raven_training_quality
 
 
 def now_iso() -> str:
@@ -51,6 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
 def prepared_paths(root_path: Path) -> dict[str, Path]:
     return {
         "dataset": root_path / "mystic_data" / "datasets" / "raven" / "research_table_raven.jsonl",
+        "adversarial_dataset": root_path / "mystic_data" / "datasets" / "raven" / "adversarial_seed_raven.jsonl",
+        "adversarial_manifest": root_path / "mystic_data" / "datasets" / "raven" / "adversarial_seed_manifest.json",
         "prepared": root_path / "mystic_data" / "training" / "raven" / "research_table_train.jsonl",
         "manifest": root_path / "mystic_data" / "training" / "raven" / "manifest.json",
         "report": root_path / "mystic_data" / "training" / "raven" / "readiness_report.json",
@@ -110,7 +113,9 @@ def looks_like_research_table_split(path: Path) -> bool:
         metadata = row.get("metadata", {})
         if not isinstance(metadata, dict):
             return False
-        if str(metadata.get("dataset_source", "")).strip() != "research_table":
+        dataset_source = str(metadata.get("dataset_source", "")).strip()
+        has_legacy_research_metadata = isinstance(metadata.get("research_table"), dict)
+        if dataset_source not in {"research_table", "adversarial_seed", "combined"} and not has_legacy_research_metadata:
             return False
     return True
 
@@ -191,8 +196,8 @@ def ensure_train_eval_split(paths: dict[str, Path], warnings: list[str], errors:
     eval_rows = len(load_jsonl(paths["eval"]))
     if train_rows <= 0:
         errors.append(f"Train split is missing or empty: {paths['train']}")
-    if paths["eval"].exists() and eval_rows < 0:
-        warnings.append(f"Unexpected eval row count at {paths['eval']}")
+    if eval_rows <= 0:
+        errors.append(f"Eval split is missing or empty: {paths['eval']}")
 
     return {
         "train_exists": paths["train"].exists(),
@@ -257,8 +262,6 @@ def check_raven_training_readiness(root_path: str | Path) -> dict[str, Any]:
     rows = list(prepared_state.get("rows", []))
     manifest = prepared_state.get("manifest", {}) if isinstance(prepared_state.get("manifest"), dict) else {}
     summary = summarize_prepared_rows(rows)
-    add_quality_warnings(summary, warnings)
-    warnings = list(dict.fromkeys(warnings))
 
     split_state = ensure_train_eval_split(paths, warnings, errors) if rows else {
         "train_exists": paths["train"].exists(),
@@ -278,11 +281,63 @@ def check_raven_training_readiness(root_path: str | Path) -> dict[str, Any]:
             "mystic_data/eval_holdout/raven_eval.jsonl",
         ],
     }
+    quality_gate = evaluate_raven_training_quality(
+        rows,
+        min_invalid_rows=MIN_INVALID_ROWS_WARNING_THRESHOLD,
+        train_rows_count=int(split_state.get("train_rows", 0)),
+        eval_rows_count=int(split_state.get("eval_rows", 0)),
+    )
+    warnings.extend(str(item) for item in quality_gate.get("warnings", []))
+    errors.extend(str(item) for item in quality_gate.get("errors", []))
+    add_quality_warnings(summary, warnings)
+
+    adversarial_rows = load_jsonl(paths["adversarial_dataset"])
+    adversarial_included_rows = int(manifest.get("adversarial_seed_rows", 0)) if manifest else 0
+    adversarial_seed_status = {
+        "status": (
+            "included"
+            if adversarial_included_rows > 0
+            else "available_not_included"
+            if adversarial_rows
+            else "missing"
+        ),
+        "dataset_path": str(paths["adversarial_dataset"]),
+        "manifest_path": str(paths["adversarial_manifest"]),
+        "dataset_exists": paths["adversarial_dataset"].exists(),
+        "manifest_exists": paths["adversarial_manifest"].exists(),
+        "available_rows": len(adversarial_rows),
+        "included_in_prepared_manifest": adversarial_included_rows > 0,
+        "included_rows": adversarial_included_rows,
+    }
+    recommendations: list[str] = []
+    if summary["invalid_rows"] < MIN_INVALID_ROWS_WARNING_THRESHOLD:
+        recommendation = (
+            "INVALID row count is low. Consider generating adversarial seeds and preparing with "
+            "--include-adversarial-seeds."
+        )
+        warnings.append(recommendation)
+        recommendations.append(recommendation)
+    elif adversarial_included_rows > 0:
+        recommendations.append("Adversarial seeds are included and the recommended INVALID row count is satisfied.")
+
+    warnings = list(dict.fromkeys(warnings))
+    errors = list(dict.fromkeys(errors))
+    fatal_coverage = summary["first_fatal_error_coverage"]
+    tool_coverage = summary["verifier_tool_evidence_coverage"]
+    invalid_row_quality = {
+        "count": summary["invalid_rows"],
+        "ratio": summary["invalid_rows"] / summary["rows_total"] if summary["rows_total"] else 0.0,
+        "minimum_recommended": MIN_INVALID_ROWS_WARNING_THRESHOLD,
+        "sufficient": summary["invalid_rows"] >= MIN_INVALID_ROWS_WARNING_THRESHOLD,
+        "first_fatal_error_coverage": fatal_coverage,
+        "tool_evidence_coverage": tool_coverage,
+    }
 
     report = {
         "checked_at": now_iso(),
         "root_path": str(root),
         "ready": not errors,
+        "status": "READY" if not errors else "NOT_READY",
         "paths": {key: str(value) for key, value in paths.items()},
         "dataset_exists": prepared_state["dataset_exists"],
         "prepared_dataset": {
@@ -298,9 +353,13 @@ def check_raven_training_readiness(root_path: str | Path) -> dict[str, Any]:
         "valid_rows_count": summary["valid_rows"],
         "first_fatal_error_coverage": summary["first_fatal_error_coverage"],
         "tool_evidence_coverage": summary["verifier_tool_evidence_coverage"],
+        "adversarial_seed_status": adversarial_seed_status,
+        "invalid_row_quality": invalid_row_quality,
+        "quality_gate": quality_gate,
         "train_eval_split": split_state,
         "kaggle_package": package_state,
         "warnings": warnings,
+        "recommendations": recommendations,
         "errors": errors,
     }
     write_json(paths["report"], report)
@@ -330,8 +389,16 @@ def render_console_summary(report: dict[str, Any]) -> str:
             "Kaggle package contains train/eval: "
             f"{report['kaggle_package']['contains_train_file']} / {report['kaggle_package']['contains_eval_file']}"
         ),
+        (
+            "Adversarial seeds: "
+            f"{report.get('adversarial_seed_status', {}).get('status', 'unknown')} "
+            f"({report.get('adversarial_seed_status', {}).get('included_rows', 0)} included)"
+        ),
         f"Report: {report['paths']['report']}",
     ]
+    if report.get("recommendations"):
+        lines.append("Recommendations:")
+        lines.extend(f"- {item}" for item in report["recommendations"])
     if report["warnings"]:
         lines.append("Warnings:")
         lines.extend(f"- {item}" for item in report["warnings"])
