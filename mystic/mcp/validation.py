@@ -6,24 +6,25 @@ from typing import Any
 def validate_json_schema(instance: Any, schema: dict[str, Any], *, path: str = "$") -> list[str]:
     errors: list[str] = []
     schema_type = schema.get("type")
+    matched_type = _matching_schema_type(instance, schema_type)
 
     if "enum" in schema and instance not in schema["enum"]:
         errors.append(f"{path} must be one of {schema['enum']}")
 
-    if schema_type is not None and not _matches_type(instance, schema_type):
-        return [f"{path} must be of type {schema_type}"]
+    if schema_type is not None and matched_type is None:
+        return [f"{path} must be of type {_schema_type_label(schema_type)}"]
 
-    if schema_type == "object":
+    if matched_type == "object":
         errors.extend(_validate_object(instance, schema, path=path))
-    elif schema_type == "array":
+    elif matched_type == "array":
         errors.extend(_validate_array(instance, schema, path=path))
-    elif schema_type == "string":
+    elif matched_type == "string":
         min_length = schema.get("minLength")
         if min_length is not None and len(instance) < int(min_length):
             errors.append(f"{path} must be at least {min_length} characters long")
-    elif schema_type == "integer":
+    elif matched_type == "integer":
         errors.extend(_validate_number(instance, schema, path=path))
-    elif schema_type == "number":
+    elif matched_type == "number":
         errors.extend(_validate_number(instance, schema, path=path))
 
     return errors
@@ -81,7 +82,26 @@ def _validate_number(instance: int | float, schema: dict[str, Any], *, path: str
     return errors
 
 
+def _matching_schema_type(instance: Any, schema_type: str | list[str] | None) -> str | None:
+    if schema_type is None:
+        return None
+    if isinstance(schema_type, list):
+        for item in schema_type:
+            if _matches_type(instance, item):
+                return item
+        return None
+    return schema_type if _matches_type(instance, schema_type) else None
+
+
+def _schema_type_label(schema_type: str | list[str]) -> str:
+    if isinstance(schema_type, list):
+        return " | ".join(schema_type)
+    return schema_type
+
+
 def _matches_type(instance: Any, schema_type: str) -> bool:
+    if schema_type == "null":
+        return instance is None
     if schema_type == "object":
         return isinstance(instance, dict)
     if schema_type == "array":

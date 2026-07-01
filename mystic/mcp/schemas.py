@@ -106,6 +106,150 @@ TOOL_SCHEMAS = {
         "required": ["problem", "participants", "mode", "max_rounds", "enable_tools", "tools"],
         "additionalProperties": False,
     },
+    "lab_session_create": {
+        "type": "object",
+        "properties": {
+            "problem": {"type": "string", "minLength": 1},
+            "domain": {
+                "type": "string",
+                "enum": ["math", "physics", "chemistry", "biology", "engineering", "software", "invention", "ai", "general"],
+            },
+            "goal": {"type": "string", "minLength": 1},
+            "mode": {
+                "type": "string",
+                "enum": ["cheap", "serious", "proof_critical", "single_session_subagents", "multi_model_debate"],
+            },
+            "participants": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 4},
+        },
+        "required": ["problem", "domain", "goal", "mode", "participants"],
+        "additionalProperties": False,
+    },
+    "lab_session_get": {
+        "type": "object",
+        "properties": {"session_id": {"type": "string", "minLength": 1}},
+        "required": ["session_id"],
+        "additionalProperties": False,
+    },
+    "lab_session_advance": {
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "string", "minLength": 1},
+            "max_steps": {"type": "integer", "minimum": 1, "maximum": 10},
+            "target_phase": {"type": ["string", "null"]},
+            "use_model_arena": {"type": "boolean"},
+            "use_verifier": {"type": "boolean"},
+        },
+        "required": ["session_id"],
+        "additionalProperties": False,
+    },
+    "lab_agent_run": {
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "string", "minLength": 1},
+            "agent_role": {
+                "type": "string",
+                "enum": [
+                    "Director",
+                    "Theorist",
+                    "HypothesisGenerator",
+                    "ExperimentDesigner",
+                    "Simulator",
+                    "ProofForger",
+                    "Referee",
+                    "Archivist",
+                    "Synthesizer",
+                    "PaperWriter",
+                    "ModelArena",
+                    "CodeRunner",
+                ],
+            },
+            "provider": {"type": "string", "enum": ["auto", "local", "gemini_cli", "claude_cli"]},
+            "task": {"type": "string", "minLength": 1},
+            "context_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 16},
+        },
+        "required": ["session_id", "agent_role", "provider", "task", "context_ids"],
+        "additionalProperties": False,
+    },
+    "lab_referee_review": {
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "string", "minLength": 1},
+            "claim_id": {"type": ["string", "null"]},
+            "text": {"type": "string"},
+            "strictness": {"type": "string", "enum": ["normal", "hostile"]},
+        },
+        "required": ["session_id", "text", "strictness"],
+        "additionalProperties": False,
+    },
+    "lab_experiment_create": {
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "string", "minLength": 1},
+            "claim_id": {"type": "string", "minLength": 1},
+            "question": {"type": "string", "minLength": 1},
+            "method": {
+                "type": "string",
+                "enum": ["python_bruteforce", "symbolic", "simulation", "unit_test", "model_debate", "manual_review"],
+            },
+            "inputs": {"type": "object"},
+        },
+        "required": ["session_id", "claim_id", "question", "method", "inputs"],
+        "additionalProperties": False,
+    },
+    "lab_experiment_run": {
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "string", "minLength": 1},
+            "experiment_id": {"type": "string", "minLength": 1},
+            "dry_run": {"type": "boolean"},
+        },
+        "required": ["session_id", "experiment_id"],
+        "additionalProperties": False,
+    },
+    "lab_memory_search": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "minLength": 1},
+            "domain": {"type": ["string", "null"]},
+            "status_filter": {"type": ["string", "null"]},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+    "lab_memory_write": {
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "string", "minLength": 1},
+            "kind": {"type": "string", "enum": ["claim", "failure", "experiment", "note", "edge"]},
+            "payload": {"type": "object"},
+        },
+        "required": ["session_id", "kind", "payload"],
+        "additionalProperties": False,
+    },
+    "lab_models_debate": {
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "string", "minLength": 1},
+            "question": {"type": "string", "minLength": 1},
+            "participants": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 4},
+            "rounds": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 8},
+            "use_existing_research_table": {"type": "boolean"},
+        },
+        "required": ["session_id", "question", "participants", "rounds", "use_existing_research_table"],
+        "additionalProperties": False,
+    },
+    "lab_report_generate": {
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "string", "minLength": 1},
+            "format": {"type": "string", "enum": ["markdown"]},
+            "include_failures": {"type": "boolean"},
+            "include_next_actions": {"type": "boolean"},
+        },
+        "required": ["session_id", "format", "include_failures", "include_next_actions"],
+        "additionalProperties": False,
+    },
     "mystic_export_teacher_packet": {
         "type": "object",
         "properties": {
@@ -177,6 +321,61 @@ TOOL_DEFINITIONS = [
         "inputSchema": TOOL_SCHEMAS["mystic_run_research_table"],
     },
     {
+        "name": "lab_session_create",
+        "description": "Create a structured Mystic Lab session under mystic_data/lab_sessions.",
+        "inputSchema": TOOL_SCHEMAS["lab_session_create"],
+    },
+    {
+        "name": "lab_session_get",
+        "description": "Load the current lab session state, recent turns, claims, experiments, and failures.",
+        "inputSchema": TOOL_SCHEMAS["lab_session_get"],
+    },
+    {
+        "name": "lab_session_advance",
+        "description": "Advance a lab session through structured research phases and persist new artifacts.",
+        "inputSchema": TOOL_SCHEMAS["lab_session_advance"],
+    },
+    {
+        "name": "lab_agent_run",
+        "description": "Run a specific virtual lab role against a session and store a structured LabTurn.",
+        "inputSchema": TOOL_SCHEMAS["lab_agent_run"],
+    },
+    {
+        "name": "lab_referee_review",
+        "description": "Run a deterministic referee review against a claim or text and archive failures when found.",
+        "inputSchema": TOOL_SCHEMAS["lab_referee_review"],
+    },
+    {
+        "name": "lab_experiment_create",
+        "description": "Create a lab experiment linked to a claim.",
+        "inputSchema": TOOL_SCHEMAS["lab_experiment_create"],
+    },
+    {
+        "name": "lab_experiment_run",
+        "description": "Run a saved lab experiment and update linked claim evidence.",
+        "inputSchema": TOOL_SCHEMAS["lab_experiment_run"],
+    },
+    {
+        "name": "lab_memory_search",
+        "description": "Search across saved lab session memory, claims, failures, and experiments.",
+        "inputSchema": TOOL_SCHEMAS["lab_memory_search"],
+    },
+    {
+        "name": "lab_memory_write",
+        "description": "Write structured claim, failure, experiment, note, or edge data into a lab session.",
+        "inputSchema": TOOL_SCHEMAS["lab_memory_write"],
+    },
+    {
+        "name": "lab_models_debate",
+        "description": "Run the existing Research Table as the Model Arena and import its outputs into a lab session.",
+        "inputSchema": TOOL_SCHEMAS["lab_models_debate"],
+    },
+    {
+        "name": "lab_report_generate",
+        "description": "Generate a markdown lab report from structured session state.",
+        "inputSchema": TOOL_SCHEMAS["lab_report_generate"],
+    },
+    {
         "name": "mystic_export_teacher_packet",
         "description": "Export recent uncertain or failing cases for teacher labeling.",
         "inputSchema": TOOL_SCHEMAS["mystic_export_teacher_packet"],
@@ -195,6 +394,17 @@ PUBLIC_TOOL_NAMES = [
     "mystic_call_model",
     "mystic_compare_models",
     "mystic_run_research_table",
+    "lab_session_create",
+    "lab_session_get",
+    "lab_session_advance",
+    "lab_agent_run",
+    "lab_referee_review",
+    "lab_experiment_create",
+    "lab_experiment_run",
+    "lab_memory_search",
+    "lab_memory_write",
+    "lab_models_debate",
+    "lab_report_generate",
 ]
 
 
