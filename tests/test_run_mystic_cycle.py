@@ -14,6 +14,7 @@ from scripts.run_mystic_cycle import (
     build_kaggle_training_script,
     create_kaggle_package,
     current_adapter_status,
+    discover_package_tar,
     extract_last_json_object,
     locate_cycle_signal_file,
     locate_downloaded_adapter_tar,
@@ -23,6 +24,7 @@ from scripts.run_mystic_cycle import (
     run_finish,
     run_full,
     run_prepare,
+    run_submit,
     safe_extract_adapter_tar,
     slugify,
     validate_adapter_files,
@@ -30,6 +32,38 @@ from scripts.run_mystic_cycle import (
     write_kaggle_kernel_metadata,
     write_json,
 )
+
+
+def _load_generated_kernel_namespace(**overrides: object) -> tuple[str, dict[str, object]]:
+    script = build_kaggle_training_script(
+        cycle_id=str(overrides.get("cycle_id", "raven_vnext_adversarial")),
+        dataset_slug=str(overrides.get("dataset_slug", "mystic-cycle-raven-vnext-adversarial")),
+        package_filename=str(
+            overrides.get(
+                "package_filename",
+                "mystic_gpu_train_package_raven_vnext_adversarial.tar.gz",
+            )
+        ),
+        base_model=str(overrides.get("base_model", "Qwen/Qwen2.5-0.5B-Instruct")),
+        adapter_path=str(
+            overrides.get(
+                "adapter_path",
+                "mystic_data/adapters/raven_lora_vnext_adversarial",
+            )
+        ),
+        adapter_dirname=str(overrides.get("adapter_dirname", "raven_lora_vnext_adversarial")),
+        output_tar_name=str(
+            overrides.get("output_tar_name", "raven_lora_vnext_adversarial.tar.gz")
+        ),
+        learning_rate=float(overrides.get("learning_rate", 0.0002)),
+        epochs=int(overrides.get("epochs", 1)),
+        batch_size=int(overrides.get("batch_size", 1)),
+        max_length=int(overrides.get("max_length", 2048)),
+    )
+    prefix = script.split("write_signal('starting'", 1)[0]
+    namespace: dict[str, object] = {"__file__": "train_mystic_raven.py"}
+    exec(compile(prefix, "train_mystic_raven.py", "exec"), namespace)
+    return script, namespace
 
 
 class RunMysticCycleTests(unittest.TestCase):
@@ -130,9 +164,11 @@ class RunMysticCycleTests(unittest.TestCase):
 
     def test_build_kaggle_training_script_contains_expected_steps(self):
         script = build_kaggle_training_script(
+            cycle_id="cycle_1",
             dataset_slug="mystic-cycle-cycle-1",
             package_filename="mystic_gpu_train_package_cycle_1.tar.gz",
             base_model="Qwen/Qwen2.5-0.5B-Instruct",
+            adapter_path="mystic_data/adapters/raven_lora_v0",
             adapter_dirname="raven_lora_v0",
             output_tar_name="raven_lora_v0_qwen.tar.gz",
             learning_rate=0.00015,
@@ -146,10 +182,141 @@ class RunMysticCycleTests(unittest.TestCase):
         self.assertIn("mystic_cycle_signal.json", script)
         self.assertIn("cycle_done", script)
         self.assertIn("cycle_error", script)
-        self.assertIn("Path(__file__).resolve().parent / PACKAGE_FILENAME", script)
-        self.assertIn("Path('/kaggle/src') / PACKAGE_FILENAME", script)
-        self.assertIn("available={input_listing}", script)
+        self.assertIn('PACKAGE_FILENAME = "mystic_gpu_train_package_cycle_1.tar.gz"', script)
+        self.assertIn("discover_package_candidates", script)
+        self.assertIn("EXPECTED_KAGGLE_INPUT_DIR", script)
+        self.assertIn("limited_directory_listing", script)
+        self.assertIn("Path('/kaggle/input')", script)
+        self.assertIn("PACKAGE_KEYWORDS", script)
         self.assertIn("range(60)", script)
+
+    def test_build_kaggle_training_script_compiles_for_raven_vnext_cycle(self):
+        script, _ = _load_generated_kernel_namespace()
+        compile(script, "train_mystic_raven.py", "exec")
+        self.assertIn(
+            'PACKAGE_FILENAME = "mystic_gpu_train_package_raven_vnext_adversarial.tar.gz"',
+            script,
+        )
+
+    def test_build_kaggle_training_script_has_no_unresolved_placeholders(self):
+        script, _ = _load_generated_kernel_namespace()
+        for forbidden in [
+            "$EXPECTED_PACKAGE_FILENAME",
+            "$OUTPUT_TAR_NAME",
+            "{searched_roots}",
+            '"\'searched_roots\'"',
+        ]:
+            self.assertNotIn(forbidden, script)
+
+    def test_generated_find_package_prefers_exact_filename(self):
+        _, namespace = _load_generated_kernel_namespace()
+        find_package = namespace["find_package"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_root = root / "kaggle" / "input"
+            dataset_root = input_root / "mystic-cycle-raven-vnext-adversarial"
+            dataset_root.mkdir(parents=True, exist_ok=True)
+            exact = dataset_root / "mystic_gpu_train_package_raven_vnext_adversarial.tar.gz"
+            exact.write_text("exact", encoding="utf-8")
+            fallback = dataset_root / "something_mystic_raven_vnext_adversarial.tar.gz"
+            fallback.write_text("fallback", encoding="utf-8")
+
+            selected, diagnostics = find_package(
+                search_roots=[input_root, dataset_root],
+                local_candidates=[],
+            )
+
+            self.assertEqual(selected, exact)
+            self.assertEqual(diagnostics["selected_candidate"], str(exact))
+
+    def test_generated_find_package_falls_back_to_keyword_match(self):
+        _, namespace = _load_generated_kernel_namespace()
+        find_package = namespace["find_package"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_root = root / "kaggle" / "input"
+            dataset_root = input_root / "mystic-cycle-raven-vnext-adversarial"
+            dataset_root.mkdir(parents=True, exist_ok=True)
+            fallback = dataset_root / "something_mystic_raven_vnext_adversarial.tar.gz"
+            fallback.write_text("fallback", encoding="utf-8")
+
+            selected, diagnostics = find_package(
+                search_roots=[input_root, dataset_root],
+                local_candidates=[],
+            )
+
+            self.assertEqual(selected, fallback)
+            self.assertEqual(diagnostics["selected_candidate"], str(fallback))
+
+    def test_generated_find_package_failure_raises_runtime_error_with_diagnostics(self):
+        _, namespace = _load_generated_kernel_namespace()
+        find_package = namespace["find_package"]
+        package_discovery_error = namespace["PackageDiscoveryError"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_root = root / "kaggle" / "input"
+            input_root.mkdir(parents=True, exist_ok=True)
+
+            with self.assertRaises(package_discovery_error) as context:
+                find_package(search_roots=[input_root], local_candidates=[])
+
+            message = str(context.exception)
+            self.assertIn("expected_package_filename", message)
+            self.assertIn("searched_roots", message)
+            self.assertTrue("candidates=" in message or "candidate_paths=" in message)
+            self.assertIn("input_listing", message)
+            self.assertNotIn("KeyError", message)
+
+    def test_discover_package_tar_prefers_exact_filename(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_root = Path(temp_dir) / "kaggle" / "input"
+            dataset_root = input_root / "datasets"
+            dataset_root.mkdir(parents=True, exist_ok=True)
+            expected = dataset_root / "mystic_gpu_train_package_raven_vnext_adversarial.tar.gz"
+            expected.write_text("x", encoding="utf-8")
+            fallback = dataset_root / "mystic_other.tar.gz"
+            fallback.write_text("y", encoding="utf-8")
+
+            selected, diagnostics = discover_package_tar(
+                [input_root, dataset_root],
+                expected_filename=expected.name,
+                dataset_slug="mystic-cycle-raven-vnext-adversarial",
+            )
+
+            self.assertEqual(selected, expected)
+            self.assertEqual(diagnostics["expected_filename"], expected.name)
+
+    def test_discover_package_tar_falls_back_to_matching_tar(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_root = Path(temp_dir) / "kaggle" / "input"
+            dataset_root = input_root / "datasets"
+            dataset_root.mkdir(parents=True, exist_ok=True)
+            fallback = dataset_root / "mystic_raven_vnext_candidate.tar.gz"
+            fallback.write_text("weights", encoding="utf-8")
+
+            selected, diagnostics = discover_package_tar(
+                [input_root, dataset_root],
+                expected_filename="missing.tar.gz",
+                dataset_slug="datasets",
+            )
+
+            self.assertEqual(selected, fallback)
+            self.assertEqual(diagnostics["candidates"][0]["path"], str(fallback))
+
+    def test_discover_package_tar_errors_with_diagnostics(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_root = Path(temp_dir) / "kaggle" / "input"
+            input_root.mkdir(parents=True, exist_ok=True)
+
+            with self.assertRaisesRegex(FileNotFoundError, "expected_filename"):
+                discover_package_tar(
+                    [input_root],
+                    expected_filename="missing.tar.gz",
+                    dataset_slug="mystic-cycle-raven-vnext-adversarial",
+                )
 
     def test_write_kaggle_kernel_metadata_includes_dataset_sources(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -376,6 +543,147 @@ class RunMysticCycleTests(unittest.TestCase):
             self.assertEqual(payload["requested_split"]["train_limit"], 1000)
             self.assertEqual(payload["requested_split"]["eval_limit"], 100)
             self.assertEqual(payload["dataset_source"], "default")
+
+    def test_run_submit_writes_extended_submit_summary(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            base_dir = repo_root / "mystic_data"
+            cycle_root = base_dir / "cycles" / "cycle_1"
+            cycle_root.mkdir(parents=True, exist_ok=True)
+            (repo_root / "scripts").mkdir()
+            (repo_root / "configs").mkdir()
+            (repo_root / "README.md").write_text("README", encoding="utf-8")
+            (repo_root / "requirements-training.txt").write_text("torch\n", encoding="utf-8")
+            for script_name in ["mystic_loop.py", "compare_raven_models.py", "register_model.py", "train_raven_lora.py", "evaluate_raven_lora.py"]:
+                (repo_root / "scripts" / script_name).write_text("", encoding="utf-8")
+            (repo_root / "configs" / "models.json").write_text("{}", encoding="utf-8")
+            package_path = repo_root / "mystic_gpu_train_package_cycle_1.tar.gz"
+            package_path.write_text("package", encoding="utf-8")
+            write_json(
+                cycle_root / "prepare_summary.json",
+                {"package_path": str(package_path)},
+            )
+
+            args = argparse.Namespace(
+                cycle_id="cycle_1",
+                base_dir=str(base_dir),
+                kaggle_username="dyrakd",
+                dataset_slug="",
+                kernel_slug="",
+                package_path=str(package_path),
+                base_model="Qwen/Qwen2.5-0.5B-Instruct",
+                adapter_path="mystic_data/adapters/raven_lora_vnext_adversarial",
+                output_tar_name="raven_lora_vnext_adversarial.tar.gz",
+                learning_rate=0.00015,
+                epochs=1,
+                batch_size=1,
+                max_length=2048,
+            )
+
+            raw_results = [
+                type("Result", (), {"stdout": "dataset uploaded", "stderr": ""})(),
+                type("Result", (), {"stdout": "kernel pushed", "stderr": ""})(),
+            ]
+            with patch("scripts.run_mystic_cycle.ROOT", repo_root), patch(
+                "scripts.run_mystic_cycle.ensure_kaggle_ready",
+                return_value="dyrakd",
+            ), patch(
+                "scripts.run_mystic_cycle.kaggle_command_prefix",
+                return_value=["kaggle"],
+            ), patch(
+                "scripts.run_mystic_cycle.run_raw_command",
+                side_effect=raw_results,
+            ), patch(
+                "scripts.run_mystic_cycle.wait_for_kaggle_dataset_ready",
+                return_value={"final_status": "ready", "checks": []},
+            ), patch(
+                "scripts.run_mystic_cycle.wait_for_dataset_visibility_stabilization",
+                return_value=None,
+            ):
+                result = run_submit(args)
+
+            self.assertEqual(result, 0)
+            summary = json.loads((cycle_root / "kaggle_submit_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["package_filename"], "mystic_gpu_train_package_cycle_1.tar.gz")
+            self.assertEqual(summary["dataset_slug"], "mystic-cycle-cycle-1")
+            self.assertEqual(summary["kernel_ref"], "dyrakd/mystic-raven-cycle-1")
+            self.assertEqual(summary["output_tar_name"], "raven_lora_vnext_adversarial.tar.gz")
+            self.assertEqual(summary["expected_kaggle_input_dir"], "/kaggle/input/mystic-cycle-cycle-1")
+            self.assertIn("generated_kernel_path", summary)
+            self.assertTrue(summary["submit_validation"]["kernel_contains_discovery_helper"])
+
+    def test_run_submit_classifies_kaggle_gpu_quota_error(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            base_dir = repo_root / "mystic_data"
+            cycle_root = base_dir / "cycles" / "raven_vnext_adversarial"
+            (repo_root / "scripts").mkdir()
+            (repo_root / "configs").mkdir()
+            (base_dir / "metadata").mkdir(parents=True)
+            (repo_root / "scripts" / "mystic_loop.py").write_text("", encoding="utf-8")
+            (repo_root / "scripts" / "compare_raven_models.py").write_text("", encoding="utf-8")
+            (repo_root / "scripts" / "register_model.py").write_text("", encoding="utf-8")
+            (repo_root / "scripts" / "train_raven_lora.py").write_text("", encoding="utf-8")
+            (repo_root / "scripts" / "evaluate_raven_lora.py").write_text("", encoding="utf-8")
+            (repo_root / "configs" / "models.json").write_text("{}", encoding="utf-8")
+            (repo_root / "README.md").write_text("README", encoding="utf-8")
+            (repo_root / "requirements-training.txt").write_text("torch\n", encoding="utf-8")
+            package_path = repo_root / "mystic_gpu_train_package_raven_vnext_adversarial.tar.gz"
+            package_path.write_text("package", encoding="utf-8")
+            write_json(cycle_root / "prepare_summary.json", {"package_path": str(package_path)})
+
+            args = argparse.Namespace(
+                cycle_id="raven_vnext_adversarial",
+                base_dir=str(base_dir),
+                kaggle_username="dyrakd",
+                dataset_slug="",
+                kernel_slug="",
+                package_path=str(package_path),
+                base_model="Qwen/Qwen2.5-0.5B-Instruct",
+                adapter_path="mystic_data/adapters/raven_lora_vnext_adversarial",
+                output_tar_name="raven_lora_vnext_adversarial.tar.gz",
+                learning_rate=0.00015,
+                epochs=1,
+                batch_size=1,
+                max_length=2048,
+            )
+
+            raw_results = [
+                type("Result", (), {"stdout": "dataset uploaded", "stderr": ""})(),
+                type(
+                    "Result",
+                    (),
+                    {
+                        "stdout": "Kernel push error: Maximum weekly GPU quota of 30.00 hours reached.",
+                        "stderr": "",
+                    },
+                )(),
+            ]
+            with patch("scripts.run_mystic_cycle.ROOT", repo_root), patch(
+                "scripts.run_mystic_cycle.ensure_kaggle_ready",
+                return_value="dyrakd",
+            ), patch(
+                "scripts.run_mystic_cycle.kaggle_command_prefix",
+                return_value=["kaggle"],
+            ), patch(
+                "scripts.run_mystic_cycle.run_raw_command",
+                side_effect=raw_results,
+            ), patch(
+                "scripts.run_mystic_cycle.wait_for_kaggle_dataset_ready",
+                return_value={"final_status": "ready", "checks": []},
+            ), patch(
+                "scripts.run_mystic_cycle.wait_for_dataset_visibility_stabilization",
+                return_value=None,
+            ):
+                result = run_submit(args)
+
+            self.assertEqual(result, 1)
+            summary = json.loads((cycle_root / "kaggle_submit_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["failure_category"], "KAGGLE_GPU_QUOTA_EXCEEDED")
+            self.assertFalse(summary["training_started"])
+            self.assertFalse(summary["kernel_push_succeeded"])
+            self.assertFalse(summary["submit_succeeded"])
+            self.assertIn("quota", summary["next_action"].lower())
 
     def test_run_prepare_supports_research_table_dataset_source(self):
         with tempfile.TemporaryDirectory() as temp_dir:

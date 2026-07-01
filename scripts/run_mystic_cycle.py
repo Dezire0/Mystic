@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 from mystic.raven_training import split_train_eval, write_jsonl
 
 PYTHON_BIN = sys.executable
+FAILURE_KAGGLE_GPU_QUOTA_EXCEEDED = "KAGGLE_GPU_QUOTA_EXCEEDED"
 
 
 def now_iso() -> str:
@@ -40,6 +41,19 @@ def slugify(text: str) -> str:
 def default_output_tar_name(adapter_path: str) -> str:
     adapter_name = Path(adapter_path).name or "raven_lora"
     return f"{adapter_name}_qwen.tar.gz"
+
+
+def is_kaggle_gpu_quota_error(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        token in lowered
+        for token in [
+            "maximum weekly gpu quota",
+            "gpu quota",
+            "quota of 30.00 hours reached",
+            "quota reached",
+        ]
+    )
 
 
 def resolve_prepare_targets(*, limit: int, train_limit: int, eval_limit: int) -> dict[str, float | int]:
@@ -607,6 +621,219 @@ def locate_cycle_signal_file(output_dir: Path) -> Path | None:
     return matches[0] if matches else None
 
 
+def package_discovery_keywords(package_filename: str) -> list[str]:
+    keywords = ["mystic", "raven", "vnext", "adversarial"]
+    lowered = package_filename.lower()
+    return [keyword for keyword in keywords if keyword in lowered or keyword in {"mystic", "raven"}]
+
+
+def limited_directory_listing(root: Path, *, max_depth: int = 2, max_entries: int = 40) -> list[str]:
+    if not root.exists():
+        return []
+    entries: list[str] = []
+    for current_root, dirnames, filenames in os.walk(root):
+        current_path = Path(current_root)
+        try:
+            relative = current_path.relative_to(root)
+            depth = len(relative.parts)
+        except ValueError:
+            depth = 0
+        if depth > max_depth:
+            dirnames[:] = []
+            continue
+        names = sorted(dirnames) + sorted(filenames)
+        for name in names:
+            entry_path = current_path / name
+            try:
+                rel = entry_path.relative_to(root).as_posix()
+            except ValueError:
+                rel = str(entry_path)
+            suffix = "/" if entry_path.is_dir() else ""
+            entries.append(f"{root.name}/{rel}{suffix}")
+            if len(entries) >= max_entries:
+                return entries
+    return entries
+
+
+def iter_files_limited(root: Path, *, max_depth: int = 2) -> list[Path]:
+    if not root.exists():
+        return []
+    files: list[Path] = []
+    for current_root, dirnames, filenames in os.walk(root):
+        current_path = Path(current_root)
+        try:
+            relative = current_path.relative_to(root)
+            depth = len(relative.parts)
+        except ValueError:
+            depth = 0
+        if depth > max_depth:
+            dirnames[:] = []
+            continue
+        for filename in filenames:
+            files.append(current_path / filename)
+    return files
+
+
+def discover_package_tar(
+    search_roots: list[Path],
+    *,
+    expected_filename: str,
+    dataset_slug: str,
+    keywords: list[str] | None = None,
+    max_depth: int = 2,
+) -> tuple[Path, dict[str, Any]]:
+    normalized_roots: list[Path] = []
+    seen_roots: set[Path] = set()
+    for root in search_roots:
+        resolved = root.resolve() if root.exists() else root
+        if resolved in seen_roots:
+            continue
+        seen_roots.add(resolved)
+        normalized_roots.append(root)
+
+    input_root = next((root for root in normalized_roots if str(root) == "/kaggle/input"), None)
+    effective_keywords = [keyword.lower() for keyword in (keywords or package_discovery_keywords(expected_filename))]
+    candidate_rows: list[dict[str, Any]] = []
+    exact_candidates: list[dict[str, Any]] = []
+    fallback_candidates: list[dict[str, Any]] = []
+    seen_files: set[Path] = set()
+
+    for root in normalized_roots:
+        for path in iter_files_limited(root, max_depth=max_depth):
+            resolved = path.resolve()
+            if resolved in seen_files or path.suffixes[-2:] != [".tar", ".gz"]:
+                continue
+            seen_files.add(resolved)
+            lowered_name = path.name.lower()
+            row = {
+                "path": path,
+                "path_str": str(path),
+                "name": path.name,
+                "size": path.stat().st_size,
+                "mtime": path.stat().st_mtime,
+                "dataset_match": dataset_slug in str(path),
+                "exact_match": path.name == expected_filename,
+            }
+            if row["exact_match"]:
+                exact_candidates.append(row)
+                candidate_rows.append(row)
+                continue
+            if any(keyword in lowered_name for keyword in effective_keywords):
+                fallback_candidates.append(row)
+                candidate_rows.append(row)
+
+    def sort_key(row: dict[str, Any]) -> tuple[int, int, int, int, str]:
+        return (
+            0 if row["exact_match"] else 1,
+            0 if row["dataset_match"] else 1,
+            -int(row["size"]),
+            -int(row["mtime"]),
+            row["path_str"],
+        )
+
+    candidate_rows.sort(key=sort_key)
+    diagnostics = {
+        "expected_filename": expected_filename,
+        "dataset_slug": dataset_slug,
+        "searched_roots": [str(root) for root in normalized_roots],
+        "input_listing": limited_directory_listing(input_root, max_depth=1) if input_root else [],
+        "candidate_count": len(candidate_rows),
+        "candidates": [
+            {
+                "path": row["path_str"],
+                "exact_match": row["exact_match"],
+                "dataset_match": row["dataset_match"],
+                "size": row["size"],
+            }
+            for row in candidate_rows
+        ],
+        "keywords": effective_keywords,
+    }
+    if candidate_rows:
+        return Path(candidate_rows[0]["path"]), diagnostics
+    raise FileNotFoundError(
+        "Package tarball not found. "
+        + json.dumps(diagnostics, ensure_ascii=True, sort_keys=True)
+    )
+
+
+def validate_generated_kaggle_submit_artifacts(
+    *,
+    package_path: Path,
+    dataset_dir: Path,
+    kernel_dir: Path,
+    dataset_ref: str,
+    dataset_slug: str,
+    package_filename: str,
+    training_script_path: Path,
+    output_tar_name: str,
+    adapter_path: str,
+) -> dict[str, Any]:
+    if not package_path.exists():
+        raise FileNotFoundError(f"Cycle package not found: {package_path}")
+    copied_package = dataset_dir / package_filename
+    if not copied_package.exists():
+        raise FileNotFoundError(f"Copied package missing from dataset staging dir: {copied_package}")
+
+    metadata_path = dataset_dir / "dataset-metadata.json"
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"Dataset metadata missing: {metadata_path}")
+    metadata = read_json(metadata_path)
+    if str(metadata.get("id", "")).strip() != dataset_ref:
+        raise ValueError(f"Dataset metadata id mismatch: expected {dataset_ref!r} got {metadata.get('id')!r}")
+
+    if not training_script_path.exists():
+        raise FileNotFoundError(f"Generated Kaggle kernel missing: {training_script_path}")
+    kernel_text = training_script_path.read_text(encoding="utf-8")
+    required_snippets = [
+        package_filename,
+        "def find_package(",
+        "PACKAGE_KEYWORDS",
+        "limited_directory_listing(",
+        "discover_package_candidates(",
+    ]
+    missing_snippets = [snippet for snippet in required_snippets if snippet not in kernel_text]
+    if missing_snippets:
+        raise ValueError(f"Generated Kaggle kernel is missing expected discovery content: {missing_snippets}")
+    unresolved_placeholders = [
+        placeholder
+        for placeholder in [
+            "$EXPECTED_PACKAGE_FILENAME",
+            "$OUTPUT_TAR_NAME",
+            "{searched_roots}",
+            '"\'searched_roots\'"',
+        ]
+        if placeholder in kernel_text
+    ]
+    if unresolved_placeholders:
+        raise ValueError(
+            "Generated Kaggle kernel contains unresolved placeholder content: "
+            f"{unresolved_placeholders}"
+        )
+    try:
+        compile(kernel_text, str(training_script_path), "exec")
+    except SyntaxError as exc:
+        raise ValueError(
+            f"Generated Kaggle kernel failed to compile: {training_script_path}: {exc}"
+        ) from exc
+
+    if output_tar_name not in kernel_text:
+        raise ValueError(f"Generated Kaggle kernel missing output tar name {output_tar_name!r}")
+    if adapter_path not in kernel_text:
+        raise ValueError(f"Generated Kaggle kernel missing adapter path {adapter_path!r}")
+
+    return {
+        "package_filename": package_filename,
+        "dataset_slug": dataset_slug,
+        "dataset_ref": dataset_ref,
+        "dataset_metadata_path": str(metadata_path),
+        "generated_kernel_path": str(training_script_path),
+        "copied_package_path": str(copied_package),
+        "kernel_contains_discovery_helper": True,
+        "kernel_contains_expected_package_filename": True,
+    }
+
+
 def probe_kernel_output_signal(
     *,
     kaggle_cmd: list[str],
@@ -644,9 +871,11 @@ def load_submit_summary(base_dir: Path, cycle_id: str) -> dict[str, Any]:
 
 def build_kaggle_training_script(
     *,
+    cycle_id: str,
     dataset_slug: str,
     package_filename: str,
     base_model: str,
+    adapter_path: str,
     adapter_dirname: str,
     output_tar_name: str,
     learning_rate: float,
@@ -654,6 +883,7 @@ def build_kaggle_training_script(
     batch_size: int,
     max_length: int,
 ) -> str:
+    package_keywords = package_discovery_keywords(package_filename)
     return "\n".join(
         [
             "from __future__ import annotations",
@@ -668,13 +898,20 @@ def build_kaggle_training_script(
             "import time",
             "import traceback",
             "",
+            f'CYCLE_ID = "{cycle_id}"',
             f'DATASET_SLUG = "{dataset_slug}"',
             f'PACKAGE_FILENAME = "{package_filename}"',
             f'BASE_MODEL = "{base_model}"',
+            f'ADAPTER_PATH = "{adapter_path}"',
             f'ADAPTER_DIRNAME = "{adapter_dirname}"',
             f'OUTPUT_TAR_NAME = "{output_tar_name}"',
+            f"PACKAGE_KEYWORDS = {package_keywords!r}",
+            "EXPECTED_KAGGLE_INPUT_DIR = Path('/kaggle/input') / DATASET_SLUG",
             "",
             "SIGNAL_PATH = Path('/kaggle/working') / 'mystic_cycle_signal.json'",
+            "",
+            "class PackageDiscoveryError(RuntimeError):",
+            "    pass",
             "",
             "def run(args: list[str]) -> None:",
             '    print("+", " ".join(args), flush=True)',
@@ -689,54 +926,153 @@ def build_kaggle_training_script(
             "    SIGNAL_PATH.write_text(json.dumps(payload, indent=2) + '\\n', encoding='utf-8')",
             "    print(f'[signal] {status}', flush=True)",
             "",
-            "def find_package() -> Path:",
-            "    local_candidates = [",
+            "def limited_directory_listing(root: Path, max_depth: int = 2, max_entries: int = 40) -> list[str]:",
+            "    if not root.exists():",
+            "        return []",
+            "    entries: list[str] = []",
+            "    stack = [(root, 0)]",
+            "    while stack and len(entries) < max_entries:",
+            "        current, depth = stack.pop(0)",
+            "        try:",
+            "            children = sorted(current.iterdir(), key=lambda item: item.name)",
+            "        except Exception:",
+            "            continue",
+            "        for child in children:",
+            "            try:",
+            "                rel = child.relative_to(root).as_posix()",
+            "            except Exception:",
+            "                rel = child.name",
+            "            entries.append(f'{root.name}/{rel}' + ('/' if child.is_dir() else ''))",
+            "            if len(entries) >= max_entries:",
+            "                break",
+            "            if child.is_dir() and depth < max_depth:",
+            "                stack.append((child, depth + 1))",
+            "    return entries",
+            "",
+            "def discover_package_candidates(search_roots: list[Path], max_depth: int = 2) -> tuple[list[dict[str, object]], dict[str, object]]:",
+            "    candidates: list[dict[str, object]] = []",
+            "    seen_paths: set[Path] = set()",
+            "    searched_roots: list[str] = []",
+            "    likely_dirs: list[str] = []",
+            "    input_root = Path('/kaggle/input')",
+            "    if input_root.exists():",
+            "        for child in sorted(input_root.iterdir(), key=lambda item: item.name):",
+            "            if child.is_dir():",
+            "                likely_dirs.append(str(child))",
+            "    for root in search_roots:",
+            "        searched_roots.append(str(root))",
+            "        if not root.exists():",
+            "            continue",
+            "        stack = [(root, 0)]",
+            "        while stack:",
+            "            current, depth = stack.pop(0)",
+            "            try:",
+            "                children = sorted(current.iterdir(), key=lambda item: item.name)",
+            "            except Exception:",
+            "                continue",
+            "            for child in children:",
+            "                if child.is_dir():",
+            "                    if depth < max_depth:",
+            "                        stack.append((child, depth + 1))",
+            "                    continue",
+            "                if not child.name.endswith('.tar.gz'):",
+            "                    continue",
+            "                resolved = child.resolve()",
+            "                if resolved in seen_paths:",
+            "                    continue",
+            "                seen_paths.add(resolved)",
+            "                lowered_name = child.name.lower()",
+            "                exact_match = child.name == PACKAGE_FILENAME",
+            "                fuzzy_match = any(keyword in lowered_name for keyword in PACKAGE_KEYWORDS)",
+            "                if not exact_match and not fuzzy_match:",
+            "                    continue",
+            "                candidates.append({",
+            "                    'path': str(child),",
+            "                    'name': child.name,",
+            "                    'exact_match': exact_match,",
+            "                    'dataset_match': DATASET_SLUG in str(child),",
+            "                    'size': child.stat().st_size,",
+            "                    'mtime': child.stat().st_mtime,",
+            "                })",
+            "    diagnostics = {",
+            "        'cycle_id': CYCLE_ID,",
+            "        'dataset_slug': DATASET_SLUG,",
+            "        'expected_package_filename': PACKAGE_FILENAME,",
+            "        'expected_kaggle_input_dir': str(EXPECTED_KAGGLE_INPUT_DIR),",
+            "        'searched_roots': searched_roots,",
+            "        'input_listing': limited_directory_listing(input_root, max_depth=1),",
+            "        'likely_dataset_directories': likely_dirs[:10],",
+            "        'likely_directory_listings': {path: limited_directory_listing(Path(path), max_depth=1) for path in likely_dirs[:10]},",
+            "        'keywords': PACKAGE_KEYWORDS,",
+            "    }",
+            "    candidates.sort(key=lambda row: (0 if row['exact_match'] else 1, 0 if row['dataset_match'] else 1, -int(row['size']), -int(row['mtime']), str(row['path'])))",
+            "    diagnostics['candidates'] = candidates",
+            "    return candidates, diagnostics",
+            "",
+            "def find_package(",
+            "    search_roots: list[Path] | None = None,",
+            "    local_candidates: list[Path] | None = None,",
+            ") -> tuple[Path, dict[str, object]]:",
+            "    if local_candidates is None:",
+            "        local_candidates = [",
             "        Path(__file__).resolve().parent / PACKAGE_FILENAME,",
             "        Path.cwd() / PACKAGE_FILENAME,",
             "        Path('/kaggle/working') / PACKAGE_FILENAME,",
             "        Path('/kaggle/src') / PACKAGE_FILENAME,",
-            "    ]",
+            "        ]",
             "    for candidate in local_candidates:",
             "        if candidate.exists():",
-            "            return candidate",
-            "    local_tarballs = []",
-            "    for root in [Path(__file__).resolve().parent, Path.cwd(), Path('/kaggle/working'), Path('/kaggle/src')]:",
-            "        if root.exists():",
-            "            local_tarballs.extend(root.rglob('*.tar.gz'))",
-            "    if local_tarballs:",
-            "        return local_tarballs[0]",
-            "    dataset_root = Path('/kaggle/input') / DATASET_SLUG",
-            "    matches = list(dataset_root.rglob(PACKAGE_FILENAME))",
-            "    if matches:",
-            "        return matches[0]",
-            "    matches = list(dataset_root.rglob('*.tar.gz'))",
-            "    if matches:",
-            "        return matches[0]",
-            "    global_matches = list(Path('/kaggle/input').rglob(PACKAGE_FILENAME))",
-            "    if global_matches:",
-            "        return global_matches[0]",
-            "    global_matches = list(Path('/kaggle/input').rglob('*.tar.gz'))",
-            "    if global_matches:",
-            "        return global_matches[0]",
-            "    input_listing = [str(path) for path in Path('/kaggle/input').glob('*')]",
-            "    raise FileNotFoundError(f'Package tarball not found under {dataset_root} or /kaggle/input; available={input_listing}')",
+            "            return candidate, {'found_via': 'local_exact', 'path': str(candidate)}",
+            "    if search_roots is None:",
+            "        search_roots = [",
+            "        Path(__file__).resolve().parent,",
+            "        Path.cwd(),",
+            "        Path('/kaggle/working'),",
+            "        Path('/kaggle/src'),",
+            "        Path('/kaggle/input'),",
+            "        EXPECTED_KAGGLE_INPUT_DIR,",
+            "        ]",
+            "    candidates, diagnostics = discover_package_candidates(search_roots, max_depth=2)",
+            "    print('Package discovery diagnostics:', json.dumps(diagnostics, indent=2), flush=True)",
+            "    if candidates:",
+            "        selected = Path(str(candidates[0]['path']))",
+            "        diagnostics['selected_candidate'] = str(selected)",
+            "        return selected, diagnostics",
+            "    searched_roots = list(diagnostics.get('searched_roots', []))",
+            "    input_listing = list(diagnostics.get('input_listing', []))",
+            "    likely_dataset_directories = list(diagnostics.get('likely_dataset_directories', []))",
+            "    candidate_paths = [str(row.get('path', '')) for row in candidates]",
+            "    print(f'Package discovery failed: expected_package_filename={PACKAGE_FILENAME!r}', flush=True)",
+            "    print(f'Package discovery searched_roots={searched_roots!r}', flush=True)",
+            "    print(f'Package discovery candidate_tarballs={candidate_paths!r}', flush=True)",
+            "    print(f'Package discovery input_listing={input_listing!r}', flush=True)",
+            "    raise PackageDiscoveryError(",
+            "        'Could not find training package tar. '",
+            "        f'expected_package_filename={PACKAGE_FILENAME!r}; '",
+            "        f'dataset_slug={DATASET_SLUG!r}; '",
+            "        f'searched_roots={searched_roots!r}; '",
+            "        f'candidates={candidate_paths!r}; '",
+            "        f'input_listing={input_listing!r}; '",
+            "        f'likely_dataset_directories={likely_dataset_directories!r}'",
+            "    )",
             "",
             "write_signal('starting', dataset_slug=DATASET_SLUG, base_model=BASE_MODEL, adapter_dirname=ADAPTER_DIRNAME)",
             "try:",
             "    package_path = None",
+            "    package_diagnostics = {}",
             "    last_error = None",
             "    for attempt in range(60):",
             "        try:",
-            "            package_path = find_package()",
+            "            package_path, package_diagnostics = find_package()",
             "            print(f'Found package on attempt {attempt + 1}: {package_path}', flush=True)",
-            "            write_signal('package_found', package_path=str(package_path), attempt=attempt + 1)",
+            "            write_signal('package_found', package_path=str(package_path), attempt=attempt + 1, diagnostics=package_diagnostics)",
             "            break",
-            "        except FileNotFoundError as exc:",
+            "        except PackageDiscoveryError as exc:",
             "            last_error = exc",
             "            print(f'Waiting for Kaggle dataset mount ({attempt + 1}/60)...', flush=True)",
             "            time.sleep(10)",
             "    if package_path is None:",
-            "        raise last_error or FileNotFoundError('Package tarball not found.')",
+            "        raise last_error or PackageDiscoveryError('Could not find training package tar.')",
             "    workdir = Path('/kaggle/working/mystic_cycle')",
             "    workdir.mkdir(parents=True, exist_ok=True)",
             "    with tarfile.open(package_path, 'r:gz') as archive:",
@@ -754,7 +1090,7 @@ def build_kaggle_training_script(
             "        '--base-model', BASE_MODEL,",
             "        '--train-file', 'mystic_data/train_ready/raven_train.jsonl',",
             "        '--eval-file', 'mystic_data/eval_holdout/raven_eval.jsonl',",
-            "        '--output-dir', f'mystic_data/adapters/{ADAPTER_DIRNAME}',",
+            "        '--output-dir', ADAPTER_PATH,",
             f"        '--epochs', '{epochs}',",
             f"        '--batch-size', '{batch_size}',",
             f"        '--learning-rate', '{learning_rate}',",
@@ -766,14 +1102,14 @@ def build_kaggle_training_script(
             "        sys.executable,",
             "        'scripts/evaluate_raven_lora.py',",
             "        '--base-model', BASE_MODEL,",
-            "        '--adapter-path', f'mystic_data/adapters/{ADAPTER_DIRNAME}',",
+            "        '--adapter-path', ADAPTER_PATH,",
             "        '--eval-file', 'mystic_data/eval_holdout/raven_eval.jsonl',",
             "        '--limit', '10',",
             "    ])",
             "    write_signal('evaluation_complete')",
             "    output_tar = Path('/kaggle/working') / OUTPUT_TAR_NAME",
             "    with tarfile.open(output_tar, 'w:gz') as archive:",
-            "        archive.add(workdir / 'mystic_data' / 'adapters' / ADAPTER_DIRNAME, arcname=f'mystic_data/adapters/{ADAPTER_DIRNAME}')",
+            "        archive.add(workdir / ADAPTER_PATH, arcname=ADAPTER_PATH)",
             "        archive.add(workdir / 'mystic_data' / 'logs', arcname='mystic_data/logs')",
             "    write_signal('cycle_done', output_tar=str(output_tar))",
             "    print(output_tar)",
@@ -1177,9 +1513,11 @@ def run_submit(args: argparse.Namespace) -> int:
     write_text(
         training_script_path,
         build_kaggle_training_script(
+            cycle_id=args.cycle_id,
             dataset_slug=dataset_slug,
             package_filename=package_path.name,
             base_model=args.base_model,
+            adapter_path=args.adapter_path,
             adapter_dirname=adapter_dirname,
             output_tar_name=output_tar_name,
             learning_rate=args.learning_rate,
@@ -1193,6 +1531,17 @@ def run_submit(args: argparse.Namespace) -> int:
         kernel_ref=kernel_ref,
         title=f"Mystic Raven {args.cycle_id}",
         dataset_ref=dataset_ref,
+    )
+    submit_validation = validate_generated_kaggle_submit_artifacts(
+        package_path=package_path,
+        dataset_dir=dataset_dir,
+        kernel_dir=kernel_dir,
+        dataset_ref=dataset_ref,
+        dataset_slug=dataset_slug,
+        package_filename=package_path.name,
+        training_script_path=training_script_path,
+        output_tar_name=output_tar_name,
+        adapter_path=args.adapter_path,
     )
 
     with kaggle_runtime_env() as kaggle_env:
@@ -1218,16 +1567,22 @@ def run_submit(args: argparse.Namespace) -> int:
                     "command": "submit",
                     "cycle_id": args.cycle_id,
                     "kaggle_username": username,
+                    "dataset_slug": dataset_slug,
                     "dataset_ref": dataset_ref,
                     "kernel_ref": kernel_ref,
                     "package_path": str(package_path),
+                    "package_filename": package_path.name,
                     "dataset_dir": str(dataset_dir),
                     "kernel_dir": str(kernel_dir),
+                    "expected_kaggle_input_dir": f"/kaggle/input/{dataset_slug}",
+                    "generated_kernel_path": str(training_script_path),
                     "output_tar_name": output_tar_name,
+                    "adapter_path": args.adapter_path,
                     "dataset_action": "create_failed",
                     "dataset_stdout": (exc.stdout or "").strip(),
                     "dataset_stderr": (exc.stderr or "").strip(),
                     "dataset_returncode": exc.returncode,
+                    "submit_validation": submit_validation,
                     "status": "SUBMIT_ERROR",
                 }
                 write_json(kaggle_submit_summary_path(base_dir, args.cycle_id), payload)
@@ -1248,23 +1603,115 @@ def run_submit(args: argparse.Namespace) -> int:
             env=kaggle_env,
         )
         wait_for_dataset_visibility_stabilization(60)
-        kernel_result = run_raw_command([*kaggle_cmd, "kernels", "push", "-p", str(kernel_dir)], cwd=ROOT, env=kaggle_env)
+        try:
+            kernel_result = run_raw_command([*kaggle_cmd, "kernels", "push", "-p", str(kernel_dir)], cwd=ROOT, env=kaggle_env)
+        except subprocess.CalledProcessError as exc:
+            kernel_stdout = (exc.stdout or "").strip()
+            kernel_stderr = (exc.stderr or "").strip()
+            kaggle_error = kernel_stdout or kernel_stderr
+            failure_category = FAILURE_KAGGLE_GPU_QUOTA_EXCEEDED if is_kaggle_gpu_quota_error(kaggle_error) else "KAGGLE_KERNEL_PUSH_FAILED"
+            payload = {
+                "timestamp": now_iso(),
+                "command": "submit",
+                "cycle_id": args.cycle_id,
+                "kaggle_username": username,
+                "dataset_slug": dataset_slug,
+                "dataset_ref": dataset_ref,
+                "kernel_ref": kernel_ref,
+                "package_path": str(package_path),
+                "package_filename": package_path.name,
+                "dataset_dir": str(dataset_dir),
+                "kernel_dir": str(kernel_dir),
+                "expected_kaggle_input_dir": f"/kaggle/input/{dataset_slug}",
+                "generated_kernel_path": str(training_script_path),
+                "output_tar_name": output_tar_name,
+                "adapter_path": args.adapter_path,
+                "dataset_action": dataset_action,
+                "dataset_stdout": dataset_result.stdout.strip(),
+                "dataset_status": dataset_status,
+                "kernel_stdout": kernel_stdout,
+                "kernel_stderr": kernel_stderr,
+                "kernel_push_succeeded": False,
+                "submit_succeeded": False,
+                "training_started": False,
+                "failure_category": failure_category,
+                "kaggle_error": kaggle_error,
+                "next_action": "Wait for Kaggle GPU quota reset or use an environment with available GPU quota, then intentionally rerun submit with the same prepared package."
+                if failure_category == FAILURE_KAGGLE_GPU_QUOTA_EXCEEDED
+                else "Inspect the Kaggle kernel push error and intentionally rerun submit once the submission problem is resolved.",
+                "submit_validation": submit_validation,
+            }
+            write_json(kaggle_submit_summary_path(base_dir, args.cycle_id), payload)
+            if failure_category == FAILURE_KAGGLE_GPU_QUOTA_EXCEEDED:
+                print(json.dumps(payload, indent=2))
+                return 1
+            raise RuntimeError(
+                "Kaggle kernel push failed. "
+                f"stdout={kernel_stdout!r} stderr={kernel_stderr!r}"
+            ) from exc
+
+    kernel_stdout = kernel_result.stdout.strip()
+    kernel_stderr = kernel_result.stderr.strip()
+    kaggle_error = kernel_stdout or kernel_stderr
+    if is_kaggle_gpu_quota_error(kaggle_error):
+        payload = {
+            "timestamp": now_iso(),
+            "command": "submit",
+            "cycle_id": args.cycle_id,
+            "kaggle_username": username,
+            "dataset_slug": dataset_slug,
+            "dataset_ref": dataset_ref,
+            "kernel_ref": kernel_ref,
+            "package_path": str(package_path),
+            "package_filename": package_path.name,
+            "dataset_dir": str(dataset_dir),
+            "kernel_dir": str(kernel_dir),
+            "expected_kaggle_input_dir": f"/kaggle/input/{dataset_slug}",
+            "generated_kernel_path": str(training_script_path),
+            "output_tar_name": output_tar_name,
+            "adapter_path": args.adapter_path,
+            "dataset_action": dataset_action,
+            "dataset_stdout": dataset_result.stdout.strip(),
+            "dataset_status": dataset_status,
+            "kernel_stdout": kernel_stdout,
+            "kernel_stderr": kernel_stderr,
+            "kernel_push_succeeded": False,
+            "submit_succeeded": False,
+            "training_started": False,
+            "failure_category": FAILURE_KAGGLE_GPU_QUOTA_EXCEEDED,
+            "kaggle_error": kaggle_error,
+            "next_action": "Wait for Kaggle GPU quota reset or use an environment with available GPU quota, then intentionally rerun submit with the same prepared package.",
+            "submit_validation": submit_validation,
+        }
+        write_json(kaggle_submit_summary_path(base_dir, args.cycle_id), payload)
+        print(json.dumps(payload, indent=2))
+        return 1
 
     payload = {
         "timestamp": now_iso(),
         "command": "submit",
         "cycle_id": args.cycle_id,
         "kaggle_username": username,
+        "dataset_slug": dataset_slug,
         "dataset_ref": dataset_ref,
         "kernel_ref": kernel_ref,
         "package_path": str(package_path),
+        "package_filename": package_path.name,
         "dataset_dir": str(dataset_dir),
         "kernel_dir": str(kernel_dir),
+        "expected_kaggle_input_dir": f"/kaggle/input/{dataset_slug}",
+        "generated_kernel_path": str(training_script_path),
         "output_tar_name": output_tar_name,
+        "adapter_path": args.adapter_path,
         "dataset_action": dataset_action,
         "dataset_stdout": dataset_result.stdout.strip(),
         "dataset_status": dataset_status,
-        "kernel_stdout": kernel_result.stdout.strip(),
+        "kernel_stdout": kernel_stdout,
+        "kernel_stderr": kernel_stderr,
+        "kernel_push_succeeded": True,
+        "submit_succeeded": True,
+        "training_started": True,
+        "submit_validation": submit_validation,
     }
     write_json(kaggle_submit_summary_path(base_dir, args.cycle_id), payload)
     print(json.dumps(payload, indent=2))
