@@ -35,6 +35,7 @@ class ExportLabFailureDatasetsTests(unittest.TestCase):
 
     def test_verdict_mapping_matches_failure_type_rules(self):
         self.assertEqual(map_lab_failure_to_raven_verdict("arithmetic"), "INVALID")
+        self.assertEqual(map_lab_failure_to_raven_verdict("missing_case"), "INVALID")
         self.assertEqual(map_lab_failure_to_raven_verdict("insufficient_detail"), "NEEDS_MORE_DETAIL")
         self.assertEqual(map_lab_failure_to_raven_verdict("tool_error"), "UNCLEAR")
 
