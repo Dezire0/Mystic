@@ -16,9 +16,12 @@ import tempfile
 import time
 from typing import Any
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from mystic.raven_training import split_train_eval, write_jsonl
 
-ROOT = Path(__file__).resolve().parents[1]
 PYTHON_BIN = sys.executable
 
 
@@ -233,6 +236,8 @@ def create_kaggle_package(root_dir: Path, output_tar: Path) -> Path:
         root_dir / "mystic_data" / "train_ready",
         root_dir / "mystic_data" / "eval_holdout",
         root_dir / "mystic_data" / "metadata",
+        root_dir / "mystic_data" / "training" / "raven" / "manifest.json",
+        root_dir / "mystic_data" / "training" / "raven" / "package_manifest.json",
     ]
     skip_tokens = [
         "__pycache__",
@@ -869,6 +874,10 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--run-prepare-data", action="store_true", help="Run prepare_raven_training_data.py before packaging.")
     prepare.add_argument("--dataset-source", default="default", choices=["default", "research_table"])
     prepare.add_argument("--target", default="raven", choices=["raven"])
+    prepare.add_argument("--include-adversarial-seeds", action="store_true")
+    prepare.add_argument("--adversarial-path", default="")
+    prepare.add_argument("--min-invalid-rows", type=int, default=0)
+    prepare.add_argument("--allow-low-invalid", action="store_true")
     prepare.add_argument("--limit", type=int, default=0, help="Optional total row limit for prepare_raven_training_data.py.")
     prepare.add_argument("--train-limit", type=int, default=0, help="Requested train row target for larger cycles.")
     prepare.add_argument("--eval-limit", type=int, default=0, help="Requested eval row target for larger cycles.")
@@ -925,6 +934,10 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--run-prepare-data", action="store_true")
     full.add_argument("--dataset-source", default="default", choices=["default", "research_table"])
     full.add_argument("--target", default="raven", choices=["raven"])
+    full.add_argument("--include-adversarial-seeds", action="store_true")
+    full.add_argument("--adversarial-path", default="")
+    full.add_argument("--min-invalid-rows", type=int, default=0)
+    full.add_argument("--allow-low-invalid", action="store_true")
     full.add_argument("--limit", type=int, default=0)
     full.add_argument("--train-limit", type=int, default=0)
     full.add_argument("--eval-limit", type=int, default=0)
@@ -962,6 +975,15 @@ def run_prepare(args: argparse.Namespace) -> int:
     targets = resolve_prepare_targets(limit=args.limit, train_limit=args.train_limit, eval_limit=args.eval_limit)
     dataset_source = str(getattr(args, "dataset_source", "default") or "default")
     target_agent = str(getattr(args, "target", "raven") or "raven")
+    include_adversarial_seeds = bool(getattr(args, "include_adversarial_seeds", False))
+    adversarial_path_value = str(getattr(args, "adversarial_path", "") or "")
+    adversarial_path = (
+        Path(adversarial_path_value)
+        if adversarial_path_value
+        else base_dir / "datasets" / "raven" / "adversarial_seed_raven.jsonl"
+    )
+    min_invalid_rows = int(getattr(args, "min_invalid_rows", 0) or 0)
+    allow_low_invalid = bool(getattr(args, "allow_low_invalid", False))
 
     export_payload: dict[str, Any] | None = None
     export_stdout = ""
@@ -971,7 +993,7 @@ def run_prepare(args: argparse.Namespace) -> int:
     if dataset_source == "research_table":
         if target_agent != "raven":
             raise ValueError(f"Unsupported target for research_table dataset source: {target_agent}")
-        if args.run_prepare_data:
+        if args.run_prepare_data or include_adversarial_seeds:
             command = [
                 PYTHON_BIN,
                 "scripts/prepare_research_table_training.py",
@@ -982,6 +1004,18 @@ def run_prepare(args: argparse.Namespace) -> int:
                 "--output",
                 str(base_dir / "training" / "raven" / "research_table_train.jsonl"),
             ]
+            if include_adversarial_seeds:
+                command.extend(
+                    [
+                        "--include-adversarial-seeds",
+                        "--adversarial-path",
+                        str(adversarial_path),
+                    ]
+                )
+            if min_invalid_rows > 0:
+                command.extend(["--min-invalid-rows", str(min_invalid_rows)])
+            if allow_low_invalid:
+                command.append("--allow-low-invalid")
             if int(targets["total_limit"]) > 0:
                 command.extend(["--max-rows", str(int(targets["total_limit"]))])
             export_payload, export_stdout = run_command(command, cwd=ROOT)
@@ -1019,6 +1053,38 @@ def run_prepare(args: argparse.Namespace) -> int:
         prepare_payload, prepare_stdout = run_command(command, cwd=ROOT)
 
     training_files = verify_training_eval_files(base_dir)
+    training_manifest_path = base_dir / "training" / "raven" / "manifest.json"
+    training_manifest = read_json(training_manifest_path) if training_manifest_path.exists() else {}
+    train_rows_count = len(read_jsonl(Path(training_files["train_file"])))
+    eval_rows_count = len(read_jsonl(Path(training_files["eval_file"])))
+    package_manifest = {
+        "created_at": now_iso(),
+        "cycle_id": args.cycle_id,
+        "dataset_source": dataset_source,
+        "target_agent": target_agent,
+        "include_adversarial_seeds": include_adversarial_seeds,
+        "research_table_rows": int(
+            training_manifest.get("research_table_rows", (export_payload or {}).get("research_table_rows", 0))
+        ),
+        "adversarial_seed_rows": int(
+            training_manifest.get("adversarial_seed_rows", (export_payload or {}).get("adversarial_seed_rows", 0))
+        ),
+        "combined_rows": int(
+            training_manifest.get("combined_rows", (export_payload or {}).get("combined_rows", 0))
+        ),
+        "invalid_rows_count": int(
+            training_manifest.get("invalid_rows_count", 0)
+        ),
+        "train_rows": train_rows_count,
+        "eval_rows": eval_rows_count,
+        "train_file": training_files["train_file"],
+        "eval_file": training_files["eval_file"],
+        "training_manifest_path": str(training_manifest_path) if training_manifest else "",
+    }
+    archived_package_manifest_path = base_dir / "training" / "raven" / "package_manifest.json"
+    write_json(archived_package_manifest_path, package_manifest)
+    cycle_package_manifest_path = cycle_root / "package_manifest.json"
+    write_json(cycle_package_manifest_path, package_manifest)
     package_out = Path(args.package_out) if args.package_out else ROOT / f"mystic_gpu_train_package_{args.cycle_id}.tar.gz"
     package_path = create_kaggle_package(ROOT, package_out)
     kaggle_commands = build_kaggle_commands_md(
@@ -1047,10 +1113,14 @@ def run_prepare(args: argparse.Namespace) -> int:
         "requested_split": targets,
         "prepared_dataset_file": str(prepared_dataset_path) if prepared_dataset_path else "",
         "training_files": training_files,
+        "training_manifest_path": str(training_manifest_path) if training_manifest else "",
+        "training_manifest": training_manifest,
+        "package_manifest_path": str(cycle_package_manifest_path),
+        "package_manifest": package_manifest,
         "package_path": str(package_path),
         "kaggle_commands_path": str(kaggle_commands_path(base_dir, args.cycle_id)),
         "package_size_bytes": package_path.stat().st_size,
-        "ran_prepare_training_data": args.run_prepare_data,
+        "ran_prepare_training_data": args.run_prepare_data or include_adversarial_seeds,
         "export_payload": export_payload,
         "prepare_payload": prepare_payload,
         "training_split_payload": split_payload,
@@ -1465,6 +1535,12 @@ def run_full(args: argparse.Namespace) -> int:
         base_dir=args.base_dir,
         package_out=args.package_out,
         run_prepare_data=args.run_prepare_data,
+        dataset_source=args.dataset_source,
+        target=args.target,
+        include_adversarial_seeds=getattr(args, "include_adversarial_seeds", False),
+        adversarial_path=getattr(args, "adversarial_path", ""),
+        min_invalid_rows=getattr(args, "min_invalid_rows", 0),
+        allow_low_invalid=getattr(args, "allow_low_invalid", False),
         limit=args.limit,
         train_limit=args.train_limit,
         eval_limit=args.eval_limit,

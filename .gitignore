@@ -32,6 +32,9 @@ mystic_data/datasets/*
 mystic_data/state/*
 mystic_gpu_train_package*.tar.gz
 raven_lora*_qwen.tar.gz
+mystic_data/datasets/raven/adversarial_seed_raven.jsonl
+mystic_data/datasets/raven/adversarial_seed_manifest.json
+mystic_data/training/raven/
 
 !data/datasets/.gitkeep
 !data/exports/.gitkeep
