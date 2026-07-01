@@ -9,6 +9,7 @@ from typing import Any
 
 from mystic.debate.runner import DebateRunner
 from mystic.final_answer_verifier import extract_candidate_tuples, verify_final_answer
+from mystic.lab.runner import LabRunner
 from mystic.models.router import ModelRouter
 from mystic.research_table.runner import ResearchTableRunner
 from mystic.tools.python_runner import PythonRunner
@@ -51,6 +52,12 @@ class MysticToolbox:
             router=self.router,
             verify_answer=self.mystic_verify_answer,
         )
+        self.lab_runner = LabRunner(
+            root_path=str(self.root_path),
+            router=self.router,
+            verify_answer=self.mystic_verify_answer,
+            research_table_runner=self.research_table_runner,
+        )
         self._ensure_data_dirs()
 
     def mystic_status(self) -> dict[str, Any]:
@@ -65,6 +72,17 @@ class MysticToolbox:
                 "mystic_call_model": "ready",
                 "mystic_compare_models": "ready",
                 "mystic_run_research_table": "ready",
+                "lab_session_create": "ready",
+                "lab_session_get": "ready",
+                "lab_session_advance": "ready",
+                "lab_agent_run": "ready",
+                "lab_referee_review": "ready",
+                "lab_experiment_create": "ready",
+                "lab_experiment_run": "ready",
+                "lab_memory_search": "ready",
+                "lab_memory_write": "ready",
+                "lab_models_debate": "ready",
+                "lab_report_generate": "ready",
             },
             "datasets": datasets,
             "adapter_status": {
@@ -363,6 +381,140 @@ class MysticToolbox:
             controller=controller,
         )
 
+    def lab_session_create(
+        self,
+        *,
+        problem: str,
+        domain: str,
+        goal: str,
+        mode: str,
+        participants: list[str],
+    ) -> dict[str, Any]:
+        return self.lab_runner.create_session(
+            problem=problem,
+            domain=domain,
+            goal=goal,
+            mode=mode,
+            participants=participants,
+        )
+
+    def lab_session_get(self, *, session_id: str) -> dict[str, Any]:
+        return self.lab_runner.get_session(session_id=session_id)
+
+    def lab_session_advance(
+        self,
+        *,
+        session_id: str,
+        max_steps: int = 1,
+        target_phase: str | None = None,
+        use_model_arena: bool = False,
+        use_verifier: bool = True,
+    ) -> dict[str, Any]:
+        return self.lab_runner.advance_session(
+            session_id=session_id,
+            max_steps=max_steps,
+            target_phase=target_phase,
+            use_model_arena=use_model_arena,
+            use_verifier=use_verifier,
+        )
+
+    def lab_agent_run(
+        self,
+        *,
+        session_id: str,
+        agent_role: str,
+        provider: str,
+        task: str,
+        context_ids: list[str],
+    ) -> dict[str, Any]:
+        return self.lab_runner.run_agent(
+            session_id=session_id,
+            agent_role=agent_role,
+            provider=provider,
+            task=task,
+            context_ids=context_ids,
+        )
+
+    def lab_referee_review(
+        self,
+        *,
+        session_id: str,
+        claim_id: str | None,
+        text: str,
+        strictness: str,
+    ) -> dict[str, Any]:
+        return self.lab_runner.referee_review(
+            session_id=session_id,
+            claim_id=claim_id,
+            text=text,
+            strictness=strictness,
+        )
+
+    def lab_experiment_create(
+        self,
+        *,
+        session_id: str,
+        claim_id: str,
+        question: str,
+        method: str,
+        inputs: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.lab_runner.create_experiment(
+            session_id=session_id,
+            claim_id=claim_id,
+            question=question,
+            method=method,
+            inputs=inputs,
+        )
+
+    def lab_experiment_run(self, *, session_id: str, experiment_id: str, dry_run: bool = False) -> dict[str, Any]:
+        return self.lab_runner.run_experiment(session_id=session_id, experiment_id=experiment_id, dry_run=dry_run)
+
+    def lab_memory_search(
+        self,
+        *,
+        query: str,
+        domain: str | None = None,
+        status_filter: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        return self.lab_runner.memory_search(query=query, domain=domain, status_filter=status_filter, limit=limit)
+
+    def lab_memory_write(self, *, session_id: str, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.lab_runner.memory_write(session_id=session_id, kind=kind, payload=payload)
+
+    def lab_models_debate(
+        self,
+        *,
+        session_id: str,
+        question: str,
+        participants: list[str],
+        rounds: list[str],
+        use_existing_research_table: bool,
+    ) -> dict[str, Any]:
+        return self.lab_runner.models_debate(
+            session_id=session_id,
+            question=question,
+            participants=participants,
+            rounds=rounds,
+            use_existing_research_table=use_existing_research_table,
+        )
+
+    def lab_report_generate(
+        self,
+        *,
+        session_id: str,
+        format: str,
+        include_failures: bool,
+        include_next_actions: bool,
+    ) -> dict[str, Any]:
+        return self.lab_runner.report_generate(
+            session_id=session_id,
+            format=format,
+            include_failures=include_failures,
+            include_next_actions=include_next_actions,
+        )
+
     def mystic_export_teacher_packet(
         self,
         *,
@@ -553,6 +705,7 @@ class MysticToolbox:
             "runs",
             "debate_sessions",
             "research_table_sessions",
+            "lab_sessions",
             "teacher_packets",
             "teacher_labels",
             "adapters",

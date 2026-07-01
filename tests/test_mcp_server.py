@@ -21,6 +21,39 @@ class _StubToolbox:
     def mystic_run_research_table(self, **_: object) -> dict:
         return {"final_status": "UNKNOWN", "saved_artifact_path": "mystic_data/research_table_sessions/test/session.json"}
 
+    def lab_session_create(self, **_: object) -> dict:
+        return {"session_id": "lab-test"}
+
+    def lab_session_get(self, **_: object) -> dict:
+        return {"session": {"session_id": "lab-test"}}
+
+    def lab_session_advance(self, **_: object) -> dict:
+        return {"updated_session": {"session_id": "lab-test"}}
+
+    def lab_agent_run(self, **_: object) -> dict:
+        return {"turn_id": "turn-1"}
+
+    def lab_referee_review(self, **_: object) -> dict:
+        return {"verdict": "UNKNOWN"}
+
+    def lab_experiment_create(self, **_: object) -> dict:
+        return {"experiment_id": "exp-1"}
+
+    def lab_experiment_run(self, **_: object) -> dict:
+        return {"experiment_id": "exp-1", "verdict": "inconclusive"}
+
+    def lab_memory_search(self, **_: object) -> dict:
+        return {"matching_sessions": []}
+
+    def lab_memory_write(self, **_: object) -> dict:
+        return {"written_object_id": "note"}
+
+    def lab_models_debate(self, **_: object) -> dict:
+        return {"research_table_session_id": "research-1"}
+
+    def lab_report_generate(self, **_: object) -> dict:
+        return {"report_path": "mystic_data/lab_sessions/lab-test/report.md"}
+
 
 class MCPServerTests(unittest.TestCase):
     def test_initialize_returns_server_capabilities(self):
@@ -46,6 +79,17 @@ class MCPServerTests(unittest.TestCase):
                 "mystic_call_model",
                 "mystic_compare_models",
                 "mystic_run_research_table",
+                "lab_session_create",
+                "lab_session_get",
+                "lab_session_advance",
+                "lab_agent_run",
+                "lab_referee_review",
+                "lab_experiment_create",
+                "lab_experiment_run",
+                "lab_memory_search",
+                "lab_memory_write",
+                "lab_models_debate",
+                "lab_report_generate",
             ],
         )
 
@@ -79,6 +123,27 @@ class MCPServerTests(unittest.TestCase):
         assert response is not None
         self.assertEqual(response["error"]["code"], -32000)
         self.assertIn("$.problem is required", response["error"]["message"])
+
+    def test_tools_call_allows_null_for_nullable_lab_fields(self):
+        server = MysticMCPServer(toolbox=_StubToolbox())
+        response = server.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {
+                    "name": "lab_referee_review",
+                    "arguments": {
+                        "session_id": "lab-test",
+                        "claim_id": None,
+                        "text": "candidate text",
+                        "strictness": "hostile",
+                    },
+                },
+            }
+        )
+        assert response is not None
+        self.assertEqual(response["result"]["structuredContent"], {"verdict": "UNKNOWN"})
 
 
 if __name__ == "__main__":

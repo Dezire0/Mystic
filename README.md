@@ -11,7 +11,35 @@ It keeps the design intentionally narrow:
 - no PostgreSQL
 - no vector DB
 - no standalone web dashboard service outside the FastAPI app
-- no multi-agent orchestration yet
+- no cloud orchestration dependency
+
+## Virtual Research Lab
+
+Mystic also includes a local-first Virtual Research Lab backend. It is a computational research orchestration layer, not a wet-lab control system and not a game.
+
+- lab sessions are stored under `mystic_data/lab_sessions/`
+- each session persists structured `session.json`, `turns.json`, `claims.json`, `experiments.json`, `failures.json`, `memory_edges.json`, `notebook.md`, and `report.md`
+- the Research Table acts as the Model Arena and can import discoveries back into a lab session
+- MCP `lab_*` tools expose session create/get/advance, role execution, referee review, experiment create/run, memory search/write, model debate, and report generation
+
+The core lab objects are:
+
+- `LabSession`: top-level research workflow state
+- `LabTurn`: structured role or tool output inside a session timeline
+- `Claim`: hypothesis, lemma, result, observation, or assumption with explicit status
+- `Experiment`: linked verification or simulation attempt
+- `Failure`: archived fatal error, contradiction, counterexample, or unsupported step
+- `MemoryEdge`: relation such as `supports`, `refutes`, `depends_on`, `caused_failure`, or `generated_experiment`
+
+Reality Anchor status rules are intentionally conservative:
+
+- model-only claims default to `HEURISTIC`
+- deterministic invalidation becomes `REFUTED` or `FAILED`
+- simulation-backed support becomes `TESTED`, not `PROVED`
+- incomplete proofs become `NEEDS_MORE_DETAIL`
+- only symbolic or strict manual validation should upgrade a claim to `PROVED`
+
+This backend is local JSON-backed first. Remote MCP OAuth, cloud databases, and the Lab Failure to Raven training pipeline are separate follow-on work.
 
 ## Files
 

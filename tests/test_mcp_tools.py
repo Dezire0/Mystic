@@ -223,6 +223,50 @@ class MCPToolsTests(unittest.TestCase):
         self.assertTrue(imported["saved"])
         self.assertTrue(Path(imported["saved_path"]).exists())
 
+    def test_lab_session_create_and_advance_persist_structured_files(self):
+        toolbox = self._make_toolbox()
+        created = toolbox.lab_session_create(
+            problem="Find integer solutions to x + y = 5.",
+            domain="math",
+            goal="Build a structured research trace.",
+            mode="serious",
+            participants=["local_prime", "local_raven"],
+        )
+        self.assertEqual(created["status"], "created")
+        session_id = created["session_id"]
+
+        advanced = toolbox.lab_session_advance(
+            session_id=session_id,
+            max_steps=4,
+            use_model_arena=False,
+            use_verifier=True,
+        )
+        self.assertTrue(advanced["new_turns"])
+        self.assertTrue((Path(self.temp_dir.name) / "mystic_data" / "lab_sessions" / session_id / "session.json").exists())
+        loaded = toolbox.lab_session_get(session_id=session_id)
+        self.assertEqual(loaded["session"]["session_id"], session_id)
+        self.assertIn("claims", loaded)
+
+    def test_lab_models_debate_imports_research_table_outputs(self):
+        toolbox = self._make_toolbox()
+        created = toolbox.lab_session_create(
+            problem="Investigate positive integers x, y with x + y = 5.",
+            domain="math",
+            goal="Use Model Arena to gather discoveries.",
+            mode="multi_model_debate",
+            participants=["local_prime", "local_raven"],
+        )
+        result = toolbox.lab_models_debate(
+            session_id=created["session_id"],
+            question="Investigate positive integers x, y with x + y = 5.",
+            participants=["local_prime", "local_raven"],
+            rounds=["independent_discovery", "cross_critique", "revision_after_evidence", "final_synthesis"],
+            use_existing_research_table=True,
+        )
+        self.assertIn("research_table_session_id", result)
+        loaded = toolbox.lab_session_get(session_id=created["session_id"])
+        self.assertTrue(loaded["claims"] or loaded["experiments"])
+
 
 if __name__ == "__main__":
     unittest.main()
