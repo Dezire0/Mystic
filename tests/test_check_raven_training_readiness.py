@@ -50,12 +50,14 @@ class CheckRavenTrainingReadinessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             self._write_source_dataset(root)
+            self._write_lab_failure_dataset(root)
             self._write_prepared_rows(
                 root,
                 [
                     self._prepared_row("row-invalid", "INVALID", "fatal issue", "evidence", True),
                     self._prepared_row("row-valid", "VALID", "", "", False),
                 ],
+                lab_failure_rows=1,
             )
 
             report = check_raven_training_readiness(root)
@@ -119,6 +121,53 @@ class CheckRavenTrainingReadinessTests(unittest.TestCase):
             self.assertTrue(report["ready"])
             self.assertTrue(any("Missing first_fatal_error" in warning for warning in report["warnings"]))
 
+    def test_readiness_reports_lab_failure_dataset_stats(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._write_source_dataset(root)
+            self._write_lab_failure_dataset(root)
+            self._write_prepared_rows(
+                root,
+                [
+                    self._prepared_row("row-invalid", "INVALID", "fatal issue", "evidence", True),
+                    self._prepared_row(
+                        "lab-failure-1",
+                        "INVALID",
+                        "fatal issue",
+                        "tool evidence",
+                        False,
+                        dataset_source="lab_failure",
+                        claim_id="claim-1",
+                        failure_id="failure-1",
+                    ),
+                ],
+                lab_failure_rows=1,
+            )
+
+            report = check_raven_training_readiness(root)
+
+            self.assertEqual(report["lab_failure_status"]["status"], "included")
+            self.assertEqual(report["lab_failure_status"]["available_rows"], 1)
+            self.assertEqual(report["lab_failure_status"]["included_rows"], 1)
+            self.assertEqual(report["prepared_dataset"]["dataset_source_counts"]["lab_failure"], 1)
+
+    def test_require_lab_failures_fails_clearly_when_missing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._write_source_dataset(root)
+            self._write_prepared_rows(
+                root,
+                [
+                    self._prepared_row("row-invalid", "INVALID", "fatal issue", "evidence", True),
+                ],
+            )
+
+            report = check_raven_training_readiness(root, require_lab_failures=True)
+
+            self.assertFalse(report["ready"])
+            self.assertTrue(any("Lab failure dataset is missing" in item for item in report["errors"]))
+            self.assertTrue(any("export_lab_failure_datasets.py" in item for item in report["recommendations"]))
+
     def _write_source_dataset(self, root: Path) -> None:
         dataset_path = root / "mystic_data" / "datasets" / "raven" / "research_table_raven.jsonl"
         dataset_path.parent.mkdir(parents=True, exist_ok=True)
@@ -141,6 +190,7 @@ class CheckRavenTrainingReadinessTests(unittest.TestCase):
         rows: list[dict[str, object]],
         *,
         adversarial_seed_rows: int = 0,
+        lab_failure_rows: int = 0,
     ) -> None:
         prepared_path = root / "mystic_data" / "training" / "raven" / "research_table_train.jsonl"
         manifest_path = prepared_path.parent / "manifest.json"
@@ -154,13 +204,48 @@ class CheckRavenTrainingReadinessTests(unittest.TestCase):
                     "output_path": str(prepared_path),
                     "rows_total": len(rows),
                     "rows_written": len(rows),
-                    "research_table_rows": len(rows) - adversarial_seed_rows,
+                    "research_table_rows": len(rows) - adversarial_seed_rows - lab_failure_rows,
                     "adversarial_seed_rows": adversarial_seed_rows,
+                    "lab_failure_rows": lab_failure_rows,
                     "combined_rows": len(rows),
                     "verdict_distribution": {},
                     "source_counts": {},
                     "created_at": "2026-06-30T00:00:00+00:00",
                     "warnings": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _write_lab_failure_dataset(self, root: Path) -> None:
+        dataset_path = root / "mystic_data" / "datasets" / "lab" / "raven_lab_failures.jsonl"
+        summary_path = root / "mystic_data" / "datasets" / "lab" / "raven_lab_failures_summary.json"
+        dataset_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset_path.write_text(
+            json.dumps(
+                {
+                    "agent": "raven",
+                    "input": {"problem": "p", "model_output": "m", "discovery_or_claim": "d", "tool_evidence": "e", "context": "c"},
+                    "output": {"verdict": "INVALID", "first_fatal_error": "bad", "critique": "x", "recommended_next_action": "y"},
+                    "source": {
+                        "source_type": "lab_failure",
+                        "session_id": "lab-session-1",
+                        "claim_id": "claim-1",
+                        "failure_id": "failure-1",
+                        "source_turn_id": "turn-1",
+                        "turn_id": "turn-1",
+                        "failure_type": "arithmetic",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        summary_path.write_text(
+            json.dumps(
+                {
+                    "rows_written": 1,
+                    "failure_type_distribution": {"arithmetic": 1},
                 }
             ),
             encoding="utf-8",
@@ -174,7 +259,26 @@ class CheckRavenTrainingReadinessTests(unittest.TestCase):
         tool_evidence: str,
         verifier_derived: bool,
         dataset_source: str = "research_table",
+        claim_id: str = "",
+        failure_id: str = "",
     ) -> dict[str, object]:
+        source = {"session_id": "session-1", "turn_id": sample_id, "discovery_id": sample_id, "label_id": ""}
+        metadata_block = {
+            "first_fatal_error": first_fatal_error,
+            "tool_evidence": tool_evidence,
+            "verifier_derived": verifier_derived,
+            "source": source,
+        }
+        if dataset_source == "lab_failure":
+            source = {
+                "source_type": "lab_failure",
+                "session_id": "lab-session-1",
+                "turn_id": sample_id,
+                "claim_id": claim_id,
+                "failure_id": failure_id,
+                "source_turn_id": sample_id,
+            }
+            metadata_block["source"] = source
         return {
             "sample_id": sample_id,
             "problem": "Find all triples.",
@@ -194,12 +298,7 @@ class CheckRavenTrainingReadinessTests(unittest.TestCase):
             "metadata": {
                 "dataset_source": dataset_source,
                 "target_agent": "raven",
-                "research_table": {
-                    "first_fatal_error": first_fatal_error,
-                    "tool_evidence": tool_evidence,
-                    "verifier_derived": verifier_derived,
-                    "source": {"session_id": "session-1", "turn_id": sample_id, "discovery_id": sample_id, "label_id": ""},
-                }
+                ("lab_failure" if dataset_source == "lab_failure" else "research_table"): metadata_block,
             },
         }
 

@@ -53,6 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--adversarial-path", default="", help="Optional adversarial Raven seed JSONL path.")
     parser.add_argument("--adversarial-weight", type=int, default=1)
     parser.add_argument("--max-adversarial-rows", type=int, default=0)
+    parser.add_argument("--include-lab-failures", action="store_true")
+    parser.add_argument("--lab-failures-path", default="", help="Optional lab failure Raven JSONL path.")
+    parser.add_argument("--lab-failure-weight", type=int, default=1)
+    parser.add_argument("--max-lab-failure-rows", type=int, default=0)
     parser.add_argument(
         "--min-invalid-rows",
         type=int,
@@ -75,20 +79,37 @@ def normalize_raven_verdict(verdict: str) -> str:
 
 
 def build_sample_id(source: dict[str, Any], verdict: str) -> str:
+    source_type = str(source.get("source_type", "research_table")).strip() or "research_table"
+    preferred_key = "|".join(
+        [
+            source_type,
+            str(source.get("session_id", "")).strip(),
+            str(source.get("claim_id", "")).strip(),
+            str(source.get("failure_id", "")).strip(),
+        ]
+    )
+    if source_type == "lab_failure" and any(part.strip() for part in preferred_key.split("|")[1:]):
+        digest = hashlib.sha256(preferred_key.encode("utf-8")).hexdigest()[:16]
+        return f"lab-failure-raven-{digest}"
     text = "|".join(
         [
-            str(source.get("source_type", "research_table")).strip(),
+            source_type,
             str(source.get("seed_id", "")).strip(),
             str(source.get("case_type", "")).strip(),
             str(source.get("session_id", "")).strip(),
             str(source.get("turn_id", "")).strip(),
             str(source.get("discovery_id", "")).strip(),
+            str(source.get("claim_id", "")).strip(),
+            str(source.get("failure_id", "")).strip(),
             str(source.get("label_id", "")).strip(),
             normalize_raven_verdict(verdict),
         ]
     )
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
-    prefix = "adversarial-raven" if source.get("source_type") == "adversarial_seed" else "research-table-raven"
+    prefix = {
+        "adversarial_seed": "adversarial-raven",
+        "lab_failure": "lab-failure-raven",
+    }.get(source_type, "research-table-raven")
     return f"{prefix}-{digest}"
 
 
@@ -146,6 +167,83 @@ def is_verifier_derived(source: dict[str, Any]) -> bool:
     return bool(str(source.get("discovery_id", "")).strip()) and not bool(str(source.get("label_id", "")).strip())
 
 
+def dataset_source_for_row(source: dict[str, Any]) -> str:
+    source_type = str(source.get("source_type", "") or "").strip()
+    if source_type in {"adversarial_seed", "lab_failure"}:
+        return source_type
+    return "research_table"
+
+
+def metadata_payload_for_row(
+    *,
+    source: dict[str, Any],
+    input_payload: dict[str, Any],
+    output_payload: dict[str, Any],
+    verdict: str,
+    verifier_derived: bool,
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    dataset_source = dataset_source_for_row(source)
+    source_payload = {
+        "source_type": str(source.get("source_type", "") or dataset_source),
+        "session_id": str(source.get("session_id", "") or ""),
+        "turn_id": str(source.get("turn_id", "") or ""),
+        "discovery_id": str(source.get("discovery_id", "") or ""),
+        "label_id": str(source.get("label_id", "") or ""),
+        "seed_id": str(source.get("seed_id", "") or ""),
+        "case_type": str(source.get("case_type", "") or ""),
+        "claim_id": str(source.get("claim_id", "") or ""),
+        "failure_id": str(source.get("failure_id", "") or ""),
+        "source_turn_id": str(source.get("source_turn_id", "") or ""),
+    }
+    shared_payload = {
+        "problem": str(input_payload.get("problem", "") or ""),
+        "model_output": str(input_payload.get("model_output", "") or ""),
+        "discovery_or_claim": str(input_payload.get("discovery_or_claim", "") or ""),
+        "tool_evidence": str(input_payload.get("tool_evidence", "") or ""),
+        "expected_verdict": verdict,
+        "first_fatal_error": str(output_payload.get("first_fatal_error", "") or ""),
+        "critique": str(output_payload.get("critique", "") or ""),
+        "recommended_next_action": str(output_payload.get("recommended_next_action", "") or ""),
+        "source": source_payload,
+        "verifier_derived": verifier_derived,
+    }
+    metadata = {
+        "target_agent": "raven",
+        "dataset_source": dataset_source,
+        "session_id": source_payload["session_id"],
+        "turn_id": source_payload["turn_id"],
+        "discovery_id": source_payload["discovery_id"],
+        "label_id": source_payload["label_id"],
+        "seed_id": source_payload["seed_id"],
+        "case_type": source_payload["case_type"],
+        "claim_id": source_payload["claim_id"],
+        "failure_id": source_payload["failure_id"],
+        "verdict": verdict,
+        "has_first_fatal_error": bool(shared_payload["first_fatal_error"].strip()),
+        "has_tool_evidence": bool(shared_payload["tool_evidence"].strip()),
+        "verifier_derived": verifier_derived,
+    }
+    if dataset_source == "lab_failure":
+        metadata["lab_failure"] = dict(shared_payload)
+        metadata["failure_type"] = str(source.get("failure_type", "") or "")
+    else:
+        metadata["research_table"] = dict(shared_payload)
+    return dataset_source, source_payload, metadata
+
+
+def row_source_payload(row: dict[str, Any]) -> dict[str, Any]:
+    metadata = row.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return {}
+    for key in ("lab_failure", "research_table"):
+        payload = metadata.get(key)
+        if isinstance(payload, dict):
+            source = payload.get("source")
+            if isinstance(source, dict):
+                return source
+    return {}
+
+
 def convert_research_table_row(row: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     if str(row.get("agent", "")).strip() != "raven":
         return None, "unsupported agent"
@@ -169,47 +267,15 @@ def convert_research_table_row(row: dict[str, Any]) -> tuple[dict[str, Any] | No
 
     verdict = normalize_raven_verdict(str(output_payload.get("verdict", "") or ""))
     assistant_output = build_assistant_output(output_payload, verdict)
-    source_type = str(source.get("source_type", "") or "").strip()
-    dataset_source = "adversarial_seed" if source_type == "adversarial_seed" else "research_table"
-    source_payload = {
-        "source_type": source_type or "research_table",
-        "session_id": str(source.get("session_id", "") or ""),
-        "turn_id": str(source.get("turn_id", "") or ""),
-        "discovery_id": str(source.get("discovery_id", "") or ""),
-        "label_id": str(source.get("label_id", "") or ""),
-        "seed_id": str(source.get("seed_id", "") or ""),
-        "case_type": str(source.get("case_type", "") or ""),
-    }
-    first_fatal_error = str(output_payload.get("first_fatal_error", "") or "")
-    tool_evidence = str(input_payload.get("tool_evidence", "") or "")
     verifier_derived = is_verifier_derived(source)
-    metadata = {
-        "target_agent": "raven",
-        "dataset_source": dataset_source,
-        "session_id": source_payload["session_id"],
-        "turn_id": source_payload["turn_id"],
-        "discovery_id": source_payload["discovery_id"],
-        "label_id": source_payload["label_id"],
-        "seed_id": source_payload["seed_id"],
-        "case_type": source_payload["case_type"],
-        "verdict": verdict,
-        "has_first_fatal_error": bool(first_fatal_error.strip()),
-        "has_tool_evidence": bool(tool_evidence.strip()),
-        "verifier_derived": verifier_derived,
-        "research_table": {
-            "problem": problem,
-            "model_output": str(input_payload.get("model_output", "") or ""),
-            "discovery_or_claim": str(input_payload.get("discovery_or_claim", "") or ""),
-            "tool_evidence": tool_evidence,
-            "expected_verdict": verdict,
-            "first_fatal_error": first_fatal_error,
-            "critique": str(output_payload.get("critique", "") or ""),
-            "recommended_next_action": str(output_payload.get("recommended_next_action", "") or ""),
-            "source": source_payload,
-            "verifier_derived": verifier_derived,
-        },
-        "sample_id": build_sample_id(source, verdict),
-    }
+    dataset_source, source_payload, metadata = metadata_payload_for_row(
+        source=source,
+        input_payload=input_payload,
+        output_payload=output_payload,
+        verdict=verdict,
+        verifier_derived=verifier_derived,
+    )
+    metadata["sample_id"] = build_sample_id(source_payload, verdict)
     prepared = {
         "sample_id": metadata["sample_id"],
         "problem": problem,
@@ -229,16 +295,17 @@ def build_source_counts(rows: list[dict[str, Any]]) -> dict[str, Any]:
     unique_discoveries: set[str] = set()
     unique_labels: set[str] = set()
     unique_seeds: set[str] = set()
+    unique_failures: set[str] = set()
     for row in rows:
         metadata = row.get("metadata", {})
-        research_table = metadata.get("research_table", {}) if isinstance(metadata, dict) else {}
-        source = research_table.get("source", {}) if isinstance(research_table, dict) else {}
+        source = row_source_payload(row)
         source_type = str(source.get("source_type", "") or metadata.get("dataset_source", "")).strip()
         session_id = str(source.get("session_id", "")).strip()
         turn_id = str(source.get("turn_id", "")).strip()
         discovery_id = str(source.get("discovery_id", "")).strip()
         label_id = str(source.get("label_id", "")).strip()
         seed_id = str(source.get("seed_id", "")).strip()
+        failure_id = str(source.get("failure_id", "")).strip()
         if source_type:
             source_types[source_type] += 1
         if session_id:
@@ -251,6 +318,8 @@ def build_source_counts(rows: list[dict[str, Any]]) -> dict[str, Any]:
             unique_labels.add(label_id)
         if seed_id:
             unique_seeds.add(seed_id)
+        if failure_id:
+            unique_failures.add(failure_id)
     return {
         "source_types": dict(sorted(source_types.items())),
         "sessions": dict(sorted(sessions.items())),
@@ -258,7 +327,20 @@ def build_source_counts(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "unique_discoveries": len(unique_discoveries),
         "unique_labels": len(unique_labels),
         "unique_seeds": len(unique_seeds),
+        "unique_failures": len(unique_failures),
     }
+
+
+def build_failure_type_distribution(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for row in rows:
+        metadata = row.get("metadata", {})
+        if not isinstance(metadata, dict):
+            continue
+        failure_type = str(metadata.get("failure_type", "")).strip()
+        if failure_type:
+            counts[failure_type] += 1
+    return dict(sorted(counts.items()))
 
 
 def validate_rows(
@@ -296,11 +378,14 @@ def write_manifest(
     target: str,
     input_path: Path,
     adversarial_path: Path | None,
+    lab_failures_path: Path | None,
     output_path: Path,
     rows_total: int,
     rows_written: int,
     research_table_rows: int,
     adversarial_seed_rows: int,
+    lab_failure_rows: int,
+    lab_failure_weight: int,
     combined_rows: int,
     duplicate_rows_removed: int,
     rows: list[dict[str, Any]],
@@ -313,11 +398,14 @@ def write_manifest(
         "target_agent": target,
         "input_path": str(input_path),
         "adversarial_path": str(adversarial_path) if adversarial_path else "",
+        "lab_failures_path": str(lab_failures_path) if lab_failures_path else "",
         "output_path": str(output_path),
         "rows_total": rows_total,
         "rows_written": rows_written,
         "research_table_rows": research_table_rows,
         "adversarial_seed_rows": adversarial_seed_rows,
+        "lab_failure_rows": lab_failure_rows,
+        "lab_failure_weight": lab_failure_weight,
         "combined_rows": combined_rows,
         "verdict_distribution": dict(sorted(verdict_distribution.items())),
         "invalid_rows_count": int(quality_stats.get("invalid_rows_count", 0)),
@@ -328,6 +416,7 @@ def write_manifest(
         "duplicate_rows_removed": duplicate_rows_removed,
         "duplicate_rate": float(quality_stats.get("duplicate_rate", 0.0)),
         "source_counts": build_source_counts(rows),
+        "failure_type_distribution": build_failure_type_distribution(rows),
         "quality_gate": quality_gate,
         "created_at": now_iso(),
         "warnings": warnings,
@@ -352,6 +441,10 @@ def prepare_research_table_training(
     adversarial_path: str | Path | None = None,
     adversarial_weight: int = 1,
     max_adversarial_rows: int = 0,
+    include_lab_failures: bool = False,
+    lab_failures_path: str | Path | None = None,
+    lab_failure_weight: int = 1,
+    max_lab_failure_rows: int = 0,
     min_invalid_rows: int = 0,
     allow_low_invalid: bool = False,
 ) -> dict[str, Any]:
@@ -361,12 +454,18 @@ def prepare_research_table_training(
         raise FileNotFoundError(f"Input file not found: {source_path}")
     if adversarial_weight < 1:
         raise ValueError("--adversarial-weight must be at least 1.")
+    if lab_failure_weight < 1:
+        raise ValueError("--lab-failure-weight must be at least 1.")
     if max_adversarial_rows < 0:
         raise ValueError("--max-adversarial-rows must be zero or positive.")
+    if max_lab_failure_rows < 0:
+        raise ValueError("--max-lab-failure-rows must be zero or positive.")
 
     source_rows = load_jsonl(source_path)
     adversarial_source_path = Path(adversarial_path) if adversarial_path else None
     adversarial_source_rows: list[dict[str, Any]] = []
+    lab_failure_source_path = Path(lab_failures_path) if lab_failures_path else None
+    lab_failure_source_rows: list[dict[str, Any]] = []
     if include_adversarial_seeds:
         if adversarial_source_path is None:
             adversarial_source_path = source_path.parent / "adversarial_seed_raven.jsonl"
@@ -378,9 +477,21 @@ def prepare_research_table_training(
         adversarial_source_rows = load_jsonl(adversarial_source_path)
         if max_adversarial_rows > 0:
             adversarial_source_rows = adversarial_source_rows[:max_adversarial_rows]
+    if include_lab_failures:
+        if lab_failure_source_path is None:
+            lab_failure_source_path = source_path.parents[1] / "lab" / "raven_lab_failures.jsonl"
+        if not lab_failure_source_path.exists():
+            raise FileNotFoundError(
+                "Lab failures were requested but the dataset is missing: "
+                f"{lab_failure_source_path}"
+            )
+        lab_failure_source_rows = load_jsonl(lab_failure_source_path)
+        if max_lab_failure_rows > 0:
+            lab_failure_source_rows = lab_failure_source_rows[:max_lab_failure_rows]
 
     research_rows: list[dict[str, Any]] = []
     adversarial_rows: list[dict[str, Any]] = []
+    lab_failure_rows: list[dict[str, Any]] = []
     skipped_rows: list[dict[str, str]] = []
     for index, row in enumerate(source_rows):
         converted, error = convert_research_table_row(row)
@@ -398,12 +509,20 @@ def prepare_research_table_training(
             )
             continue
         adversarial_rows.append(converted)
+    for index, row in enumerate(lab_failure_source_rows):
+        converted, error = convert_research_table_row(row)
+        if converted is None:
+            skipped_rows.append(
+                {"dataset": "lab_failure", "index": str(index), "error": error or "unknown conversion error"}
+            )
+            continue
+        lab_failure_rows.append(converted)
 
     deduplicated: list[dict[str, Any]] = []
     seen_sample_ids: set[str] = set()
     seen_fingerprints: set[str] = set()
     duplicate_rows_removed = 0
-    for row in [*research_rows, *adversarial_rows]:
+    for row in [*research_rows, *adversarial_rows, *lab_failure_rows]:
         sample_id = str(row.get("sample_id", "")).strip()
         fingerprint = raven_training_row_fingerprint(row)
         if sample_id in seen_sample_ids or fingerprint in seen_fingerprints:
@@ -419,6 +538,9 @@ def prepare_research_table_training(
     unique_adversarial_rows = [
         row for row in deduplicated if row.get("metadata", {}).get("dataset_source") == "adversarial_seed"
     ]
+    unique_lab_failure_rows = [
+        row for row in deduplicated if row.get("metadata", {}).get("dataset_source") == "lab_failure"
+    ]
     weighted_adversarial_rows: list[dict[str, Any]] = []
     for row in unique_adversarial_rows:
         weighted_adversarial_rows.append(row)
@@ -428,8 +550,17 @@ def prepare_research_table_training(
             weighted["metadata"]["sample_id"] = weighted["sample_id"]
             weighted["metadata"]["adversarial_weight_index"] = weight_index
             weighted_adversarial_rows.append(weighted)
+    weighted_lab_failure_rows: list[dict[str, Any]] = []
+    for row in unique_lab_failure_rows:
+        weighted_lab_failure_rows.append(row)
+        for weight_index in range(2, lab_failure_weight + 1):
+            weighted = copy.deepcopy(row)
+            weighted["sample_id"] = f"{row['sample_id']}-lab-weight-{weight_index}"
+            weighted["metadata"]["sample_id"] = weighted["sample_id"]
+            weighted["metadata"]["lab_failure_weight_index"] = weight_index
+            weighted_lab_failure_rows.append(weighted)
 
-    converted_rows = [*unique_research_rows, *weighted_adversarial_rows]
+    converted_rows = [*unique_research_rows, *weighted_adversarial_rows, *weighted_lab_failure_rows]
     combined_rows = len(converted_rows)
 
     if shuffle:
@@ -461,11 +592,14 @@ def prepare_research_table_training(
         target=target,
         input_path=source_path,
         adversarial_path=adversarial_source_path if include_adversarial_seeds else None,
+        lab_failures_path=lab_failure_source_path if include_lab_failures else None,
         output_path=target_path,
-        rows_total=len(source_rows) + len(adversarial_source_rows),
+        rows_total=len(source_rows) + len(adversarial_source_rows) + len(lab_failure_source_rows),
         rows_written=len(converted_rows),
         research_table_rows=len(unique_research_rows),
         adversarial_seed_rows=len(unique_adversarial_rows),
+        lab_failure_rows=len(unique_lab_failure_rows),
+        lab_failure_weight=lab_failure_weight,
         combined_rows=combined_rows,
         duplicate_rows_removed=duplicate_rows_removed,
         rows=converted_rows,
@@ -476,11 +610,13 @@ def prepare_research_table_training(
         "target_agent": target,
         "input_path": str(source_path),
         "adversarial_path": str(adversarial_source_path) if include_adversarial_seeds else "",
+        "lab_failures_path": str(lab_failure_source_path) if include_lab_failures else "",
         "output_path": str(target_path),
-        "rows_total": len(source_rows) + len(adversarial_source_rows),
+        "rows_total": len(source_rows) + len(adversarial_source_rows) + len(lab_failure_source_rows),
         "rows_written": len(converted_rows),
         "research_table_rows": len(unique_research_rows),
         "adversarial_seed_rows": len(unique_adversarial_rows),
+        "lab_failure_rows": len(unique_lab_failure_rows),
         "combined_rows": combined_rows,
         "duplicate_rows_removed": duplicate_rows_removed,
         "skipped_rows": len(skipped_rows),
@@ -505,6 +641,9 @@ def main(argv: list[str] | None = None) -> int:
     adversarial_path = Path(args.adversarial_path) if args.adversarial_path else (
         root / "mystic_data" / "datasets" / "raven" / "adversarial_seed_raven.jsonl"
     )
+    lab_failures_path = Path(args.lab_failures_path) if args.lab_failures_path else (
+        root / "mystic_data" / "datasets" / "lab" / "raven_lab_failures.jsonl"
+    )
     try:
         payload = prepare_research_table_training(
             target=args.target,
@@ -519,6 +658,10 @@ def main(argv: list[str] | None = None) -> int:
             adversarial_path=adversarial_path,
             adversarial_weight=args.adversarial_weight,
             max_adversarial_rows=args.max_adversarial_rows,
+            include_lab_failures=args.include_lab_failures,
+            lab_failures_path=lab_failures_path,
+            lab_failure_weight=args.lab_failure_weight,
+            max_lab_failure_rows=args.max_lab_failure_rows,
             min_invalid_rows=args.min_invalid_rows,
             allow_low_invalid=args.allow_low_invalid,
         )

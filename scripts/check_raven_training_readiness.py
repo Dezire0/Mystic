@@ -46,6 +46,7 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Check whether Raven training from Research Table data is ready.")
     parser.add_argument("--root-path", default=str(ROOT), help="Mystic repository root.")
+    parser.add_argument("--require-lab-failures", action="store_true")
     return parser
 
 
@@ -54,6 +55,8 @@ def prepared_paths(root_path: Path) -> dict[str, Path]:
         "dataset": root_path / "mystic_data" / "datasets" / "raven" / "research_table_raven.jsonl",
         "adversarial_dataset": root_path / "mystic_data" / "datasets" / "raven" / "adversarial_seed_raven.jsonl",
         "adversarial_manifest": root_path / "mystic_data" / "datasets" / "raven" / "adversarial_seed_manifest.json",
+        "lab_failure_dataset": root_path / "mystic_data" / "datasets" / "lab" / "raven_lab_failures.jsonl",
+        "lab_failure_summary": root_path / "mystic_data" / "datasets" / "lab" / "raven_lab_failures_summary.json",
         "prepared": root_path / "mystic_data" / "training" / "raven" / "research_table_train.jsonl",
         "manifest": root_path / "mystic_data" / "training" / "raven" / "manifest.json",
         "report": root_path / "mystic_data" / "training" / "raven" / "readiness_report.json",
@@ -67,21 +70,33 @@ def summarize_prepared_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     invalid_with_fatal = 0
     verifier_rows = 0
     verifier_with_tool_evidence = 0
+    dataset_source_counts: Counter[str] = Counter()
+    lab_failure_verdict_counts: Counter[str] = Counter()
 
     for row in rows:
         verdict = str(row.get("target_verdict", "")).strip().upper()
         verdict_counts[verdict] += 1
         metadata = row.get("metadata", {})
-        research_table = metadata.get("research_table", {}) if isinstance(metadata, dict) else {}
-        first_fatal_error = str(research_table.get("first_fatal_error", "") or "").strip()
-        verifier_derived = bool(research_table.get("verifier_derived"))
-        tool_evidence = str(research_table.get("tool_evidence", "") or "").strip()
+        dataset_source = str(metadata.get("dataset_source", "")).strip() if isinstance(metadata, dict) else ""
+        if dataset_source:
+            dataset_source_counts[dataset_source] += 1
+        source_payload = {}
+        if isinstance(metadata, dict):
+            if isinstance(metadata.get("research_table"), dict):
+                source_payload = metadata["research_table"]
+            elif isinstance(metadata.get("lab_failure"), dict):
+                source_payload = metadata["lab_failure"]
+        first_fatal_error = str(source_payload.get("first_fatal_error", "") or "").strip()
+        verifier_derived = bool(source_payload.get("verifier_derived"))
+        tool_evidence = str(source_payload.get("tool_evidence", "") or "").strip()
         if verdict == "INVALID" and first_fatal_error:
             invalid_with_fatal += 1
         if verifier_derived:
             verifier_rows += 1
             if tool_evidence:
                 verifier_with_tool_evidence += 1
+        if dataset_source == "lab_failure":
+            lab_failure_verdict_counts[verdict] += 1
 
     invalid_total = int(verdict_counts.get("INVALID", 0))
     fatal_coverage = 1.0 if invalid_total == 0 else invalid_with_fatal / invalid_total
@@ -102,6 +117,8 @@ def summarize_prepared_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "total": verifier_rows,
             "rate": verifier_coverage,
         },
+        "dataset_source_counts": dict(sorted(dataset_source_counts.items())),
+        "lab_failure_verdict_counts": dict(sorted((key, value) for key, value in lab_failure_verdict_counts.items() if key)),
     }
 
 
@@ -252,7 +269,7 @@ def add_quality_warnings(summary: dict[str, Any], warnings: list[str]) -> None:
         )
 
 
-def check_raven_training_readiness(root_path: str | Path) -> dict[str, Any]:
+def check_raven_training_readiness(root_path: str | Path, *, require_lab_failures: bool = False) -> dict[str, Any]:
     root = Path(root_path)
     paths = prepared_paths(root)
     warnings: list[str] = []
@@ -309,6 +326,28 @@ def check_raven_training_readiness(root_path: str | Path) -> dict[str, Any]:
         "included_in_prepared_manifest": adversarial_included_rows > 0,
         "included_rows": adversarial_included_rows,
     }
+    lab_failure_rows = load_jsonl(paths["lab_failure_dataset"])
+    lab_failure_summary = load_json(paths["lab_failure_summary"]) if paths["lab_failure_summary"].exists() else {}
+    lab_failure_included_rows = int(manifest.get("lab_failure_rows", 0)) if manifest else 0
+    lab_failure_status = {
+        "status": (
+            "included"
+            if lab_failure_included_rows > 0
+            else "available_not_included"
+            if lab_failure_rows
+            else "missing"
+        ),
+        "dataset_path": str(paths["lab_failure_dataset"]),
+        "summary_path": str(paths["lab_failure_summary"]),
+        "dataset_exists": paths["lab_failure_dataset"].exists(),
+        "summary_exists": paths["lab_failure_summary"].exists(),
+        "available_rows": len(lab_failure_rows),
+        "included_in_prepared_manifest": lab_failure_included_rows > 0,
+        "included_rows": lab_failure_included_rows,
+        "verdict_distribution": dict(sorted(Counter(str(row.get("output", {}).get("verdict", "")).strip().upper() for row in lab_failure_rows if isinstance(row.get("output"), dict)).items())),
+        "summary_rows_written": int(lab_failure_summary.get("rows_written", 0)) if lab_failure_summary else 0,
+        "failure_type_distribution": lab_failure_summary.get("failure_type_distribution", {}) if isinstance(lab_failure_summary, dict) else {},
+    }
     recommendations: list[str] = []
     if summary["invalid_rows"] < MIN_INVALID_ROWS_WARNING_THRESHOLD:
         recommendation = (
@@ -319,6 +358,26 @@ def check_raven_training_readiness(root_path: str | Path) -> dict[str, Any]:
         recommendations.append(recommendation)
     elif adversarial_included_rows > 0:
         recommendations.append("Adversarial seeds are included and the recommended INVALID row count is satisfied.")
+    if lab_failure_rows and lab_failure_included_rows == 0:
+        warning = "Lab failure dataset is available but not included in the prepared Raven dataset."
+        warnings.append(warning)
+        recommendations.append(
+            "Re-run prepare with --include-lab-failures to include Failure Museum critiques in Raven training data."
+        )
+    if not lab_failure_rows:
+        warning = "Lab failure dataset is missing. Run export_lab_failure_datasets.py to add Failure Museum rows."
+        warnings.append(warning)
+        if require_lab_failures:
+            errors.append(warning)
+            recommendations.append(
+                "Run python scripts/export_lab_failure_datasets.py --root-path /Users/JYH/Documents/Mystic --target raven."
+            )
+    elif require_lab_failures and lab_failure_included_rows <= 0:
+        error = "Lab failure dataset exists but no lab failure rows were included in the prepared Raven dataset."
+        errors.append(error)
+        recommendations.append(
+            "Run python scripts/prepare_research_table_training.py --root-path /Users/JYH/Documents/Mystic --target raven --include-lab-failures."
+        )
 
     warnings = list(dict.fromkeys(warnings))
     errors = list(dict.fromkeys(errors))
@@ -344,16 +403,19 @@ def check_raven_training_readiness(root_path: str | Path) -> dict[str, Any]:
             "exists": prepared_state["prepared_exists"],
             "generated": prepared_state["generated"],
             "rows_total": summary["rows_total"],
+            "dataset_source_counts": summary["dataset_source_counts"],
         },
         "manifest_exists": prepared_state["manifest_exists"],
         "manifest_rows_written": int(manifest.get("rows_written", 0)) if manifest else 0,
         "verdict_counts": summary["verdict_counts"],
+        "lab_failure_verdict_counts": summary["lab_failure_verdict_counts"],
         "invalid_rows_count": summary["invalid_rows"],
         "needs_more_detail_rows_count": summary["needs_more_detail_rows"],
         "valid_rows_count": summary["valid_rows"],
         "first_fatal_error_coverage": summary["first_fatal_error_coverage"],
         "tool_evidence_coverage": summary["verifier_tool_evidence_coverage"],
         "adversarial_seed_status": adversarial_seed_status,
+        "lab_failure_status": lab_failure_status,
         "invalid_row_quality": invalid_row_quality,
         "quality_gate": quality_gate,
         "train_eval_split": split_state,
@@ -394,6 +456,11 @@ def render_console_summary(report: dict[str, Any]) -> str:
             f"{report.get('adversarial_seed_status', {}).get('status', 'unknown')} "
             f"({report.get('adversarial_seed_status', {}).get('included_rows', 0)} included)"
         ),
+        (
+            "Lab failures: "
+            f"{report.get('lab_failure_status', {}).get('status', 'unknown')} "
+            f"({report.get('lab_failure_status', {}).get('included_rows', 0)} included)"
+        ),
         f"Report: {report['paths']['report']}",
     ]
     if report.get("recommendations"):
@@ -410,7 +477,7 @@ def render_console_summary(report: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    report = check_raven_training_readiness(args.root_path)
+    report = check_raven_training_readiness(args.root_path, require_lab_failures=args.require_lab_failures)
     print(render_console_summary(report))
     return 0 if report["ready"] else 1
 
