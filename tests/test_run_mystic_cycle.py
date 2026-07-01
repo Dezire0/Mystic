@@ -791,6 +791,9 @@ class RunMysticCycleTests(unittest.TestCase):
             (repo_root / "requirements-training.txt").write_text("torch\n", encoding="utf-8")
             adversarial_path = base_dir / "datasets" / "raven" / "adversarial_seed_raven.jsonl"
             adversarial_path.write_text('{"agent":"raven"}\n', encoding="utf-8")
+            lab_failures_path = base_dir / "datasets" / "lab" / "raven_lab_failures.jsonl"
+            lab_failures_path.parent.mkdir(parents=True, exist_ok=True)
+            lab_failures_path.write_text('{"agent":"raven"}\n', encoding="utf-8")
 
             args = argparse.Namespace(
                 cycle_id="cycle_combined",
@@ -801,6 +804,10 @@ class RunMysticCycleTests(unittest.TestCase):
                 target="raven",
                 include_adversarial_seeds=True,
                 adversarial_path=str(adversarial_path),
+                include_lab_failures=True,
+                lab_failures_path=str(lab_failures_path),
+                max_lab_failure_rows=0,
+                lab_failure_weight=1,
                 min_invalid_rows=5,
                 allow_low_invalid=False,
                 limit=0,
@@ -816,7 +823,18 @@ class RunMysticCycleTests(unittest.TestCase):
 
             prepared_rows = [
                 {
-                    "sample_id": f"combined-{index}",
+                    "sample_id": "combined-rt",
+                    "problem": "p",
+                    "proof_attempt": "proof",
+                    "messages": [],
+                    "assistant_output": '{"verdict":"INVALID"}',
+                    "target_verdict": "INVALID",
+                    "metadata": {"dataset_source": "research_table"},
+                }
+            ]
+            prepared_rows.extend(
+                {
+                    "sample_id": f"combined-adv-{index}",
                     "problem": "p",
                     "proof_attempt": "proof",
                     "messages": [],
@@ -824,11 +842,23 @@ class RunMysticCycleTests(unittest.TestCase):
                     "target_verdict": "INVALID",
                     "metadata": {"dataset_source": "adversarial_seed"},
                 }
-                for index in range(6)
-            ]
+                for index in range(5)
+            )
+            prepared_rows.append(
+                {
+                    "sample_id": "combined-lab",
+                    "problem": "p",
+                    "proof_attempt": "proof",
+                    "messages": [],
+                    "assistant_output": '{"verdict":"INVALID"}',
+                    "target_verdict": "INVALID",
+                    "metadata": {"dataset_source": "lab_failure"},
+                }
+            )
 
             def fake_run_command(command, *, cwd):
                 self.assertIn("--include-adversarial-seeds", command)
+                self.assertIn("--include-lab-failures", command)
                 self.assertIn("--min-invalid-rows", command)
                 output_index = command.index("--output") + 1
                 prepared_path = Path(command[output_index])
@@ -838,11 +868,12 @@ class RunMysticCycleTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 manifest = {
-                    "rows_written": 6,
+                    "rows_written": 7,
                     "research_table_rows": 1,
                     "adversarial_seed_rows": 5,
-                    "combined_rows": 6,
-                    "invalid_rows_count": 6,
+                    "lab_failure_rows": 1,
+                    "combined_rows": 7,
+                    "invalid_rows_count": 7,
                 }
                 (prepared_path.parent / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
                 return manifest, json.dumps(manifest)
@@ -856,8 +887,10 @@ class RunMysticCycleTests(unittest.TestCase):
             self.assertEqual(result, 0)
             summary_path = base_dir / "cycles" / "cycle_combined" / "prepare_summary.json"
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            self.assertTrue(summary["package_manifest"]["include_lab_failures"])
             self.assertEqual(summary["package_manifest"]["adversarial_seed_rows"], 5)
-            self.assertEqual(summary["package_manifest"]["combined_rows"], 6)
+            self.assertEqual(summary["package_manifest"]["lab_failure_rows"], 1)
+            self.assertEqual(summary["package_manifest"]["combined_rows"], 7)
             package_path = Path(summary["package_path"])
             with tarfile.open(package_path, "r:gz") as archive:
                 names = archive.getnames()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 import tempfile
 import unittest
@@ -127,6 +128,54 @@ class PrepareResearchTableTrainingTests(unittest.TestCase):
             self.assertEqual(result, 1)
             self.assertFalse(output_path.exists())
 
+    def test_lab_failures_are_combined_deduplicated_and_reported(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_path = root / "research_table_raven.jsonl"
+            lab_failures_path = root / "raven_lab_failures.jsonl"
+            output_path = root / "training" / "raven" / "research_table_train.jsonl"
+            input_path.write_text(json.dumps(self._sample_row()) + "\n", encoding="utf-8")
+            lab_rows = [self._lab_failure_row(), self._lab_failure_row()]
+            lab_failures_path.write_text("\n".join(json.dumps(row) for row in lab_rows) + "\n", encoding="utf-8")
+
+            result = prepare_main(
+                [
+                    "--input",
+                    str(input_path),
+                    "--output",
+                    str(output_path),
+                    "--include-lab-failures",
+                    "--lab-failures-path",
+                    str(lab_failures_path),
+                ]
+            )
+
+            self.assertEqual(result, 0)
+            manifest = json.loads((output_path.parent / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["research_table_rows"], 1)
+            self.assertEqual(manifest["lab_failure_rows"], 1)
+            self.assertEqual(manifest["combined_rows"], 2)
+            self.assertEqual(manifest["failure_type_distribution"]["arithmetic"], 1)
+            self.assertEqual(manifest["source_counts"]["source_types"]["lab_failure"], 1)
+            dataset_sources = Counter(row["metadata"]["dataset_source"] for row in load_jsonl(output_path))
+            self.assertEqual(dataset_sources["research_table"], 1)
+            self.assertEqual(dataset_sources["lab_failure"], 1)
+
+    def test_prepare_without_lab_failures_remains_backward_compatible(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_path = root / "research_table_raven.jsonl"
+            output_path = root / "training" / "raven" / "research_table_train.jsonl"
+            input_path.write_text(json.dumps(self._sample_row()) + "\n", encoding="utf-8")
+
+            result = prepare_main(["--input", str(input_path), "--output", str(output_path)])
+
+            self.assertEqual(result, 0)
+            manifest = json.loads((output_path.parent / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["research_table_rows"], 1)
+            self.assertEqual(manifest["lab_failure_rows"], 0)
+            self.assertEqual(manifest["combined_rows"], 1)
+
     def _sample_row(self) -> dict[str, object]:
         return {
             "agent": "raven",
@@ -148,6 +197,33 @@ class PrepareResearchTableTrainingTests(unittest.TestCase):
                 "turn_id": "turn-1",
                 "discovery_id": "disc-1",
                 "label_id": "",
+            },
+        }
+
+    def _lab_failure_row(self) -> dict[str, object]:
+        return {
+            "agent": "raven",
+            "input": {
+                "problem": "Find all valid triples.",
+                "model_output": "Candidate answer (2, 4, 8).",
+                "discovery_or_claim": "Candidate answer (2, 4, 8)",
+                "tool_evidence": "Brute force shows the sum is 7/8.",
+                "context": "Failure Museum export",
+            },
+            "output": {
+                "verdict": "INVALID",
+                "first_fatal_error": "The candidate sums to 7/8, not 1.",
+                "critique": "Reject the claim and keep bounded verification in the loop.",
+                "recommended_next_action": "search remaining candidates",
+            },
+            "source": {
+                "source_type": "lab_failure",
+                "session_id": "lab-session-1",
+                "claim_id": "claim-1",
+                "failure_id": "failure-1",
+                "source_turn_id": "turn-1",
+                "turn_id": "turn-1",
+                "failure_type": "arithmetic",
             },
         }
 

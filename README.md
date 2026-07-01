@@ -41,6 +41,49 @@ Reality Anchor status rules are intentionally conservative:
 
 This backend is local JSON-backed first. Remote MCP OAuth, cloud databases, and the Lab Failure to Raven training pipeline are separate follow-on work.
 
+## Lab Failure to Raven Dataset
+
+Failure Museum entries can also be exported into Raven-compatible critique rows. This step is GPU-free: it prepares additional training data, but it does not train a model, does not submit Kaggle jobs, and does not prove Raven improved.
+
+The current Raven vNext status may still remain blocked by Kaggle GPU quota. Exporting and preparing lab failures does not change that status on its own.
+
+Export reusable lab failures:
+
+```bash
+python scripts/export_lab_failure_datasets.py \
+  --root-path /Users/JYH/Documents/Mystic \
+  --target raven
+```
+
+Prepare a combined Raven dataset from Research Table rows, adversarial seeds, and lab failures:
+
+```bash
+python scripts/prepare_research_table_training.py \
+  --root-path /Users/JYH/Documents/Mystic \
+  --target raven \
+  --include-adversarial-seeds \
+  --include-lab-failures
+```
+
+Package the prepared split for the existing cycle workflow without submitting Kaggle:
+
+```bash
+python scripts/run_mystic_cycle.py prepare \
+  --cycle-id raven_vnext_adversarial \
+  --base-dir /Users/JYH/Documents/Mystic/mystic_data \
+  --dataset-source research_table \
+  --target raven \
+  --include-adversarial-seeds \
+  --include-lab-failures
+```
+
+Check readiness, optionally requiring exported lab failures to be present in the prepared dataset:
+
+```bash
+python scripts/check_raven_training_readiness.py \
+  --root-path /Users/JYH/Documents/Mystic
+```
+
 ## Files
 
 - [scripts/setup_mystic_data.py](/Users/JYH/Documents/Mystic/scripts/setup_mystic_data.py)

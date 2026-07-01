@@ -1212,6 +1212,10 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--target", default="raven", choices=["raven"])
     prepare.add_argument("--include-adversarial-seeds", action="store_true")
     prepare.add_argument("--adversarial-path", default="")
+    prepare.add_argument("--include-lab-failures", action="store_true")
+    prepare.add_argument("--lab-failures-path", default="")
+    prepare.add_argument("--max-lab-failure-rows", type=int, default=0)
+    prepare.add_argument("--lab-failure-weight", type=int, default=1)
     prepare.add_argument("--min-invalid-rows", type=int, default=0)
     prepare.add_argument("--allow-low-invalid", action="store_true")
     prepare.add_argument("--limit", type=int, default=0, help="Optional total row limit for prepare_raven_training_data.py.")
@@ -1318,6 +1322,15 @@ def run_prepare(args: argparse.Namespace) -> int:
         if adversarial_path_value
         else base_dir / "datasets" / "raven" / "adversarial_seed_raven.jsonl"
     )
+    include_lab_failures = bool(getattr(args, "include_lab_failures", False))
+    lab_failures_path_value = str(getattr(args, "lab_failures_path", "") or "")
+    lab_failures_path = (
+        Path(lab_failures_path_value)
+        if lab_failures_path_value
+        else base_dir / "datasets" / "lab" / "raven_lab_failures.jsonl"
+    )
+    max_lab_failure_rows = int(getattr(args, "max_lab_failure_rows", 0) or 0)
+    lab_failure_weight = int(getattr(args, "lab_failure_weight", 1) or 1)
     min_invalid_rows = int(getattr(args, "min_invalid_rows", 0) or 0)
     allow_low_invalid = bool(getattr(args, "allow_low_invalid", False))
 
@@ -1329,7 +1342,7 @@ def run_prepare(args: argparse.Namespace) -> int:
     if dataset_source == "research_table":
         if target_agent != "raven":
             raise ValueError(f"Unsupported target for research_table dataset source: {target_agent}")
-        if args.run_prepare_data or include_adversarial_seeds:
+        if args.run_prepare_data or include_adversarial_seeds or include_lab_failures:
             command = [
                 PYTHON_BIN,
                 "scripts/prepare_research_table_training.py",
@@ -1348,6 +1361,18 @@ def run_prepare(args: argparse.Namespace) -> int:
                         str(adversarial_path),
                     ]
                 )
+            if include_lab_failures:
+                command.extend(
+                    [
+                        "--include-lab-failures",
+                        "--lab-failures-path",
+                        str(lab_failures_path),
+                        "--lab-failure-weight",
+                        str(lab_failure_weight),
+                    ]
+                )
+                if max_lab_failure_rows > 0:
+                    command.extend(["--max-lab-failure-rows", str(max_lab_failure_rows)])
             if min_invalid_rows > 0:
                 command.extend(["--min-invalid-rows", str(min_invalid_rows)])
             if allow_low_invalid:
@@ -1399,11 +1424,18 @@ def run_prepare(args: argparse.Namespace) -> int:
         "dataset_source": dataset_source,
         "target_agent": target_agent,
         "include_adversarial_seeds": include_adversarial_seeds,
+        "adversarial_path": str(adversarial_path) if include_adversarial_seeds else "",
+        "include_lab_failures": include_lab_failures,
+        "lab_failures_path": str(lab_failures_path) if include_lab_failures else "",
+        "lab_failure_weight": lab_failure_weight if include_lab_failures else 0,
         "research_table_rows": int(
             training_manifest.get("research_table_rows", (export_payload or {}).get("research_table_rows", 0))
         ),
         "adversarial_seed_rows": int(
             training_manifest.get("adversarial_seed_rows", (export_payload or {}).get("adversarial_seed_rows", 0))
+        ),
+        "lab_failure_rows": int(
+            training_manifest.get("lab_failure_rows", (export_payload or {}).get("lab_failure_rows", 0))
         ),
         "combined_rows": int(
             training_manifest.get("combined_rows", (export_payload or {}).get("combined_rows", 0))
@@ -1456,7 +1488,7 @@ def run_prepare(args: argparse.Namespace) -> int:
         "package_path": str(package_path),
         "kaggle_commands_path": str(kaggle_commands_path(base_dir, args.cycle_id)),
         "package_size_bytes": package_path.stat().st_size,
-        "ran_prepare_training_data": args.run_prepare_data or include_adversarial_seeds,
+        "ran_prepare_training_data": args.run_prepare_data or include_adversarial_seeds or include_lab_failures,
         "export_payload": export_payload,
         "prepare_payload": prepare_payload,
         "training_split_payload": split_payload,
