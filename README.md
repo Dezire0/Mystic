@@ -226,6 +226,46 @@ The first public MCP tool layer exposes:
 - `mystic_compare_models`
 - `mystic_run_research_table`
 
+For the Virtual Research Lab MCP flow, use protocol-level smoke checks instead of browser `GET` requests:
+
+```bash
+python scripts/run_remote_mcp_lab_smoke.py \
+  --endpoint http://127.0.0.1:8765/mcp
+
+python scripts/run_remote_mcp_lab_smoke.py \
+  --endpoint https://mystic.dexproject.workers.dev/mcp \
+  --public-endpoint https://mystic.dexproject.workers.dev
+```
+
+This verifies external MCP client behavior end to end:
+
+- `initialize`
+- `tools/list`
+- `lab_session_create`
+- `lab_session_advance`
+- `lab_session_get`
+- persisted lab session files under `mystic_data/lab_sessions/`
+
+The smoke summary is written to:
+
+- `mystic_data/e2e/remote_mcp_lab_smoke/summary.json`
+
+To check whether the current public endpoint is import-ready for ChatGPT as a remote MCP server:
+
+```bash
+python scripts/check_chatgpt_remote_mcp_readiness.py \
+  --public-endpoint https://mystic.dexproject.workers.dev
+```
+
+This writes:
+
+- `mystic_data/e2e/remote_mcp_lab_smoke/chatgpt_remote_mcp_readiness.json`
+
+If OAuth metadata is not implemented yet, the readiness report intentionally returns:
+
+- `import_ready=false`
+- blocker `OAUTH_NOT_CONFIGURED`
+
 ## Discord Bot
 
 Install the Discord bot dependency:
