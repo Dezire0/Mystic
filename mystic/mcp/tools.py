@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import json
+import os
 from pathlib import Path
 import re
 import uuid
@@ -29,6 +30,21 @@ DEFAULT_MODEL_BY_AGENT = {
     "raven": "local_raven",
     "report": "local_report",
 }
+
+PUBLIC_MCP_BASE_URL = "https://mystic.dexproject.workers.dev"
+LAB_TOOL_NAMES = (
+    "lab_session_create",
+    "lab_session_get",
+    "lab_session_advance",
+    "lab_agent_run",
+    "lab_referee_review",
+    "lab_experiment_create",
+    "lab_experiment_run",
+    "lab_memory_search",
+    "lab_memory_write",
+    "lab_models_debate",
+    "lab_report_generate",
+)
 
 
 class MysticToolbox:
@@ -64,6 +80,9 @@ class MysticToolbox:
         adapters_dir = self.data_root / "adapters"
         datasets = self._dataset_counts()
         recent_runs = self._recent_run_ids(limit=5)
+        remote_mcp_public_endpoint = self._remote_mcp_public_endpoint()
+        oauth_configured = self._oauth_configured()
+        blockers = [] if oauth_configured else ["OAUTH_NOT_CONFIGURED"]
         return {
             "models": self._public_model_status_snapshot(),
             "tools": {
@@ -84,6 +103,13 @@ class MysticToolbox:
                 "lab_models_debate": "ready",
                 "lab_report_generate": "ready",
             },
+            "lab_core_available": True,
+            "lab_tools_count": len(LAB_TOOL_NAMES),
+            "lab_storage_root": str(self.data_root / "lab_sessions"),
+            "remote_mcp_public_endpoint": remote_mcp_public_endpoint,
+            "oauth_configured": oauth_configured,
+            "chatgpt_remote_import_ready": bool(remote_mcp_public_endpoint) and oauth_configured,
+            "blockers": blockers,
             "datasets": datasets,
             "adapter_status": {
                 "available": sorted(path.name for path in adapters_dir.iterdir()) if adapters_dir.exists() else [],
@@ -713,6 +739,17 @@ class MysticToolbox:
             "archive",
         ]:
             (self.data_root / relative).mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _oauth_configured() -> bool:
+        return False
+
+    @staticmethod
+    def _remote_mcp_public_endpoint() -> str:
+        base_url = os.environ.get("MYSTIC_PUBLIC_BASE_URL", PUBLIC_MCP_BASE_URL).strip()
+        if not base_url:
+            return ""
+        return f"{base_url.rstrip('/')}/mcp"
 
     @staticmethod
     def _build_python_task(task: str) -> str | None:
