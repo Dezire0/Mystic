@@ -527,6 +527,78 @@ python scripts/run_raven_vnext_eval.py \
 
 Generated datasets, training reports, E2E output, metrics, and Kaggle packages under `mystic_data/` are ignored by git. A low `INVALID` row warning means Raven may over-accept weak or false proofs; regenerate the adversarial seeds and prepare with `--include-adversarial-seeds`.
 
+## Watching Raven vNext Training
+
+After submit, watch the already-submitted Raven vNext cycle without creating a new Kaggle job:
+
+```bash
+python scripts/watch_raven_vnext_training.py \
+  --root-path /Users/JYH/Documents/Mystic \
+  --cycle-id raven_vnext_adversarial \
+  --expected-tar-name raven_lora_vnext_adversarial.tar.gz
+```
+
+One-shot mode polls once and exits `0` when training is still running:
+
+```bash
+python scripts/watch_raven_vnext_training.py \
+  --root-path /Users/JYH/Documents/Mystic \
+  --cycle-id raven_vnext_adversarial \
+  --expected-tar-name raven_lora_vnext_adversarial.tar.gz \
+  --once
+```
+
+If the adapter tar was downloaded manually, skip download and run eval only:
+
+```bash
+python scripts/watch_raven_vnext_training.py \
+  --root-path /Users/JYH/Documents/Mystic \
+  --cycle-id raven_vnext_adversarial \
+  --expected-tar-name raven_lora_vnext_adversarial.tar.gz \
+  --adapter-tar /path/to/raven_lora_vnext_adversarial.tar.gz \
+  --eval-only
+```
+
+This watcher does not submit a new Kaggle job. It only watches, downloads, and evaluates the already-submitted cycle. It never runs Kaggle training automatically from scratch, does not require API keys, and stores runtime artifacts under `mystic_data/`.
+
+If Kaggle fails with package tar not found:
+
+- inspect `mystic_data/cycles/raven_vnext_adversarial/kaggle_poll_summary.json`
+- inspect the generated `kaggle_kernel/train_mystic_raven.py`
+- ensure the submit summary records the exact `package_filename`
+- ensure the generated kernel searches `/kaggle/input` recursively to a safe depth instead of relying on one hardcoded mount path
+- after fixing the discovery logic, intentionally rerun `submit`
+
+If submit fails because Kaggle GPU quota is exhausted:
+
+- no new training run started
+- do not run the watcher expecting adapter output from a new run
+- wait for the weekly Kaggle GPU quota reset or use an environment with available GPU quota
+- rerun the same submit command with the existing prepared package
+- do not regenerate the package unless the dataset contents changed
+
+Retry the existing prepared package with:
+
+```bash
+python /Users/JYH/Documents/Mystic/scripts/run_mystic_cycle.py submit \
+  --cycle-id raven_vnext_adversarial \
+  --base-dir /Users/JYH/Documents/Mystic/mystic_data \
+  --package-path /Users/JYH/Documents/Mystic/mystic_gpu_train_package_raven_vnext_adversarial.tar.gz \
+  --kaggle-username dyrakd \
+  --adapter-path mystic_data/adapters/raven_lora_vnext_adversarial \
+  --output-tar-name raven_lora_vnext_adversarial.tar.gz
+```
+
+Then check status without creating a new run:
+
+```bash
+python /Users/JYH/Documents/Mystic/scripts/watch_raven_vnext_training.py \
+  --root-path /Users/JYH/Documents/Mystic \
+  --cycle-id raven_vnext_adversarial \
+  --expected-tar-name raven_lora_vnext_adversarial.tar.gz \
+  --once
+```
+
 ## Kaggle Automation
 
 For free GPU automation, Mystic now supports a Kaggle CLI flow inside [scripts/run_mystic_cycle.py](/Users/JYH/Documents/Mystic/scripts/run_mystic_cycle.py).
