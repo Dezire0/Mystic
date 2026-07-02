@@ -111,6 +111,68 @@ class RemoteMCPLabSmokeTests(unittest.TestCase):
             self.assertTrue(summary["auth_required"])
             self.assertTrue(summary["oauth_required"])
 
+    def test_remote_smoke_passes_bearer_token_header(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = smoke.Path(temp_dir)
+            session_dir = temp_root / "mystic_data" / "lab_sessions" / "lab-auth"
+            session_dir.mkdir(parents=True, exist_ok=True)
+            persisted = {
+                "session_path": str(session_dir / "session.json"),
+                "notebook_path": str(session_dir / "notebook.md"),
+                "report_path": str(session_dir / "report.md"),
+            }
+            for path_text in persisted.values():
+                smoke.Path(path_text).write_text("ok", encoding="utf-8")
+            output_path = temp_root / "summary.json"
+            seen_headers: list[dict[str, str] | None] = []
+
+            responses = {
+                1: _mcp_success(1, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
+                2: _mcp_success(2, {"tools": [{"name": name} for name in sorted(smoke.EXISTING_TOOLS | smoke.LAB_TOOLS)]}),
+                3: _mcp_success(3, {"structuredContent": {"session_id": "lab-auth", "paths": persisted}}),
+                4: _mcp_success(4, {"structuredContent": {"updated_session": {"session_id": "lab-auth"}, "paths": persisted}}),
+                5: _mcp_success(
+                    5,
+                    {"structuredContent": {"session": {"session_id": "lab-auth"}, "report_path": persisted["report_path"]}},
+                ),
+                6: _mcp_success(6, {"structuredContent": {"report_path": persisted["report_path"]}}),
+            }
+
+            def fake_mcp_request(*args, **kwargs):  # type: ignore[no-untyped-def]
+                seen_headers.append(kwargs.get("headers"))
+                return responses[kwargs["request_id"]]
+
+            with patch.object(smoke, "mcp_request", side_effect=fake_mcp_request):
+                summary = smoke.run_remote_mcp_lab_smoke(
+                    endpoint="https://mystic.dexproject.workers.dev/mcp",
+                    bearer_token="secret-token",
+                    auth_mode="bearer",
+                    session_problem="test problem",
+                    domain="math",
+                    mode="proof_critical",
+                    timeout_seconds=5,
+                    output_path=output_path,
+                )
+
+            self.assertEqual(summary["final_status"], smoke.READY_PUBLIC)
+            self.assertTrue(all(headers == {"Authorization": "Bearer secret-token"} for headers in seen_headers))
+
+    def test_remote_smoke_stops_after_auth_required_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = smoke.Path(temp_dir) / "summary.json"
+            response = {"status": 401, "headers": {"WWW-Authenticate": "Bearer"}, "body": {"error": "unauthorized"}}
+            with patch.object(smoke, "mcp_request", return_value=response) as mocked_request:
+                summary = smoke.run_remote_mcp_lab_smoke(
+                    endpoint="https://mystic.dexproject.workers.dev/mcp",
+                    session_problem="test problem",
+                    domain="math",
+                    mode="proof_critical",
+                    timeout_seconds=5,
+                    output_path=output_path,
+                )
+            self.assertEqual(summary["final_status"], smoke.OAUTH_REQUIRED)
+            self.assertEqual(mocked_request.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

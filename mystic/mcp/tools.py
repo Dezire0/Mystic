@@ -81,8 +81,18 @@ class MysticToolbox:
         datasets = self._dataset_counts()
         recent_runs = self._recent_run_ids(limit=5)
         remote_mcp_public_endpoint = self._remote_mcp_public_endpoint()
+        oauth_enabled = self._oauth_enabled()
         oauth_configured = self._oauth_configured()
-        blockers = [] if oauth_configured else ["OAUTH_NOT_CONFIGURED"]
+        oauth_metadata_available = oauth_enabled and oauth_configured
+        import_ready_candidate = bool(remote_mcp_public_endpoint) and oauth_metadata_available
+        import_ready = import_ready_candidate and self._manual_import_verified()
+        blockers: list[str] = []
+        if not oauth_enabled:
+            blockers.append("OAUTH_NOT_CONFIGURED")
+        elif not oauth_configured:
+            blockers.append("OAUTH_METADATA_MISSING")
+        elif not import_ready:
+            blockers.append("MANUAL_CHATGPT_IMPORT_NOT_VERIFIED")
         return {
             "models": self._public_model_status_snapshot(),
             "tools": {
@@ -108,7 +118,10 @@ class MysticToolbox:
             "lab_storage_root": str(self.data_root / "lab_sessions"),
             "remote_mcp_public_endpoint": remote_mcp_public_endpoint,
             "oauth_configured": oauth_configured,
-            "chatgpt_remote_import_ready": bool(remote_mcp_public_endpoint) and oauth_configured,
+            "oauth_enabled": oauth_enabled,
+            "oauth_metadata_available": oauth_metadata_available,
+            "chatgpt_remote_import_ready": import_ready,
+            "chatgpt_remote_import_ready_candidate": import_ready_candidate,
             "blockers": blockers,
             "datasets": datasets,
             "adapter_status": {
@@ -741,15 +754,41 @@ class MysticToolbox:
             (self.data_root / relative).mkdir(parents=True, exist_ok=True)
 
     @staticmethod
-    def _oauth_configured() -> bool:
-        return False
+    def _oauth_enabled() -> bool:
+        return str(os.environ.get("MYSTIC_OAUTH_ENABLED", "")).strip().lower() == "true"
 
     @staticmethod
-    def _remote_mcp_public_endpoint() -> str:
+    def _oauth_configured() -> bool:
+        if not MysticToolbox._oauth_enabled():
+            return False
+        secret = (
+            os.environ.get("MYSTIC_OAUTH_SIGNING_SECRET")
+            or os.environ.get("MYSTIC_OAUTH_CLIENT_SECRET")
+            or os.environ.get("MYSTIC_OAUTH_DEV_STATIC_TOKEN")
+            or ""
+        ).strip()
+        issuer = os.environ.get("MYSTIC_OAUTH_ISSUER", "").strip()
+        return bool(secret and issuer)
+
+    def _remote_mcp_public_endpoint(self) -> str:
         base_url = os.environ.get("MYSTIC_PUBLIC_BASE_URL", PUBLIC_MCP_BASE_URL).strip()
         if not base_url:
             return ""
         return f"{base_url.rstrip('/')}/mcp"
+
+    def _manual_import_verified(self) -> bool:
+        confirmation_path = (
+            self.data_root / "e2e" / "remote_mcp_lab_smoke" / "chatgpt_import_verified.json"
+        )
+        if not confirmation_path.exists():
+            return False
+        try:
+            payload = json.loads(confirmation_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(payload, dict) or not payload.get("import_verified"):
+            return False
+        return str(payload.get("public_endpoint", "")).rstrip("/") == self._remote_mcp_public_endpoint().removesuffix("/mcp")
 
     @staticmethod
     def _build_python_task(task: str) -> str | None:

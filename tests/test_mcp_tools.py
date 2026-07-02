@@ -60,7 +60,16 @@ class MCPToolsTests(unittest.TestCase):
             temp_dir.cleanup()
 
     def test_status_reports_models_and_tools(self):
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-secret"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "sk-test-secret",
+                "MYSTIC_OAUTH_ENABLED": "true",
+                "MYSTIC_OAUTH_ISSUER": "https://mystic.dexproject.workers.dev",
+                "MYSTIC_OAUTH_SIGNING_SECRET": "oauth-signing-secret",
+            },
+            clear=False,
+        ):
             toolbox = self._make_toolbox()
             status = toolbox.mystic_status()
         self.assertIn("local_prime", status["models"])
@@ -70,10 +79,14 @@ class MCPToolsTests(unittest.TestCase):
         self.assertGreaterEqual(status["lab_tools_count"], 5)
         self.assertTrue(status["lab_storage_root"].endswith("mystic_data/lab_sessions"))
         self.assertEqual(status["remote_mcp_public_endpoint"], "https://mystic.dexproject.workers.dev/mcp")
-        self.assertFalse(status["oauth_configured"])
+        self.assertTrue(status["oauth_enabled"])
+        self.assertTrue(status["oauth_configured"])
+        self.assertTrue(status["oauth_metadata_available"])
         self.assertFalse(status["chatgpt_remote_import_ready"])
-        self.assertIn("OAUTH_NOT_CONFIGURED", status["blockers"])
+        self.assertTrue(status["chatgpt_remote_import_ready_candidate"])
+        self.assertIn("MANUAL_CHATGPT_IMPORT_NOT_VERIFIED", status["blockers"])
         self.assertNotIn("sk-test-secret", json.dumps(status))
+        self.assertNotIn("oauth-signing-secret", json.dumps(status))
 
     def test_verify_answer_flags_invalid_egyptian_fraction_set(self):
         toolbox = self._make_toolbox()
