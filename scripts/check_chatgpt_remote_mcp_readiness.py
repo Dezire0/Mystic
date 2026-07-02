@@ -5,18 +5,24 @@ import json
 from pathlib import Path
 import sys
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from mystic.mcp.import_verification import (  # noqa: E402
+    default_verification_artifact_path,
+    load_import_verification,
+    validate_import_verification_artifact,
+)
 from scripts.run_remote_mcp_lab_smoke import (
     LAB_TOOLS,
     auth_status_from_response,
     base_url_from_endpoint,
     extract_tool_names,
-    http_json_request,
     mcp_request,
     now_iso,
     validate_mcp_success,
@@ -24,7 +30,6 @@ from scripts.run_remote_mcp_lab_smoke import (
 
 
 DEFAULT_PUBLIC_ENDPOINT = "https://mystic.dexproject.workers.dev"
-MANUAL_IMPORT_CONFIRMATION_PATH = ROOT / "mystic_data" / "e2e" / "remote_mcp_lab_smoke" / "chatgpt_import_verified.json"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,6 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional output path. Defaults to mystic_data/e2e/remote_mcp_lab_smoke/chatgpt_remote_mcp_readiness.json.",
     )
+    parser.add_argument(
+        "--manual-import-verification-artifact",
+        default="",
+        help="Optional runtime artifact path used to mark import_ready=true after real manual ChatGPT verification.",
+    )
     return parser
 
 
@@ -54,6 +64,57 @@ def write_json(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
     return payload
+
+
+def http_json_request(
+    url: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    method: str = "POST",
+    timeout_seconds: int = 30,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    request_headers = {"User-Agent": "Mystic Remote MCP Readiness", "Accept": "application/json, text/html;q=0.9, */*;q=0.8"}
+    if data is not None:
+        request_headers["Content-Type"] = "application/json"
+    if headers:
+        request_headers.update(headers)
+    request = Request(url, data=data, headers=request_headers, method=method)
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            return _decode_http_response(
+                status=response.status,
+                headers=dict(response.headers.items()),
+                body_text=response.read().decode("utf-8"),
+            )
+    except HTTPError as exc:
+        return _decode_http_response(
+            status=exc.code,
+            headers=dict(exc.headers.items()),
+            body_text=exc.read().decode("utf-8"),
+            ok=False,
+        )
+    except URLError as exc:
+        return {"ok": False, "status": None, "headers": {}, "body": {"error": str(exc.reason)}}
+
+
+def _decode_http_response(
+    *,
+    status: int | None,
+    headers: dict[str, str],
+    body_text: str,
+    ok: bool = True,
+) -> dict[str, Any]:
+    content_type = str(headers.get("Content-Type", headers.get("content-type", ""))).lower()
+    if "json" in content_type:
+        try:
+            body = json.loads(body_text) if body_text.strip() else None
+        except json.JSONDecodeError:
+            body = {"raw": body_text}
+    else:
+        body = {"raw": body_text} if body_text else None
+    return {"ok": ok, "status": status, "headers": headers, "body": body}
 
 
 def _protected_resource_metadata_urls(public_endpoint: str) -> list[str]:
@@ -103,21 +164,6 @@ def _looks_like_auth_server_metadata(body: Any) -> bool:
 
 def _dedupe(values: list[str]) -> list[str]:
     return list(dict.fromkeys(value for value in values if value))
-
-
-def _load_manual_import_confirmation(public_endpoint: str) -> bool:
-    if not MANUAL_IMPORT_CONFIRMATION_PATH.exists():
-        return False
-    try:
-        payload = json.loads(MANUAL_IMPORT_CONFIRMATION_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(payload, dict):
-        return False
-    if not payload.get("import_verified"):
-        return False
-    confirmed_endpoint = str(payload.get("public_endpoint", "")).rstrip("/")
-    return confirmed_endpoint == public_endpoint.rstrip("/")
 
 
 def _metadata_probe(base_url: str, timeout_seconds: int) -> tuple[dict[str, Any], list[str], list[str]]:
@@ -208,6 +254,7 @@ def check_chatgpt_remote_mcp_readiness(
     require_dynamic_client_registration: bool = False,
     timeout_seconds: int = 30,
     output_path: Path | None = None,
+    manual_import_verification_artifact_path: Path | None = None,
 ) -> dict[str, Any]:
     endpoint = public_endpoint.rstrip("/")
     if not endpoint.endswith("/mcp"):
@@ -229,6 +276,11 @@ def check_chatgpt_remote_mcp_readiness(
         "oauth_required": False,
         "import_ready": False,
         "import_ready_candidate": False,
+        "manual_import_verification_checked": False,
+        "manual_import_verification_path": "",
+        "manual_import_verified": False,
+        "manual_import_verification_errors": [],
+        "manual_import_verification_warnings": [],
         "blockers": [],
         "next_actions": [],
         "checked_at": now_iso(),
@@ -328,10 +380,23 @@ def check_chatgpt_remote_mcp_readiness(
         and report["lab_tools_visible"]
         and (report["dynamic_client_registration_ok"] or not require_dynamic_client_registration)
     )
-    report["import_ready"] = report["import_ready_candidate"] and _load_manual_import_confirmation(base_url)
-    if report["import_ready_candidate"] and not report["import_ready"]:
+    artifact_path = manual_import_verification_artifact_path or default_verification_artifact_path(ROOT)
+    report["manual_import_verification_path"] = str(artifact_path)
+    report["manual_import_verification_checked"] = artifact_path.exists()
+    artifact_payload = load_import_verification(artifact_path) if artifact_path.exists() else None
+    if artifact_path.exists():
+        if artifact_payload is None:
+            report["manual_import_verification_errors"].append("artifact is missing or invalid JSON")
+        else:
+            artifact_validation = validate_import_verification_artifact(artifact_payload, public_endpoint=base_url)
+            report["manual_import_verified"] = artifact_validation["verified"]
+            report["manual_import_verification_errors"].extend(artifact_validation["errors"])
+            report["manual_import_verification_warnings"].extend(artifact_validation["warnings"])
+    report["import_ready"] = report["import_ready_candidate"] and report["manual_import_verified"]
+    if report["import_ready_candidate"] and not report["manual_import_verified"]:
+        report["blockers"].append("MANUAL_IMPORT_NOT_VERIFIED")
         report["next_actions"].append(
-            "Run a real ChatGPT Developer Mode remote MCP import and save an explicit verification artifact before marking import_ready=true."
+            "Run a real ChatGPT Developer Mode remote MCP import, create the manual verification artifact, and rerun readiness."
         )
 
     destination = output_path or default_output_path(ROOT)
@@ -341,6 +406,11 @@ def check_chatgpt_remote_mcp_readiness(
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     output_path = Path(args.output) if args.output else default_output_path(ROOT)
+    artifact_path = (
+        Path(args.manual_import_verification_artifact)
+        if args.manual_import_verification_artifact
+        else default_verification_artifact_path(ROOT)
+    )
     report = check_chatgpt_remote_mcp_readiness(
         args.public_endpoint,
         bearer_token=args.bearer_token,
@@ -348,6 +418,7 @@ def main(argv: list[str] | None = None) -> int:
         require_dynamic_client_registration=args.require_dynamic_client_registration,
         timeout_seconds=args.timeout_seconds,
         output_path=output_path,
+        manual_import_verification_artifact_path=artifact_path,
     )
     print(json.dumps(report, indent=2, ensure_ascii=True))
     return 0 if report["import_ready"] or report["import_ready_candidate"] else 1
