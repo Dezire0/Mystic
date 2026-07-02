@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 from typing import Any
+from urllib.parse import urlencode
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -23,11 +24,19 @@ from scripts.run_remote_mcp_lab_smoke import (
 
 
 DEFAULT_PUBLIC_ENDPOINT = "https://mystic.dexproject.workers.dev"
+MANUAL_IMPORT_CONFIRMATION_PATH = ROOT / "mystic_data" / "e2e" / "remote_mcp_lab_smoke" / "chatgpt_import_verified.json"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Check whether Mystic is import-ready as a ChatGPT remote MCP server.")
     parser.add_argument("--public-endpoint", default=DEFAULT_PUBLIC_ENDPOINT, help="Public Mystic base URL or /mcp URL.")
+    parser.add_argument("--bearer-token", default="", help="Optional bearer token used to validate authenticated /mcp access.")
+    parser.add_argument("--expect-oauth", action="store_true", help="Require OAuth metadata and auth-required MCP behavior.")
+    parser.add_argument(
+        "--require-dynamic-client-registration",
+        action="store_true",
+        help="Treat missing /oauth/register support as a blocker.",
+    )
     parser.add_argument("--timeout-seconds", type=int, default=30)
     parser.add_argument(
         "--output",
@@ -47,9 +56,12 @@ def write_json(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _protected_resource_metadata_url(public_endpoint: str) -> str:
+def _protected_resource_metadata_urls(public_endpoint: str) -> list[str]:
     base_url = base_url_from_endpoint(public_endpoint)
-    return f"{base_url.rstrip('/')}/.well-known/oauth-protected-resource"
+    return [
+        f"{base_url.rstrip('/')}/.well-known/oauth-protected-resource",
+        f"{base_url.rstrip('/')}/.well-known/oauth-protected-resource/mcp",
+    ]
 
 
 def _oauth_authorization_server_url(auth_server: str) -> str:
@@ -60,7 +72,19 @@ def _openid_configuration_url(auth_server: str) -> str:
     return f"{auth_server.rstrip('/')}/.well-known/openid-configuration"
 
 
-def _looks_like_oauth_metadata(body: Any) -> bool:
+def _authorize_url(base_url: str) -> str:
+    return f"{base_url.rstrip('/')}/oauth/authorize"
+
+
+def _token_url(base_url: str) -> str:
+    return f"{base_url.rstrip('/')}/oauth/token"
+
+
+def _register_url(base_url: str) -> str:
+    return f"{base_url.rstrip('/')}/oauth/register"
+
+
+def _looks_like_protected_resource_metadata(body: Any) -> bool:
     return (
         isinstance(body, dict)
         and isinstance(body.get("resource"), str)
@@ -77,42 +101,111 @@ def _looks_like_auth_server_metadata(body: Any) -> bool:
     )
 
 
-def _check_oauth_configuration(public_endpoint: str, timeout_seconds: int) -> tuple[bool, list[str]]:
-    warnings: list[str] = []
-    protected_resource = http_json_request(
-        _protected_resource_metadata_url(public_endpoint),
-        method="GET",
-        timeout_seconds=timeout_seconds,
-    )
-    if int(protected_resource.get("status") or 0) != 200 or not _looks_like_oauth_metadata(protected_resource.get("body")):
-        warnings.append("Protected resource metadata is missing or invalid.")
-        return False, warnings
+def _dedupe(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(value for value in values if value))
 
+
+def _load_manual_import_confirmation(public_endpoint: str) -> bool:
+    if not MANUAL_IMPORT_CONFIRMATION_PATH.exists():
+        return False
+    try:
+        payload = json.loads(MANUAL_IMPORT_CONFIRMATION_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if not payload.get("import_verified"):
+        return False
+    confirmed_endpoint = str(payload.get("public_endpoint", "")).rstrip("/")
+    return confirmed_endpoint == public_endpoint.rstrip("/")
+
+
+def _metadata_probe(base_url: str, timeout_seconds: int) -> tuple[dict[str, Any], list[str], list[str]]:
+    blockers: list[str] = []
+    next_actions: list[str] = []
+    details: dict[str, Any] = {
+        "oauth_configured": False,
+        "oauth_metadata_ok": False,
+        "oauth_authorize_ok": False,
+        "oauth_token_ok": False,
+        "dynamic_client_registration_ok": False,
+        "authorization_server": "",
+        "protected_resource_metadata_url": "",
+    }
+
+    protected_resource: dict[str, Any] | None = None
+    for url in _protected_resource_metadata_urls(base_url):
+        candidate = http_json_request(url, method="GET", timeout_seconds=timeout_seconds)
+        if int(candidate.get("status") or 0) == 200 and _looks_like_protected_resource_metadata(candidate.get("body")):
+            protected_resource = candidate
+            details["protected_resource_metadata_url"] = url
+            break
+    if protected_resource is None:
+        blockers.append("OAUTH_METADATA_MISSING")
+        next_actions.append("Expose /.well-known/oauth-protected-resource for the public MCP resource.")
+        return details, blockers, next_actions
+
+    details["oauth_metadata_ok"] = True
     authorization_servers = protected_resource["body"]["authorization_servers"]
+    authorization_server_metadata: dict[str, Any] | None = None
     for auth_server in authorization_servers:
-        oauth_metadata = http_json_request(
-            _oauth_authorization_server_url(str(auth_server)),
-            method="GET",
-            timeout_seconds=timeout_seconds,
-        )
-        if int(oauth_metadata.get("status") or 0) == 200 and _looks_like_auth_server_metadata(oauth_metadata.get("body")):
-            return True, warnings
+        auth_server = str(auth_server)
+        details["authorization_server"] = auth_server
+        for discovery_url in (_oauth_authorization_server_url(auth_server), _openid_configuration_url(auth_server)):
+            candidate = http_json_request(discovery_url, method="GET", timeout_seconds=timeout_seconds)
+            if int(candidate.get("status") or 0) == 200 and _looks_like_auth_server_metadata(candidate.get("body")):
+                authorization_server_metadata = candidate
+                break
+        if authorization_server_metadata is not None:
+            break
+    if authorization_server_metadata is None:
+        blockers.append("OAUTH_METADATA_MISSING")
+        next_actions.append("Expose OAuth authorization server discovery metadata.")
+        return details, blockers, next_actions
 
-        openid_metadata = http_json_request(
-            _openid_configuration_url(str(auth_server)),
-            method="GET",
-            timeout_seconds=timeout_seconds,
-        )
-        if int(openid_metadata.get("status") or 0) == 200 and _looks_like_auth_server_metadata(openid_metadata.get("body")):
-            return True, warnings
+    details["oauth_configured"] = True
+    authorize_params = {
+        "response_type": "code",
+        "client_id": "mystic-readiness-check",
+        "redirect_uri": "https://example.com/callback",
+        "state": "mystic-state",
+        "scope": "tools:read tools:execute",
+        "code_challenge": "mystic-pkce-challenge",
+        "code_challenge_method": "S256",
+    }
+    authorize_url = f"{_authorize_url(base_url)}?{urlencode(authorize_params)}"
+    authorize_response = http_json_request(authorize_url, method="GET", timeout_seconds=timeout_seconds)
+    if int(authorize_response.get("status") or 0) in {200, 302, 303}:
+        details["oauth_authorize_ok"] = True
+    else:
+        blockers.append("OAUTH_AUTHORIZE_MISSING")
+        next_actions.append("Implement /oauth/authorize so it serves a consent or redirect flow.")
 
-    warnings.append("Authorization server discovery metadata is missing or invalid.")
-    return False, warnings
+    token_response = http_json_request(
+        _token_url(base_url),
+        payload=None,
+        method="POST",
+        timeout_seconds=timeout_seconds,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    if int(token_response.get("status") or 0) in {200, 400, 401}:
+        details["oauth_token_ok"] = True
+    else:
+        blockers.append("OAUTH_TOKEN_MISSING")
+        next_actions.append("Implement /oauth/token so clients can exchange authorization codes for access tokens.")
+
+    register_response = http_json_request(_register_url(base_url), method="POST", timeout_seconds=timeout_seconds)
+    details["dynamic_client_registration_ok"] = int(register_response.get("status") or 0) in {200, 201}
+
+    return details, blockers, next_actions
 
 
 def check_chatgpt_remote_mcp_readiness(
     public_endpoint: str,
     *,
+    bearer_token: str = "",
+    expect_oauth: bool = False,
+    require_dynamic_client_registration: bool = False,
     timeout_seconds: int = 30,
     output_path: Path | None = None,
 ) -> dict[str, Any]:
@@ -128,8 +221,14 @@ def check_chatgpt_remote_mcp_readiness(
         "tools_list_ok": False,
         "lab_tools_visible": False,
         "oauth_configured": False,
+        "oauth_metadata_ok": False,
+        "oauth_authorize_ok": False,
+        "oauth_token_ok": False,
+        "dynamic_client_registration_ok": False,
+        "token_validation_ok": False,
         "oauth_required": False,
         "import_ready": False,
+        "import_ready_candidate": False,
         "blockers": [],
         "next_actions": [],
         "checked_at": now_iso(),
@@ -142,57 +241,98 @@ def check_chatgpt_remote_mcp_readiness(
         report["blockers"].append("HEALTHCHECK_FAILED")
         report["next_actions"].append("Ensure the public Worker and local Mystic backend both serve GET /health.")
 
-    initialize = mcp_request(endpoint, request_id=1, method="initialize", timeout_seconds=timeout_seconds)
-    auth_required, oauth_required = auth_status_from_response(initialize)
+    metadata_details, metadata_blockers, metadata_actions = _metadata_probe(base_url, timeout_seconds)
+    report.update(metadata_details)
+    report["blockers"].extend(metadata_blockers)
+    report["next_actions"].extend(metadata_actions)
+
+    unauth_initialize = mcp_request(endpoint, request_id=1, method="initialize", timeout_seconds=timeout_seconds)
+    auth_required, oauth_required = auth_status_from_response(unauth_initialize)
     report["oauth_required"] = oauth_required
 
-    if initialize.get("status") is None:
-        report["blockers"].append("MCP_UNREACHABLE")
-        report["next_actions"].append("Expose the public /mcp endpoint and verify it accepts MCP JSON-RPC POST requests.")
-    elif auth_required:
-        report["blockers"].append("MCP_AUTH_REQUIRED")
-        report["mcp_initialize_ok"] = False
-    else:
-        initialize_errors = validate_mcp_success(initialize, expected_id=1)
-        if initialize_errors:
-            report["blockers"].append("MCP_INITIALIZE_FAILED")
-            report["next_actions"].append("Fix MCP initialize so the public endpoint returns a valid JSON-RPC success result.")
-        else:
-            report["mcp_initialize_ok"] = True
+    if auth_required:
+        report["token_validation_ok"] = True
+    elif expect_oauth:
+        report["blockers"].append("TOKEN_VALIDATION_MISSING")
+        report["next_actions"].append("Enable bearer-token protection for /mcp when OAuth is enabled.")
 
-    tools_list = mcp_request(endpoint, request_id=2, method="tools/list", timeout_seconds=timeout_seconds)
-    tools_errors = validate_mcp_success(tools_list, expected_id=2)
-    if tools_errors:
-        report["blockers"].append("TOOLS_LIST_FAILED")
-        report["next_actions"].append("Fix tools/list on the public MCP endpoint.")
-    else:
-        report["tools_list_ok"] = True
-        tool_names = extract_tool_names(tools_list)
-        report["lab_tools_visible"] = LAB_TOOLS.issubset(tool_names)
-        if not report["lab_tools_visible"]:
-            report["blockers"].append("LAB_TOOLS_NOT_VISIBLE")
-            report["next_actions"].append("Expose lab_* tools from tools/list on the public MCP endpoint.")
-
-    oauth_configured, oauth_warnings = _check_oauth_configuration(base_url, timeout_seconds)
-    report["oauth_configured"] = oauth_configured
-    if not oauth_configured:
-        report["blockers"].append("OAUTH_NOT_CONFIGURED")
-        report["next_actions"].append(
-            "Add /.well-known/oauth-protected-resource and OAuth authorization server discovery metadata before attempting ChatGPT import."
+    authed_initialize = unauth_initialize
+    authed_tools_list: dict[str, Any] | None = None
+    if bearer_token:
+        auth_headers = {"Authorization": f"Bearer {bearer_token}"}
+        authed_initialize = mcp_request(
+            endpoint,
+            request_id=2,
+            method="initialize",
+            timeout_seconds=timeout_seconds,
+            headers=auth_headers,
         )
-    for warning in oauth_warnings:
-        if warning not in report["next_actions"]:
-            report["next_actions"].append(warning)
+        initialize_errors = validate_mcp_success(authed_initialize, expected_id=2)
+        if not initialize_errors:
+            report["mcp_initialize_ok"] = True
+            authed_tools_list = mcp_request(
+                endpoint,
+                request_id=3,
+                method="tools/list",
+                timeout_seconds=timeout_seconds,
+                headers=auth_headers,
+            )
+            tools_errors = validate_mcp_success(authed_tools_list, expected_id=3)
+            if not tools_errors:
+                report["tools_list_ok"] = True
+                tool_names = extract_tool_names(authed_tools_list)
+                report["lab_tools_visible"] = LAB_TOOLS.issubset(tool_names)
+                report["token_validation_ok"] = True
+            else:
+                report["blockers"].append("TOKEN_VALIDATION_MISSING")
+                report["next_actions"].append("Bearer token reached /mcp but tools/list did not succeed.")
+        else:
+            report["blockers"].append("TOKEN_VALIDATION_MISSING")
+            report["next_actions"].append("Bearer token did not unlock /mcp initialize successfully.")
+    else:
+        if not auth_required:
+            initialize_errors = validate_mcp_success(unauth_initialize, expected_id=1)
+            if not initialize_errors:
+                report["mcp_initialize_ok"] = True
+                tools_list = mcp_request(endpoint, request_id=4, method="tools/list", timeout_seconds=timeout_seconds)
+                tools_errors = validate_mcp_success(tools_list, expected_id=4)
+                if not tools_errors:
+                    report["tools_list_ok"] = True
+                    tool_names = extract_tool_names(tools_list)
+                    report["lab_tools_visible"] = LAB_TOOLS.issubset(tool_names)
+        elif expect_oauth:
+            report["next_actions"].append("Provide --bearer-token to confirm authenticated tools/list behavior.")
 
-    report["blockers"] = list(dict.fromkeys(report["blockers"]))
-    report["next_actions"] = list(dict.fromkeys(report["next_actions"]))
-    report["import_ready"] = (
+    if require_dynamic_client_registration and not report["dynamic_client_registration_ok"]:
+        report["blockers"].append("OAUTH_DYNAMIC_CLIENT_REGISTRATION_MISSING")
+        report["next_actions"].append("Implement /oauth/register or disable the DCR requirement for this readiness check.")
+
+    if expect_oauth and not report["oauth_configured"]:
+        report["blockers"].append("OAUTH_NOT_CONFIGURED")
+        report["next_actions"].append("Configure Worker OAuth environment variables and deploy the metadata/auth endpoints.")
+    elif not report["oauth_configured"]:
+        report["blockers"].append("OAUTH_NOT_CONFIGURED")
+        report["next_actions"].append("OAuth is optional for public smoke, but ChatGPT import readiness requires it.")
+
+    report["blockers"] = _dedupe(report["blockers"])
+    report["next_actions"] = _dedupe(report["next_actions"])
+    report["import_ready_candidate"] = (
         report["health_ok"]
+        and report["oauth_configured"]
+        and report["oauth_metadata_ok"]
+        and report["oauth_authorize_ok"]
+        and report["oauth_token_ok"]
+        and report["token_validation_ok"]
         and report["mcp_initialize_ok"]
         and report["tools_list_ok"]
         and report["lab_tools_visible"]
-        and report["oauth_configured"]
+        and (report["dynamic_client_registration_ok"] or not require_dynamic_client_registration)
     )
+    report["import_ready"] = report["import_ready_candidate"] and _load_manual_import_confirmation(base_url)
+    if report["import_ready_candidate"] and not report["import_ready"]:
+        report["next_actions"].append(
+            "Run a real ChatGPT Developer Mode remote MCP import and save an explicit verification artifact before marking import_ready=true."
+        )
 
     destination = output_path or default_output_path(ROOT)
     return write_json(destination, report)
@@ -203,11 +343,14 @@ def main(argv: list[str] | None = None) -> int:
     output_path = Path(args.output) if args.output else default_output_path(ROOT)
     report = check_chatgpt_remote_mcp_readiness(
         args.public_endpoint,
+        bearer_token=args.bearer_token,
+        expect_oauth=args.expect_oauth,
+        require_dynamic_client_registration=args.require_dynamic_client_registration,
         timeout_seconds=args.timeout_seconds,
         output_path=output_path,
     )
     print(json.dumps(report, indent=2, ensure_ascii=True))
-    return 0 if report["import_ready"] else 1
+    return 0 if report["import_ready"] or report["import_ready_candidate"] else 1
 
 
 if __name__ == "__main__":

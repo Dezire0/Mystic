@@ -49,6 +49,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run MCP lab smoke checks against a local or public Mystic MCP endpoint.")
     parser.add_argument("--endpoint", required=True, help="Full MCP endpoint URL, such as http://127.0.0.1:8765/mcp.")
     parser.add_argument("--public-endpoint", default="", help="Optional public endpoint URL for reporting context.")
+    parser.add_argument("--bearer-token", default="", help="Optional bearer token for OAuth-protected /mcp access.")
+    parser.add_argument(
+        "--auth-mode",
+        default="none",
+        choices=["none", "bearer", "expect-auth-required"],
+        help="Authentication expectation for the endpoint under test.",
+    )
     parser.add_argument(
         "--session-problem",
         default="Find all positive integer triples x <= y <= z such that 1/x + 1/y + 1/z = 1",
@@ -87,12 +94,15 @@ def http_json_request(
     payload: dict[str, Any] | None = None,
     method: str = "POST",
     timeout_seconds: int = 30,
+    headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
-    headers = {"User-Agent": "Mystic Remote MCP Smoke", "Accept": "application/json"}
+    request_headers = {"User-Agent": "Mystic Remote MCP Smoke", "Accept": "application/json"}
     if data is not None:
-        headers["Content-Type"] = "application/json"
-    request = Request(url, data=data, headers=headers, method=method)
+        request_headers["Content-Type"] = "application/json"
+    if headers:
+        request_headers.update(headers)
+    request = Request(url, data=data, headers=request_headers, method=method)
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
             body_text = response.read().decode("utf-8")
@@ -116,11 +126,12 @@ def mcp_request(
     method: str,
     params: dict[str, Any] | None = None,
     timeout_seconds: int = 30,
+    headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
     if params is not None:
         payload["params"] = params
-    return http_json_request(endpoint, payload=payload, timeout_seconds=timeout_seconds)
+    return http_json_request(endpoint, payload=payload, timeout_seconds=timeout_seconds, headers=headers)
 
 
 def auth_status_from_response(response: dict[str, Any]) -> tuple[bool, bool]:
@@ -172,6 +183,8 @@ def run_remote_mcp_lab_smoke(
     *,
     endpoint: str,
     public_endpoint: str = "",
+    bearer_token: str = "",
+    auth_mode: str = "none",
     session_problem: str,
     domain: str,
     mode: str,
@@ -182,6 +195,7 @@ def run_remote_mcp_lab_smoke(
     summary: dict[str, Any] = {
         "endpoint": endpoint,
         "public_endpoint": public_endpoint,
+        "auth_mode": auth_mode,
         "checked_at": now_iso(),
         "initialize_ok": False,
         "tools_list_ok": False,
@@ -199,8 +213,18 @@ def run_remote_mcp_lab_smoke(
         "errors": [],
         "final_status": FAILED,
     }
+    request_headers = {"Authorization": f"Bearer {bearer_token}"} if bearer_token else None
+    if auth_mode == "bearer" and not bearer_token:
+        summary["errors"].append("auth_mode=bearer requires --bearer-token")
+        return write_summary(output_path, summary)
 
-    initialize = mcp_request(endpoint, request_id=1, method="initialize", timeout_seconds=timeout_seconds)
+    initialize = mcp_request(
+        endpoint,
+        request_id=1,
+        method="initialize",
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
     if initialize.get("status") is None:
         summary["errors"].append(f"backend unreachable: {initialize.get('body', {}).get('error', 'unknown error')}")
         summary["final_status"] = BACKEND_UNREACHABLE
@@ -213,6 +237,9 @@ def run_remote_mcp_lab_smoke(
             summary["errors"].append("endpoint requires authentication")
         summary["final_status"] = OAUTH_REQUIRED if oauth_required else AUTH_REQUIRED
         return write_summary(output_path, summary)
+    if auth_mode == "expect-auth-required":
+        summary["errors"].append("endpoint accepted unauthenticated MCP requests when auth-required behavior was expected")
+        return write_summary(output_path, summary)
 
     errors = validate_mcp_success(initialize, expected_id=1)
     if errors:
@@ -221,7 +248,13 @@ def run_remote_mcp_lab_smoke(
         return write_summary(output_path, summary)
     summary["initialize_ok"] = True
 
-    tools_list = mcp_request(endpoint, request_id=2, method="tools/list", timeout_seconds=timeout_seconds)
+    tools_list = mcp_request(
+        endpoint,
+        request_id=2,
+        method="tools/list",
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
     errors = validate_mcp_success(tools_list, expected_id=2)
     if errors:
         summary["errors"].extend(errors)
@@ -253,6 +286,7 @@ def run_remote_mcp_lab_smoke(
             },
         },
         timeout_seconds=timeout_seconds,
+        headers=request_headers,
     )
     errors = validate_mcp_success(create_response, expected_id=3)
     if errors:
@@ -283,6 +317,7 @@ def run_remote_mcp_lab_smoke(
             },
         },
         timeout_seconds=timeout_seconds,
+        headers=request_headers,
     )
     errors = validate_mcp_success(advance_response, expected_id=4)
     if errors:
@@ -299,6 +334,7 @@ def run_remote_mcp_lab_smoke(
         method="tools/call",
         params={"name": "lab_session_get", "arguments": {"session_id": session_id}},
         timeout_seconds=timeout_seconds,
+        headers=request_headers,
     )
     errors = validate_mcp_success(get_response, expected_id=5)
     if errors:
@@ -325,6 +361,7 @@ def run_remote_mcp_lab_smoke(
             },
         },
         timeout_seconds=timeout_seconds,
+        headers=request_headers,
     )
     errors = validate_mcp_success(report_response, expected_id=6)
     if errors:
@@ -365,6 +402,8 @@ def main(argv: list[str] | None = None) -> int:
     summary = run_remote_mcp_lab_smoke(
         endpoint=args.endpoint,
         public_endpoint=args.public_endpoint,
+        bearer_token=args.bearer_token,
+        auth_mode=args.auth_mode,
         session_problem=args.session_problem,
         domain=args.domain,
         mode=args.mode,
@@ -373,7 +412,11 @@ def main(argv: list[str] | None = None) -> int:
         allow_auth_required=args.allow_auth_required,
     )
     print(json.dumps(summary, indent=2, ensure_ascii=True))
-    return 0 if summary["final_status"] in {READY_LOCAL, READY_PUBLIC} else 1
+    if summary["final_status"] in {READY_LOCAL, READY_PUBLIC}:
+        return 0
+    if args.allow_auth_required and summary["final_status"] in {AUTH_REQUIRED, OAUTH_REQUIRED}:
+        return 0
+    return 1
 
 
 if __name__ == "__main__":

@@ -266,6 +266,64 @@ If OAuth metadata is not implemented yet, the readiness report intentionally ret
 - `import_ready=false`
 - blocker `OAUTH_NOT_CONFIGURED`
 
+### Remote MCP OAuth
+
+Mystic can expose a public MCP-powered Virtual Research Lab without OAuth, but ChatGPT remote MCP import readiness requires OAuth metadata and bearer-token validation.
+
+- `READY_PUBLIC_MCP_LAB` means external MCP clients can reach the public `/mcp` endpoint and run lab tools.
+- `import_ready_candidate=true` means the public endpoint appears to have the minimum OAuth metadata and authenticated MCP behavior needed for a manual ChatGPT Developer Mode import attempt.
+- `import_ready=true` must only be set after a real manual import verification artifact exists.
+
+Check current readiness:
+
+```bash
+python scripts/check_chatgpt_remote_mcp_readiness.py \
+  --public-endpoint https://mystic.dexproject.workers.dev
+```
+
+Run public MCP smoke without auth:
+
+```bash
+python scripts/run_remote_mcp_lab_smoke.py \
+  --endpoint https://mystic.dexproject.workers.dev/mcp
+```
+
+Run public MCP smoke with a bearer token:
+
+```bash
+python scripts/run_remote_mcp_lab_smoke.py \
+  --endpoint https://mystic.dexproject.workers.dev/mcp \
+  --auth-mode bearer \
+  --bearer-token "$MYSTIC_TEST_BEARER_TOKEN"
+```
+
+Check OAuth candidate readiness:
+
+```bash
+python scripts/check_chatgpt_remote_mcp_readiness.py \
+  --public-endpoint https://mystic.dexproject.workers.dev \
+  --bearer-token "$MYSTIC_TEST_BEARER_TOKEN" \
+  --expect-oauth
+```
+
+Cloudflare Worker environment variables use placeholders only. Do not commit real values:
+
+```bash
+MYSTIC_OAUTH_ENABLED=true
+MYSTIC_OAUTH_ISSUER=https://mystic.dexproject.workers.dev
+MYSTIC_OAUTH_ALLOWED_REDIRECT_URIS=https://example.com/callback,http://localhost:3000/callback
+MYSTIC_OAUTH_ACCESS_TOKEN_TTL_SECONDS=3600
+MYSTIC_OAUTH_SIGNING_SECRET=replace-me
+MYSTIC_OAUTH_DEV_STATIC_TOKEN=replace-me-dev-only
+MYSTIC_BACKEND_URL=https://current-origin.example.com
+```
+
+Notes:
+
+- OAuth-disabled mode preserves unauthenticated local MCP smoke for development.
+- The dev static bearer token is development-only and is not production-ready.
+- This OAuth layer does not prove ChatGPT import success by itself. A real Developer Mode import must still be performed manually.
+
 ## Discord Bot
 
 Install the Discord bot dependency:
