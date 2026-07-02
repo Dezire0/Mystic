@@ -1,0 +1,23 @@
+{
+  "artifact_version": 1,
+  "verified_at": "2026-07-02T09:17:49+00:00",
+  "verified_by": "manual",
+  "public_endpoint": "https://mystic.dexproject.workers.dev",
+  "mcp_endpoint": "https://mystic.dexproject.workers.dev/mcp",
+  "chatgpt_developer_mode_imported": true,
+  "oauth_flow_completed": true,
+  "tools_list_visible_in_chatgpt": true,
+  "required_tools_visible": [
+    "lab_session_create",
+    "lab_session_advance",
+    "lab_session_get",
+    "lab_report_generate"
+  ],
+  "manual_tool_call_results": {
+    "lab_session_create": "passed",
+    "lab_session_advance": "passed",
+    "lab_session_get": "passed",
+    "lab_report_generate": "passed"
+  },
+  "notes": "No secrets. No tokens. Manual verification only."
+}

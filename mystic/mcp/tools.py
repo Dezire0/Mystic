@@ -11,6 +11,12 @@ from typing import Any
 from mystic.debate.runner import DebateRunner
 from mystic.final_answer_verifier import extract_candidate_tuples, verify_final_answer
 from mystic.lab.runner import LabRunner
+from mystic.mcp.import_verification import (
+    default_verification_artifact_path,
+    load_import_verification,
+    summarize_import_verification,
+    validate_import_verification_artifact,
+)
 from mystic.models.router import ModelRouter
 from mystic.research_table.runner import ResearchTableRunner
 from mystic.tools.python_runner import PythonRunner
@@ -85,14 +91,15 @@ class MysticToolbox:
         oauth_configured = self._oauth_configured()
         oauth_metadata_available = oauth_enabled and oauth_configured
         import_ready_candidate = bool(remote_mcp_public_endpoint) and oauth_metadata_available
-        import_ready = import_ready_candidate and self._manual_import_verified()
+        verification_summary = self._manual_import_verification_summary()
+        import_ready = import_ready_candidate and verification_summary["manual_import_verified"]
         blockers: list[str] = []
         if not oauth_enabled:
             blockers.append("OAUTH_NOT_CONFIGURED")
         elif not oauth_configured:
             blockers.append("OAUTH_METADATA_MISSING")
         elif not import_ready:
-            blockers.append("MANUAL_CHATGPT_IMPORT_NOT_VERIFIED")
+            blockers.append("MANUAL_IMPORT_NOT_VERIFIED")
         return {
             "models": self._public_model_status_snapshot(),
             "tools": {
@@ -122,6 +129,10 @@ class MysticToolbox:
             "oauth_metadata_available": oauth_metadata_available,
             "chatgpt_remote_import_ready": import_ready,
             "chatgpt_remote_import_ready_candidate": import_ready_candidate,
+            "manual_import_verification_checked": verification_summary["manual_import_verification_checked"],
+            "manual_import_verified": verification_summary["manual_import_verified"],
+            "manual_import_verification_path": verification_summary["manual_import_verification_path"],
+            "manual_import_verification_summary": verification_summary.get("manual_import_verification_summary", {}),
             "blockers": blockers,
             "datasets": datasets,
             "adapter_status": {
@@ -777,18 +788,26 @@ class MysticToolbox:
         return f"{base_url.rstrip('/')}/mcp"
 
     def _manual_import_verified(self) -> bool:
-        confirmation_path = (
-            self.data_root / "e2e" / "remote_mcp_lab_smoke" / "chatgpt_import_verified.json"
-        )
-        if not confirmation_path.exists():
-            return False
-        try:
-            payload = json.loads(confirmation_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return False
-        if not isinstance(payload, dict) or not payload.get("import_verified"):
-            return False
-        return str(payload.get("public_endpoint", "")).rstrip("/") == self._remote_mcp_public_endpoint().removesuffix("/mcp")
+        return self._manual_import_verification_summary()["manual_import_verified"]
+
+    def _manual_import_verification_summary(self) -> dict[str, Any]:
+        public_endpoint = self._remote_mcp_public_endpoint().removesuffix("/mcp")
+        artifact_path = default_verification_artifact_path(self.root_path)
+        summary: dict[str, Any] = {
+            "manual_import_verification_checked": artifact_path.exists(),
+            "manual_import_verified": False,
+            "manual_import_verification_path": str(artifact_path),
+        }
+        if not artifact_path.exists():
+            return summary
+        payload = load_import_verification(artifact_path)
+        if payload is None:
+            return summary
+        validation = validate_import_verification_artifact(payload, public_endpoint=public_endpoint)
+        summary["manual_import_verified"] = validation["verified"]
+        summary["manual_import_verification_checked"] = True
+        summary["manual_import_verification_summary"] = summarize_import_verification(payload)
+        return summary
 
     @staticmethod
     def _build_python_task(task: str) -> str | None:

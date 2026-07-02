@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from mystic.mcp.import_verification import REQUIRED_TOOLS, default_verification_artifact_path
 from mystic.mcp.tools import MysticToolbox
 from mystic.models.router import ModelRouter
 
@@ -84,8 +85,49 @@ class MCPToolsTests(unittest.TestCase):
         self.assertTrue(status["oauth_metadata_available"])
         self.assertFalse(status["chatgpt_remote_import_ready"])
         self.assertTrue(status["chatgpt_remote_import_ready_candidate"])
-        self.assertIn("MANUAL_CHATGPT_IMPORT_NOT_VERIFIED", status["blockers"])
+        self.assertFalse(status["manual_import_verification_checked"])
+        self.assertFalse(status["manual_import_verified"])
+        self.assertTrue(status["manual_import_verification_path"].endswith("mystic_data/e2e/chatgpt_remote_mcp_import/verification.json"))
+        self.assertIn("MANUAL_IMPORT_NOT_VERIFIED", status["blockers"])
         self.assertNotIn("sk-test-secret", json.dumps(status))
+        self.assertNotIn("oauth-signing-secret", json.dumps(status))
+
+    def test_status_reports_manual_import_summary_without_secrets(self):
+        with patch.dict(
+            os.environ,
+            {
+                "MYSTIC_OAUTH_ENABLED": "true",
+                "MYSTIC_OAUTH_ISSUER": "https://mystic.dexproject.workers.dev",
+                "MYSTIC_OAUTH_SIGNING_SECRET": "oauth-signing-secret",
+            },
+            clear=False,
+        ):
+            toolbox = self._make_toolbox()
+            artifact_path = default_verification_artifact_path(toolbox.root_path)
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "artifact_version": 1,
+                        "verified_at": "2026-07-02T09:17:49+00:00",
+                        "verified_by": "manual",
+                        "public_endpoint": "https://mystic.dexproject.workers.dev",
+                        "mcp_endpoint": "https://mystic.dexproject.workers.dev/mcp",
+                        "chatgpt_developer_mode_imported": True,
+                        "oauth_flow_completed": True,
+                        "tools_list_visible_in_chatgpt": True,
+                        "required_tools_visible": list(REQUIRED_TOOLS),
+                        "manual_tool_call_results": {tool: "passed" for tool in REQUIRED_TOOLS},
+                        "notes": "private operator notes",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            status = toolbox.mystic_status()
+        self.assertTrue(status["manual_import_verification_checked"])
+        self.assertTrue(status["manual_import_verified"])
+        self.assertTrue(status["chatgpt_remote_import_ready"])
+        self.assertNotIn("notes", json.dumps(status))
         self.assertNotIn("oauth-signing-secret", json.dumps(status))
 
     def test_verify_answer_flags_invalid_egyptian_fraction_set(self):

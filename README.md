@@ -272,7 +272,7 @@ Mystic can expose a public MCP-powered Virtual Research Lab without OAuth, but C
 
 - `READY_PUBLIC_MCP_LAB` means external MCP clients can reach the public `/mcp` endpoint and run lab tools.
 - `import_ready_candidate=true` means the public endpoint appears to have the minimum OAuth metadata and authenticated MCP behavior needed for a manual ChatGPT Developer Mode import attempt.
-- `import_ready=true` must only be set after a real manual import verification artifact exists.
+- `import_ready=true` must only be set after a real manual import verification artifact exists and validates.
 
 Check current readiness:
 
@@ -323,6 +323,68 @@ Notes:
 - OAuth-disabled mode preserves unauthenticated local MCP smoke for development.
 - The dev static bearer token is development-only and is not production-ready.
 - This OAuth layer does not prove ChatGPT import success by itself. A real Developer Mode import must still be performed manually.
+
+### Manual ChatGPT Developer Mode Import Verification
+
+- `import_ready_candidate=true` means Mystic is technically ready for a real manual ChatGPT Developer Mode import attempt.
+- `import_ready=true` requires both the OAuth/MCP candidate checks and a validated runtime manual verification artifact.
+- The artifact must not contain secrets, tokens, passwords, or signing material.
+
+Run the candidate readiness check:
+
+```bash
+python scripts/check_chatgpt_remote_mcp_readiness.py \
+  --public-endpoint https://mystic.dexproject.workers.dev \
+  --expect-oauth \
+  --bearer-token "$MYSTIC_TEST_BEARER_TOKEN"
+```
+
+In ChatGPT Developer Mode, add the remote MCP server:
+
+```text
+https://mystic.dexproject.workers.dev
+```
+
+Then:
+
+1. Complete the OAuth flow.
+2. Confirm these tools are visible:
+   `lab_session_create`, `lab_session_advance`, `lab_session_get`, `lab_report_generate`
+3. Manually call those tools from ChatGPT if possible.
+4. Create the runtime verification artifact:
+
+```bash
+python scripts/create_chatgpt_import_verification_artifact.py \
+  --root-path /Users/JYH/Documents/Mystic \
+  --public-endpoint https://mystic.dexproject.workers.dev \
+  --confirm-imported \
+  --confirm-oauth-flow \
+  --confirm-tools-visible \
+  --confirm-tool-calls-passed
+```
+
+This writes a runtime-only artifact under:
+
+- `mystic_data/e2e/chatgpt_remote_mcp_import/verification.json`
+
+An example committed template lives at:
+
+- `docs/examples/chatgpt_remote_mcp_import_verification.example.json`
+
+Re-run readiness:
+
+```bash
+python scripts/check_chatgpt_remote_mcp_readiness.py \
+  --public-endpoint https://mystic.dexproject.workers.dev \
+  --expect-oauth \
+  --bearer-token "$MYSTIC_TEST_BEARER_TOKEN"
+```
+
+Expected after a valid manual artifact:
+
+- `import_ready_candidate=true`
+- `manual_import_verified=true`
+- `import_ready=true`
 
 ## Discord Bot
 
