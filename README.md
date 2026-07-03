@@ -306,6 +306,27 @@ python scripts/check_chatgpt_remote_mcp_readiness.py \
   --expect-oauth
 ```
 
+Inspect the redacted public `tools/list` shape:
+
+```bash
+python scripts/debug_mcp_tools_list_shape.py \
+  --endpoint https://mystic.dexproject.workers.dev/mcp \
+  --bearer-token "$MYSTIC_TEST_BEARER_TOKEN"
+```
+
+Check ChatGPT action discovery compatibility:
+
+```bash
+python scripts/check_chatgpt_action_discovery_compatibility.py \
+  --endpoint https://mystic.dexproject.workers.dev/mcp \
+  --bearer-token "$MYSTIC_TEST_BEARER_TOKEN"
+```
+
+This writes runtime-only summaries under:
+
+- `mystic_data/e2e/chatgpt_action_discovery/tools_list_shape.json`
+- `mystic_data/e2e/chatgpt_action_discovery/summary.json`
+
 Cloudflare Worker environment variables use placeholders only. Do not commit real values:
 
 ```bash

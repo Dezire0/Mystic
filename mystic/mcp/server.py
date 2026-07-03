@@ -74,13 +74,30 @@ class MysticMCPServer:
             raise KeyError(f"Unknown tool: {name}")
         if not isinstance(arguments, dict):
             raise ValueError("Tool arguments must be a JSON object.")
-        errors = validate_json_schema(arguments, TOOL_SCHEMAS[name])
+        normalized_arguments = self._normalize_optional_nulls(name, arguments)
+        errors = validate_json_schema(normalized_arguments, TOOL_SCHEMAS[name])
         if errors:
             raise ValueError("Invalid params: " + "; ".join(errors))
         handler = getattr(self.toolbox, name, None)
         if handler is None:
             raise KeyError(f"Unknown tool: {name}")
-        return handler(**arguments)
+        return handler(**normalized_arguments)
+
+    @staticmethod
+    def _normalize_optional_nulls(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        nullable_fields = {
+            "lab_session_advance": {"target_phase"},
+            "lab_referee_review": {"claim_id"},
+            "lab_memory_search": {"domain", "status_filter"},
+        }
+        allowed = nullable_fields.get(name)
+        if not allowed:
+            return dict(arguments)
+        normalized = dict(arguments)
+        for field_name in allowed:
+            if normalized.get(field_name) is None:
+                normalized.pop(field_name, None)
+        return normalized
 
     @staticmethod
     def _response(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
