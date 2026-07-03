@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
+import logging
 from pathlib import Path
 import uuid
 from typing import Any
@@ -21,6 +22,7 @@ from mystic.utils.yamlish import load_yaml_file
 
 
 DEFAULT_MODEL_CONFIG = "configs/mystic_models.yaml"
+logger = logging.getLogger(__name__)
 
 
 class MockRoutedProvider(RoutedProvider):
@@ -108,17 +110,37 @@ class ModelRouter:
         return dict(config)
 
     def status_snapshot(self) -> dict[str, Any]:
-        return {
-            model_id: {
-                "provider": str(config.get("provider", "")),
+        snapshot: dict[str, Any] = {}
+        for model_id, config in self.models.items():
+            if not isinstance(config, dict):
+                continue
+            provider_name = str(config.get("provider", ""))
+            try:
+                provider_status = self._provider_for_model(config).status(model_id, config).to_dict()
+            except Exception:
+                logger.exception(
+                    "mystic_model_status_failed",
+                    extra={
+                        "event": "mystic_model_status_failed",
+                        "model_id": model_id,
+                        "provider": provider_name,
+                    },
+                )
+                provider_status = ProviderStatus(
+                    state="error",
+                    message="Provider status probe failed.",
+                    available=False,
+                    authenticated=False,
+                    details={"error_type": "status_probe_failed"},
+                ).to_dict()
+            snapshot[model_id] = {
+                "provider": provider_name,
                 "model_name": self._display_model_name(model_id, config),
-                "status": self._provider_for_model(config).status(model_id, config).to_dict(),
+                "status": provider_status,
                 "role_defaults": self._role_defaults(config),
                 "enabled": bool(config.get("enabled", True)),
             }
-            for model_id, config in self.models.items()
-            if isinstance(config, dict)
-        }
+        return snapshot
 
     def call_model(
         self,

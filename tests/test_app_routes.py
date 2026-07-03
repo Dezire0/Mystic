@@ -339,6 +339,27 @@ class AppRouteTests(unittest.TestCase):
         self.assertEqual(status_call.status_code, 200)
         self.assertIn("structuredContent", status_call.json()["result"])
 
+    def test_mcp_route_accepts_batch_requests(self):
+        response = self.client.post(
+            "/mcp",
+            json=[
+                {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            ],
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual([item["id"] for item in payload], [1, 2])
+
+    def test_mcp_route_notification_only_returns_success_without_422(self):
+        response = self.client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text, "")
+
     def test_start_page_renders_participants_and_auth_cards(self):
         response = self.client.get("/research-table/start")
         self.assertEqual(response.status_code, 200)

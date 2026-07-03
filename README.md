@@ -342,8 +342,10 @@ MYSTIC_BACKEND_URL=https://current-origin.example.com
 Notes:
 
 - OAuth-disabled mode preserves unauthenticated local MCP smoke for development.
+- `/mcp` now accepts single JSON-RPC requests, batch JSON-RPC arrays, and notification-only requests. This is important for ChatGPT and other MCP clients that send `notifications/initialized` or batch envelopes during runtime tool invocation.
 - The dev static bearer token is development-only and is not production-ready.
 - This OAuth layer does not prove ChatGPT import success by itself. A real Developer Mode import must still be performed manually.
+- If the public Worker uses a Cloudflare quick tunnel origin, runtime tool calls will fail when that origin expires. Keep `MYSTIC_BACKEND_URL` pointed at a live tunnel or replace the quick tunnel with a stable public backend.
 
 ### Manual ChatGPT Developer Mode Import Verification
 
