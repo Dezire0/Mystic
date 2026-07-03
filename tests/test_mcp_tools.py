@@ -92,6 +92,13 @@ class MCPToolsTests(unittest.TestCase):
         self.assertNotIn("sk-test-secret", json.dumps(status))
         self.assertNotIn("oauth-signing-secret", json.dumps(status))
 
+    def test_status_survives_provider_status_failures(self):
+        toolbox = self._make_toolbox()
+        with patch.object(toolbox.router, "status_snapshot", side_effect=RuntimeError("provider down")):
+            status = toolbox.mystic_status()
+        self.assertEqual(status["models"], {})
+        self.assertIn("MODEL_STATUS_UNAVAILABLE", status["recent_errors"])
+
     def test_status_reports_manual_import_summary_without_secrets(self):
         with patch.dict(
             os.environ,
@@ -312,6 +319,27 @@ class MCPToolsTests(unittest.TestCase):
         loaded = toolbox.lab_session_get(session_id=session_id)
         self.assertEqual(loaded["session"]["session_id"], session_id)
         self.assertIn("claims", loaded)
+
+    def test_lab_session_accepts_role_names_and_advance_still_runs(self):
+        toolbox = self._make_toolbox()
+        created = toolbox.lab_session_create(
+            problem="Classify triples for 1/x + 1/y + 1/z = 1.",
+            domain="math",
+            goal="Produce a rigorous proof of completeness.",
+            mode="proof_critical",
+            participants=["Director", "Theorist", "ProofForger", "Referee"],
+        )
+        session = toolbox.lab_session_get(session_id=created["session_id"])
+        participant_model_ids = [item["model_id"] for item in session["session"]["participants"]]
+        self.assertIn("local_prime", participant_model_ids)
+        self.assertIn("local_raven", participant_model_ids)
+        advanced = toolbox.lab_session_advance(
+            session_id=created["session_id"],
+            max_steps=1,
+            use_model_arena=False,
+            use_verifier=True,
+        )
+        self.assertTrue(advanced["new_turns"])
 
     def test_lab_models_debate_imports_research_table_outputs(self):
         toolbox = self._make_toolbox()

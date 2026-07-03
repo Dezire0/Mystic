@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from typing import Any
 
 from mystic.mcp.schemas import PUBLIC_TOOL_DEFINITIONS, PUBLIC_TOOL_NAMES, TOOL_SCHEMAS
 from mystic.mcp.tools import MysticToolbox
 from mystic.mcp.validation import validate_json_schema
+
+logger = logging.getLogger(__name__)
 
 
 class MysticMCPServer:
@@ -40,10 +43,27 @@ class MysticMCPServer:
             params = payload.get("params", {})
             name = params.get("name")
             arguments = params.get("arguments", {})
+            self._log_event(
+                "tool_call_start",
+                request_id=request_id,
+                tool_name=name,
+                argument_keys=sorted(arguments.keys()) if isinstance(arguments, dict) else [],
+            )
             try:
                 result = self._call_tool(str(name), dict(arguments))
             except Exception as exc:
+                logger.exception(
+                    "mcp_tool_call_failed tool_name=%s request_id=%s",
+                    name,
+                    request_id,
+                )
                 return self._error_response(request_id, code=-32000, message=str(exc))
+            self._log_event(
+                "tool_call_success",
+                request_id=request_id,
+                tool_name=name,
+                result_keys=sorted(result.keys()) if isinstance(result, dict) else [],
+            )
             return self._response(
                 request_id,
                 {
@@ -53,6 +73,23 @@ class MysticMCPServer:
                 },
             )
         return self._error_response(request_id, code=-32601, message=f"Unknown method: {method}")
+
+    def handle_payload(self, payload: Any) -> dict[str, Any] | list[dict[str, Any]] | None:
+        if isinstance(payload, list):
+            if not payload:
+                return self._error_response(None, code=-32600, message="Invalid Request")
+            responses: list[dict[str, Any]] = []
+            for item in payload:
+                if not isinstance(item, dict):
+                    responses.append(self._error_response(None, code=-32600, message="Invalid Request"))
+                    continue
+                response = self.handle_request(item)
+                if response is not None:
+                    responses.append(response)
+            return responses or None
+        if not isinstance(payload, dict):
+            return self._error_response(None, code=-32600, message="Invalid Request")
+        return self.handle_request(payload)
 
     def serve_stdio(self) -> int:
         for line in sys.stdin:
@@ -82,6 +119,13 @@ class MysticMCPServer:
         if handler is None:
             raise KeyError(f"Unknown tool: {name}")
         return handler(**normalized_arguments)
+
+    @staticmethod
+    def _log_event(event: str, **payload: Any) -> None:
+        logger.info(
+            "mcp_event %s",
+            json.dumps({"event": event, **payload}, ensure_ascii=True, default=str),
+        )
 
     @staticmethod
     def _normalize_optional_nulls(name: str, arguments: dict[str, Any]) -> dict[str, Any]:

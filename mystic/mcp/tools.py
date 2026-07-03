@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -51,6 +52,7 @@ LAB_TOOL_NAMES = (
     "lab_models_debate",
     "lab_report_generate",
 )
+logger = logging.getLogger(__name__)
 
 
 class MysticToolbox:
@@ -100,8 +102,15 @@ class MysticToolbox:
             blockers.append("OAUTH_METADATA_MISSING")
         elif not import_ready:
             blockers.append("MANUAL_IMPORT_NOT_VERIFIED")
+        try:
+            model_status = self._public_model_status_snapshot()
+            recent_errors: list[str] = []
+        except Exception:
+            logger.exception("mystic_status_model_snapshot_failed")
+            model_status = {}
+            recent_errors = ["MODEL_STATUS_UNAVAILABLE"]
         return {
-            "models": self._public_model_status_snapshot(),
+            "models": model_status,
             "tools": {
                 "mystic_status": "ready",
                 "mystic_verify_answer": "ready",
@@ -139,7 +148,7 @@ class MysticToolbox:
                 "available": sorted(path.name for path in adapters_dir.iterdir()) if adapters_dir.exists() else [],
             },
             "recent_runs": recent_runs,
-            "recent_errors": [],
+            "recent_errors": recent_errors,
             "mcp_server_status": "ready",
         }
 

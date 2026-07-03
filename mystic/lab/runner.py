@@ -4,9 +4,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 import json
+import logging
 import uuid
 
-from mystic.lab.agents import build_role_task, model_role_for_agent, role_for_phase, room_for_phase
+from mystic.lab.agents import AGENT_ROLE_TO_MODEL_ROLE, build_role_task, model_role_for_agent, role_for_phase, room_for_phase
 from mystic.lab.claims import claims_from_turn
 from mystic.lab.experiments import summarize_experiment
 from mystic.lab.failures import make_failure
@@ -16,6 +17,8 @@ from mystic.lab.reports import render_report
 from mystic.lab.schema import LAB_PHASES, PHASE_TO_ROOM
 from mystic.lab.session import Claim, Experiment, LabSession, LabSessionBundle, LabTurn, MemoryEdge
 from mystic.lab.storage import LabStorage
+
+logger = logging.getLogger(__name__)
 
 
 class LabRunner:
@@ -511,11 +514,12 @@ class LabRunner:
     def _participant_models(self, participants: list[str]) -> list[dict[str, Any]]:
         snapshot = self.router.status_snapshot() if hasattr(self.router, "status_snapshot") else {}
         models = []
-        for model_id in participants:
-            item = snapshot.get(model_id, {})
+        for requested_participant in participants:
+            model_id, item = self._resolve_participant(requested_participant, snapshot)
             status = item.get("status", {})
             models.append(
                 {
+                    "requested_participant": requested_participant,
                     "model_id": model_id,
                     "provider": item.get("provider", "unknown"),
                     "model_name": item.get("model_name", model_id),
@@ -528,6 +532,32 @@ class LabRunner:
                 }
             )
         return models
+
+    def _resolve_participant(
+        self,
+        requested_participant: str,
+        snapshot: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        if requested_participant in snapshot:
+            return requested_participant, snapshot[requested_participant]
+        desired_role = model_role_for_agent(requested_participant) if requested_participant in AGENT_ROLE_TO_MODEL_ROLE else ""
+        if desired_role:
+            candidates: list[tuple[str, dict[str, Any]]] = []
+            for model_id, item in snapshot.items():
+                role_defaults = item.get("role_defaults", [])
+                if desired_role in role_defaults:
+                    candidates.append((model_id, item))
+            if candidates:
+                for model_id, item in candidates:
+                    status = item.get("status", {})
+                    if status.get("available") and status.get("authenticated"):
+                        return model_id, item
+                return candidates[0]
+        logger.info(
+            "lab_participant_unresolved requested_participant=%s",
+            requested_participant,
+        )
+        return requested_participant, snapshot.get(requested_participant, {})
 
     def _run_role_turn(
         self,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -38,6 +39,8 @@ from mystic.research_table.discovery import VerificationRequest
 from mystic.research_table.session import ResearchTurn
 from mystic.research_table.storage import ResearchTableStorage
 
+logger = logging.getLogger(__name__)
+
 
 def create_app(
     *,
@@ -65,10 +68,18 @@ def create_app(
         return {"status": "ok"}
 
     @app.post("/mcp")
-    def mcp_http(payload: dict):
-        response = mcp_server.handle_request(payload)
+    async def mcp_http(request: Request):
+        try:
+            payload = await request.json()
+        except json.JSONDecodeError as exc:
+            logger.exception("mcp_http_invalid_json")
+            return mcp_server._error_response(None, code=-32700, message=str(exc))
+        except Exception as exc:
+            logger.exception("mcp_http_payload_parse_failed")
+            return mcp_server._error_response(None, code=-32600, message=f"Invalid Request: {exc}")
+        response = mcp_server.handle_payload(payload)
         if response is None:
-            return Response(status_code=202)
+            return Response(status_code=200)
         return response
 
     @app.get("/research-table/start", response_class=HTMLResponse)

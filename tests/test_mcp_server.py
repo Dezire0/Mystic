@@ -145,6 +145,26 @@ class MCPServerTests(unittest.TestCase):
         assert response is not None
         self.assertEqual(response["result"]["structuredContent"], {"verdict": "UNKNOWN"})
 
+    def test_handle_payload_supports_batch_requests_and_omits_notifications(self):
+        server = MysticMCPServer(toolbox=_StubToolbox())
+        response = server.handle_payload(
+            [
+                {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            ]
+        )
+        assert response is not None
+        self.assertIsInstance(response, list)
+        self.assertEqual([item["id"] for item in response], [1, 2])
+
+    def test_handle_payload_rejects_non_object_entries(self):
+        server = MysticMCPServer(toolbox=_StubToolbox())
+        response = server.handle_payload([{"jsonrpc": "2.0", "id": 1, "method": "ping"}, "bad-entry"])
+        assert response is not None
+        self.assertIsInstance(response, list)
+        self.assertEqual(response[1]["error"]["code"], -32600)
+
 
 if __name__ == "__main__":
     unittest.main()
