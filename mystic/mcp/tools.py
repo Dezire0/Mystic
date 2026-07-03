@@ -489,7 +489,7 @@ class MysticToolbox:
         self,
         *,
         session_id: str,
-        claim_id: str | None,
+        claim_id: str | None = None,
         text: str,
         strictness: str,
     ) -> dict[str, Any]:

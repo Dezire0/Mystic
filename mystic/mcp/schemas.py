@@ -135,7 +135,7 @@ TOOL_SCHEMAS = {
         "properties": {
             "session_id": {"type": "string", "minLength": 1},
             "max_steps": {"type": "integer", "minimum": 1, "maximum": 10},
-            "target_phase": {"type": ["string", "null"]},
+            "target_phase": {"type": "string"},
             "use_model_arena": {"type": "boolean"},
             "use_verifier": {"type": "boolean"},
         },
@@ -174,7 +174,7 @@ TOOL_SCHEMAS = {
         "type": "object",
         "properties": {
             "session_id": {"type": "string", "minLength": 1},
-            "claim_id": {"type": ["string", "null"]},
+            "claim_id": {"type": "string"},
             "text": {"type": "string"},
             "strictness": {"type": "string", "enum": ["normal", "hostile"]},
         },
@@ -210,8 +210,8 @@ TOOL_SCHEMAS = {
         "type": "object",
         "properties": {
             "query": {"type": "string", "minLength": 1},
-            "domain": {"type": ["string", "null"]},
-            "status_filter": {"type": ["string", "null"]},
+            "domain": {"type": "string"},
+            "status_filter": {"type": "string"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 50},
         },
         "required": ["query"],
@@ -274,117 +274,149 @@ TOOL_SCHEMAS = {
 }
 
 
+DEFAULT_OAUTH_SECURITY_SCHEMES = [
+    {
+        "type": "oauth2",
+        "scopes": ["tools:read", "tools:execute"],
+    }
+]
+
+
+def _tool_definition(
+    name: str,
+    description: str,
+    *,
+    title: str,
+    read_only: bool = False,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "name": name,
+        "title": title,
+        "description": description,
+        "inputSchema": TOOL_SCHEMAS[name],
+        "securitySchemes": DEFAULT_OAUTH_SECURITY_SCHEMES,
+    }
+    if read_only:
+        payload["annotations"] = {"readOnlyHint": True}
+    return payload
+
+
 TOOL_DEFINITIONS = [
-    {
-        "name": "mystic_status",
-        "description": "Return current Mystic model, dataset, adapter, and tool availability status.",
-        "inputSchema": TOOL_SCHEMAS["mystic_status"],
-    },
-    {
-        "name": "mystic_verify_answer",
-        "description": "Deterministically verify candidate answers when direct substitution or bounded search is possible.",
-        "inputSchema": TOOL_SCHEMAS["mystic_verify_answer"],
-    },
-    {
-        "name": "mystic_bruteforce_integer_search",
-        "description": "Search bounded integer domains for solutions to a symbolic equation under constraints.",
-        "inputSchema": TOOL_SCHEMAS["mystic_bruteforce_integer_search"],
-    },
-    {
-        "name": "mystic_run_python_check",
-        "description": "Run constrained Python checks inside Mystic's safe local sandbox.",
-        "inputSchema": TOOL_SCHEMAS["mystic_run_python_check"],
-    },
-    {
-        "name": "mystic_run_local_agent",
-        "description": "Run a local Mystic agent in draft, critique, or summary mode.",
-        "inputSchema": TOOL_SCHEMAS["mystic_run_local_agent"],
-    },
-    {
-        "name": "mystic_call_model",
-        "description": "Call any registered Mystic model through the unified ModelRouter.",
-        "inputSchema": TOOL_SCHEMAS["mystic_call_model"],
-    },
-    {
-        "name": "mystic_compare_models",
-        "description": "Call multiple models and optionally append deterministic verifier output.",
-        "inputSchema": TOOL_SCHEMAS["mystic_compare_models"],
-    },
-    {
-        "name": "mystic_run_debate",
-        "description": "Run a threaded multi-model debate with critique, tool evidence, revision, and final judgment.",
-        "inputSchema": TOOL_SCHEMAS["mystic_run_debate"],
-    },
-    {
-        "name": "mystic_run_research_table",
-        "description": "Run the Research Table discovery workflow with structured discoveries and verification requests.",
-        "inputSchema": TOOL_SCHEMAS["mystic_run_research_table"],
-    },
-    {
-        "name": "lab_session_create",
-        "description": "Create a structured Mystic Lab session under mystic_data/lab_sessions.",
-        "inputSchema": TOOL_SCHEMAS["lab_session_create"],
-    },
-    {
-        "name": "lab_session_get",
-        "description": "Load the current lab session state, recent turns, claims, experiments, and failures.",
-        "inputSchema": TOOL_SCHEMAS["lab_session_get"],
-    },
-    {
-        "name": "lab_session_advance",
-        "description": "Advance a lab session through structured research phases and persist new artifacts.",
-        "inputSchema": TOOL_SCHEMAS["lab_session_advance"],
-    },
-    {
-        "name": "lab_agent_run",
-        "description": "Run a specific virtual lab role against a session and store a structured LabTurn.",
-        "inputSchema": TOOL_SCHEMAS["lab_agent_run"],
-    },
-    {
-        "name": "lab_referee_review",
-        "description": "Run a deterministic referee review against a claim or text and archive failures when found.",
-        "inputSchema": TOOL_SCHEMAS["lab_referee_review"],
-    },
-    {
-        "name": "lab_experiment_create",
-        "description": "Create a lab experiment linked to a claim.",
-        "inputSchema": TOOL_SCHEMAS["lab_experiment_create"],
-    },
-    {
-        "name": "lab_experiment_run",
-        "description": "Run a saved lab experiment and update linked claim evidence.",
-        "inputSchema": TOOL_SCHEMAS["lab_experiment_run"],
-    },
-    {
-        "name": "lab_memory_search",
-        "description": "Search across saved lab session memory, claims, failures, and experiments.",
-        "inputSchema": TOOL_SCHEMAS["lab_memory_search"],
-    },
-    {
-        "name": "lab_memory_write",
-        "description": "Write structured claim, failure, experiment, note, or edge data into a lab session.",
-        "inputSchema": TOOL_SCHEMAS["lab_memory_write"],
-    },
-    {
-        "name": "lab_models_debate",
-        "description": "Run the existing Research Table as the Model Arena and import its outputs into a lab session.",
-        "inputSchema": TOOL_SCHEMAS["lab_models_debate"],
-    },
-    {
-        "name": "lab_report_generate",
-        "description": "Generate a markdown lab report from structured session state.",
-        "inputSchema": TOOL_SCHEMAS["lab_report_generate"],
-    },
-    {
-        "name": "mystic_export_teacher_packet",
-        "description": "Export recent uncertain or failing cases for teacher labeling.",
-        "inputSchema": TOOL_SCHEMAS["mystic_export_teacher_packet"],
-    },
-    {
-        "name": "mystic_import_teacher_label",
-        "description": "Import teacher labels for local agents and persist them under mystic_data.",
-        "inputSchema": TOOL_SCHEMAS["mystic_import_teacher_label"],
-    },
+    _tool_definition(
+        "mystic_status",
+        "Return current Mystic model, dataset, adapter, and tool availability status.",
+        title="Mystic Status",
+        read_only=True,
+    ),
+    _tool_definition(
+        "mystic_verify_answer",
+        "Deterministically verify candidate answers when direct substitution or bounded search is possible.",
+        title="Verify Answer",
+        read_only=True,
+    ),
+    _tool_definition(
+        "mystic_bruteforce_integer_search",
+        "Search bounded integer domains for solutions to a symbolic equation under constraints.",
+        title="Bruteforce Integer Search",
+        read_only=True,
+    ),
+    _tool_definition(
+        "mystic_run_python_check",
+        "Run constrained Python checks inside Mystic's safe local sandbox.",
+        title="Run Python Check",
+    ),
+    _tool_definition(
+        "mystic_run_local_agent",
+        "Run a local Mystic agent in draft, critique, or summary mode.",
+        title="Run Local Agent",
+    ),
+    _tool_definition(
+        "mystic_call_model",
+        "Call any registered Mystic model through the unified ModelRouter.",
+        title="Call Model",
+    ),
+    _tool_definition(
+        "mystic_compare_models",
+        "Call multiple models and optionally append deterministic verifier output.",
+        title="Compare Models",
+    ),
+    _tool_definition(
+        "mystic_run_debate",
+        "Run a threaded multi-model debate with critique, tool evidence, revision, and final judgment.",
+        title="Run Debate",
+    ),
+    _tool_definition(
+        "mystic_run_research_table",
+        "Run the Research Table discovery workflow with structured discoveries and verification requests.",
+        title="Run Research Table",
+    ),
+    _tool_definition(
+        "lab_session_create",
+        "Create a structured Mystic Lab session under mystic_data/lab_sessions.",
+        title="Create Lab Session",
+    ),
+    _tool_definition(
+        "lab_session_get",
+        "Load the current lab session state, recent turns, claims, experiments, and failures.",
+        title="Get Lab Session",
+        read_only=True,
+    ),
+    _tool_definition(
+        "lab_session_advance",
+        "Advance a lab session through structured research phases and persist new artifacts.",
+        title="Advance Lab Session",
+    ),
+    _tool_definition(
+        "lab_agent_run",
+        "Run a specific virtual lab role against a session and store a structured LabTurn.",
+        title="Run Lab Agent",
+    ),
+    _tool_definition(
+        "lab_referee_review",
+        "Run a deterministic referee review against a claim or text and archive failures when found.",
+        title="Referee Review",
+    ),
+    _tool_definition(
+        "lab_experiment_create",
+        "Create a lab experiment linked to a claim.",
+        title="Create Experiment",
+    ),
+    _tool_definition(
+        "lab_experiment_run",
+        "Run a saved lab experiment and update linked claim evidence.",
+        title="Run Experiment",
+    ),
+    _tool_definition(
+        "lab_memory_search",
+        "Search across saved lab session memory, claims, failures, and experiments.",
+        title="Search Lab Memory",
+        read_only=True,
+    ),
+    _tool_definition(
+        "lab_memory_write",
+        "Write structured claim, failure, experiment, note, or edge data into a lab session.",
+        title="Write Lab Memory",
+    ),
+    _tool_definition(
+        "lab_models_debate",
+        "Run the existing Research Table as the Model Arena and import its outputs into a lab session.",
+        title="Run Model Arena Debate",
+    ),
+    _tool_definition(
+        "lab_report_generate",
+        "Generate a markdown lab report from structured session state.",
+        title="Generate Lab Report",
+    ),
+    _tool_definition(
+        "mystic_export_teacher_packet",
+        "Export recent uncertain or failing cases for teacher labeling.",
+        title="Export Teacher Packet",
+    ),
+    _tool_definition(
+        "mystic_import_teacher_label",
+        "Import teacher labels for local agents and persist them under mystic_data.",
+        title="Import Teacher Label",
+    ),
 ]
 
 
