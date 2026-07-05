@@ -194,6 +194,8 @@ For a stable public URL in front of the always-on local service, this repo also 
 - a Cloudflare Worker on `workers.dev` as the fixed public hostname
 - a launchd-managed `cloudflared` quick tunnel that keeps the current tunnel origin published into a GitHub Gist
 
+The quick tunnel path is useful for development, but it is temporary. If that origin expires, the Worker can still have correct OAuth metadata while public runtime MCP calls fail with `530`, `1016`, or generic `502` upstream errors.
+
 Install the public tunnel service with:
 
 ```bash
@@ -249,6 +251,70 @@ This verifies external MCP client behavior end to end:
 The smoke summary is written to:
 
 - `mystic_data/e2e/remote_mcp_lab_smoke/summary.json`
+
+### Stable Backend for Public MCP
+
+The public Worker depends on `MYSTIC_BACKEND_URL`. If that backend origin is a Cloudflare quick tunnel, public MCP can break even when:
+
+- `/.well-known/oauth-protected-resource` is healthy
+- `/oauth/authorize` and `/oauth/token` are healthy
+- ChatGPT still discovers the public tools
+
+Recommended path:
+
+- use a Cloudflare named tunnel or another stable backend origin
+- point `MYSTIC_BACKEND_URL` at that stable origin
+- rerun public MCP health checks after every backend-origin change
+
+Current repo-backed serving model:
+
+- local Mystic backend: `uvicorn mystic.app.main:app --host 127.0.0.1 --port 8765`
+- local backend health: `http://127.0.0.1:8765/health`
+- local MCP endpoint: `http://127.0.0.1:8765/mcp`
+- quick tunnel helper: `scripts/run_mystic_public_tunnel.py`
+- launchd helper for the quick tunnel: `scripts/manage_mystic_public_tunnel_service.py`
+- Worker origin lookup: `cloudflare/mystic_public_gateway_worker.js`
+
+To check whether the public Worker is healthy and whether the backend origin is likely dead, run:
+
+```bash
+python scripts/check_public_backend_origin.py \
+  --public-endpoint https://mystic.dexproject.workers.dev
+```
+
+Optionally include the direct backend origin and a bearer token:
+
+```bash
+python scripts/check_public_backend_origin.py \
+  --public-endpoint https://mystic.dexproject.workers.dev \
+  --backend-url https://mystic-backend.example.com \
+  --expect-oauth \
+  --bearer-token "$MYSTIC_TEST_BEARER_TOKEN"
+```
+
+The summary is written to:
+
+- `mystic_data/e2e/backend_origin_health/summary.json`
+
+Required post-change checks:
+
+```bash
+curl -i https://mystic.dexproject.workers.dev/health
+
+python scripts/run_remote_mcp_lab_smoke.py \
+  --endpoint https://mystic.dexproject.workers.dev/mcp \
+  --auth-mode bearer \
+  --bearer-token "$MYSTIC_TEST_BEARER_TOKEN"
+
+python scripts/run_remote_mcp_lab_smoke.py \
+  --endpoint https://mystic.dexproject.workers.dev/mcp \
+  --auth-mode expect-auth-required \
+  --allow-auth-required
+```
+
+For a placeholder-only named tunnel template, see:
+
+- `docs/cloudflare_named_tunnel_template.md`
 
 To check whether the current public endpoint is import-ready for ChatGPT as a remote MCP server:
 
