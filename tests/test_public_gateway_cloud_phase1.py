@@ -5,6 +5,8 @@ from pathlib import Path
 import subprocess
 import unittest
 
+from scripts import check_chatgpt_action_discovery_compatibility as compatibility
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -105,6 +107,23 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "lab_report_generate",
             ],
         )
+
+    def test_cloud_phase1_tools_list_passes_chatgpt_action_discovery_rules(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            },
+        )
+        tools = result["body"]["result"]["tools"]
+        seen: set[str] = set()
+        summaries = [compatibility.evaluate_tool_descriptor(tool, seen) for tool in tools]
+        self.assertTrue(summaries)
+        for summary in summaries:
+            self.assertEqual(summary["blockers"], [], msg=json.dumps(summary, indent=2))
 
     def test_cloud_phase1_mystic_status_reports_supabase_mode(self) -> None:
         result = run_worker_helper(
