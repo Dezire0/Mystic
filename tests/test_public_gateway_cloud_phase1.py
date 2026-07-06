@@ -55,6 +55,34 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertEqual(result["headers"]["x-mystic-public-origin"], "worker://supabase")
         self.assertEqual(result["fetchCalls"], [])
 
+    def test_cloud_phase1_initialize_returns_mcp_server_capabilities(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+            },
+        )
+        self.assertEqual(result["status"], 200)
+        self.assertEqual(result["body"]["result"]["protocolVersion"], "2025-06-18")
+        self.assertEqual(result["body"]["result"]["serverInfo"]["name"], "mystic-cloud-worker")
+        self.assertEqual(result["fetchCalls"], [])
+
+    def test_cloud_phase1_requires_auth_before_mcp_runtime(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "body": {"jsonrpc": "2.0", "id": 9, "method": "initialize"},
+            },
+        )
+        self.assertEqual(result["status"], 401)
+        self.assertIn("www-authenticate", result["headers"])
+        self.assertEqual(result["fetchCalls"], [])
+
     def test_cloud_phase1_tools_list_exposes_required_tools(self) -> None:
         result = run_worker_helper(
             "simulateRequest",
@@ -77,6 +105,28 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "lab_report_generate",
             ],
         )
+
+    def test_cloud_phase1_mystic_status_reports_supabase_mode(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 10,
+                    "method": "tools/call",
+                    "params": {"name": "mystic_status", "arguments": {}},
+                },
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["storage_backend"], "supabase")
+        self.assertTrue(payload["storage_status"]["configured"])
+        self.assertEqual(payload["runtime_mode"], "cloud_native_worker_phase_1")
+        self.assertIn("health_check", payload["tools"])
+        self.assertEqual(result["fetchCalls"], [])
 
     def test_cloud_phase1_lab_session_create_writes_supabase(self) -> None:
         result = run_worker_helper(
