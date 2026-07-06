@@ -52,6 +52,14 @@ LAB_TOOL_NAMES = (
     "lab_report_generate",
 )
 
+PHASE_1_TOOL_NAMES = (
+    "mystic_status",
+    "health_check",
+    "lab_session_create",
+    "lab_session_get",
+    "lab_report_generate",
+)
+
 
 class MysticToolbox:
     def __init__(
@@ -87,12 +95,19 @@ class MysticToolbox:
         datasets = self._dataset_counts()
         recent_runs = self._recent_run_ids(limit=5)
         remote_mcp_public_endpoint = self._remote_mcp_public_endpoint()
+        storage_status = self.lab_runner.storage.describe_status()
         oauth_enabled = self._oauth_enabled()
         oauth_configured = self._oauth_configured()
         oauth_metadata_available = oauth_enabled and oauth_configured
         import_ready_candidate = bool(remote_mcp_public_endpoint) and oauth_metadata_available
         verification_summary = self._manual_import_verification_summary()
         import_ready = import_ready_candidate and verification_summary["manual_import_verified"]
+        recent_errors: list[str] = []
+        try:
+            models = self._public_model_status_snapshot()
+        except Exception as exc:
+            models = {}
+            recent_errors.append(f"model_status_snapshot_failed:{type(exc).__name__}")
         blockers: list[str] = []
         if not oauth_enabled:
             blockers.append("OAUTH_NOT_CONFIGURED")
@@ -100,10 +115,13 @@ class MysticToolbox:
             blockers.append("OAUTH_METADATA_MISSING")
         elif not import_ready:
             blockers.append("MANUAL_IMPORT_NOT_VERIFIED")
+        if not storage_status.get("configured", False):
+            blockers.append("LAB_STORAGE_NOT_CONFIGURED")
         return {
-            "models": self._public_model_status_snapshot(),
+            "models": models,
             "tools": {
                 "mystic_status": "ready",
+                "health_check": "ready",
                 "mystic_verify_answer": "ready",
                 "mystic_call_model": "ready",
                 "mystic_compare_models": "ready",
@@ -122,7 +140,10 @@ class MysticToolbox:
             },
             "lab_core_available": True,
             "lab_tools_count": len(LAB_TOOL_NAMES),
-            "lab_storage_root": str(self.data_root / "lab_sessions"),
+            "phase_1_tools_count": len(PHASE_1_TOOL_NAMES),
+            "storage_backend": storage_status.get("backend", "local"),
+            "storage_status": storage_status,
+            "lab_storage_root": str(storage_status.get("storage_root", self.data_root / "lab_sessions")),
             "remote_mcp_public_endpoint": remote_mcp_public_endpoint,
             "oauth_configured": oauth_configured,
             "oauth_enabled": oauth_enabled,
@@ -139,8 +160,20 @@ class MysticToolbox:
                 "available": sorted(path.name for path in adapters_dir.iterdir()) if adapters_dir.exists() else [],
             },
             "recent_runs": recent_runs,
-            "recent_errors": [],
+            "recent_errors": recent_errors,
             "mcp_server_status": "ready",
+        }
+
+    def health_check(self) -> dict[str, Any]:
+        storage_status = self.lab_runner.storage.describe_status()
+        return {
+            "status": "ok",
+            "mode": "local_backend",
+            "storage_backend": storage_status.get("backend", "local"),
+            "storage_status": storage_status,
+            "oauth_enabled": self._oauth_enabled(),
+            "oauth_configured": self._oauth_configured(),
+            "phase_1_tools": list(PHASE_1_TOOL_NAMES),
         }
 
     def mystic_verify_answer(

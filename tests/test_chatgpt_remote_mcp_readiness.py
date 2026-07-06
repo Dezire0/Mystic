@@ -49,7 +49,7 @@ class ChatGPTRemoteMCPReadinessTests(unittest.TestCase):
                 1: _mcp_success(1, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
                 4: _mcp_success(
                     4,
-                    {"tools": [{"name": name} for name in sorted(readiness.LAB_TOOLS | {"mystic_status"})]},
+                    {"tools": [{"name": name} for name in sorted(readiness.EXISTING_TOOLS | readiness.LAB_TOOLS)]},
                 ),
             }
 
@@ -116,7 +116,7 @@ class ChatGPTRemoteMCPReadinessTests(unittest.TestCase):
                 2: _mcp_success(2, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
                 3: _mcp_success(
                     3,
-                    {"tools": [{"name": name} for name in sorted(readiness.LAB_TOOLS | {"mystic_status"})]},
+                    {"tools": [{"name": name} for name in sorted(readiness.EXISTING_TOOLS | readiness.LAB_TOOLS)]},
                 ),
             }
 
@@ -193,7 +193,7 @@ class ChatGPTRemoteMCPReadinessTests(unittest.TestCase):
                 2: _mcp_success(2, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
                 3: _mcp_success(
                     3,
-                    {"tools": [{"name": name} for name in sorted(readiness.LAB_TOOLS | {"mystic_status"})]},
+                    {"tools": [{"name": name} for name in sorted(readiness.EXISTING_TOOLS | readiness.LAB_TOOLS)]},
                 ),
             }
 
@@ -260,7 +260,7 @@ class ChatGPTRemoteMCPReadinessTests(unittest.TestCase):
                     "body": {"error": "unauthorized"},
                 },
                 2: _mcp_success(2, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
-                3: _mcp_success(3, {"tools": [{"name": name} for name in sorted(readiness.LAB_TOOLS | {"mystic_status"})]}),
+                3: _mcp_success(3, {"tools": [{"name": name} for name in sorted(readiness.EXISTING_TOOLS | readiness.LAB_TOOLS)]}),
             }
 
             with patch.object(readiness, "http_json_request", side_effect=fake_http_json_request), patch.object(
@@ -327,7 +327,7 @@ class ChatGPTRemoteMCPReadinessTests(unittest.TestCase):
                     "body": {"error": "unauthorized"},
                 },
                 2: _mcp_success(2, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
-                3: _mcp_success(3, {"tools": [{"name": name} for name in sorted(readiness.LAB_TOOLS | {"mystic_status"})]}),
+                3: _mcp_success(3, {"tools": [{"name": name} for name in sorted(readiness.EXISTING_TOOLS | readiness.LAB_TOOLS)]}),
             }
 
             with patch.object(readiness, "http_json_request", side_effect=fake_http_json_request), patch.object(
@@ -395,7 +395,7 @@ class ChatGPTRemoteMCPReadinessTests(unittest.TestCase):
                     "body": {"error": "unauthorized"},
                 },
                 2: _mcp_success(2, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
-                3: _mcp_success(3, {"tools": [{"name": name} for name in sorted(readiness.LAB_TOOLS | {"mystic_status"})]}),
+                3: _mcp_success(3, {"tools": [{"name": name} for name in sorted(readiness.EXISTING_TOOLS | readiness.LAB_TOOLS)]}),
             }
 
             with patch.object(readiness, "http_json_request", side_effect=fake_http_json_request), patch.object(
@@ -463,7 +463,7 @@ class ChatGPTRemoteMCPReadinessTests(unittest.TestCase):
                     "body": {"error": "unauthorized"},
                 },
                 2: _mcp_success(2, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
-                3: _mcp_success(3, {"tools": [{"name": name} for name in sorted(readiness.LAB_TOOLS | {"mystic_status"})]}),
+                3: _mcp_success(3, {"tools": [{"name": name} for name in sorted(readiness.EXISTING_TOOLS | readiness.LAB_TOOLS)]}),
             }
 
             with patch.object(readiness, "http_json_request", side_effect=fake_http_json_request), patch.object(
@@ -498,7 +498,7 @@ class ChatGPTRemoteMCPReadinessTests(unittest.TestCase):
 
             responses = {
                 1: _mcp_success(1, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
-                4: _mcp_success(4, {"tools": [{"name": name} for name in sorted(readiness.LAB_TOOLS | {"mystic_status"})]}),
+                4: _mcp_success(4, {"tools": [{"name": name} for name in sorted(readiness.EXISTING_TOOLS | readiness.LAB_TOOLS)]}),
             }
 
             with patch.object(readiness, "http_json_request", side_effect=fake_http_json_request), patch.object(

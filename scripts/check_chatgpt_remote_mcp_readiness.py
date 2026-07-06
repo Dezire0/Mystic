@@ -19,6 +19,7 @@ from mystic.mcp.import_verification import (  # noqa: E402
     validate_import_verification_artifact,
 )
 from scripts.run_remote_mcp_lab_smoke import (
+    EXISTING_TOOLS,
     LAB_TOOLS,
     auth_status_from_response,
     base_url_from_endpoint,
@@ -27,6 +28,8 @@ from scripts.run_remote_mcp_lab_smoke import (
     now_iso,
     validate_mcp_success,
 )
+
+PHASE1_REQUIRED_TOOLS = EXISTING_TOOLS | LAB_TOOLS
 
 
 DEFAULT_PUBLIC_ENDPOINT = "https://mystic.dexproject.workers.dev"
@@ -333,7 +336,7 @@ def check_chatgpt_remote_mcp_readiness(
             if not tools_errors:
                 report["tools_list_ok"] = True
                 tool_names = extract_tool_names(authed_tools_list)
-                report["lab_tools_visible"] = LAB_TOOLS.issubset(tool_names)
+                report["lab_tools_visible"] = PHASE1_REQUIRED_TOOLS.issubset(tool_names)
                 report["token_validation_ok"] = True
             else:
                 report["blockers"].append("TOKEN_VALIDATION_MISSING")
@@ -351,7 +354,7 @@ def check_chatgpt_remote_mcp_readiness(
                 if not tools_errors:
                     report["tools_list_ok"] = True
                     tool_names = extract_tool_names(tools_list)
-                    report["lab_tools_visible"] = LAB_TOOLS.issubset(tool_names)
+                    report["lab_tools_visible"] = PHASE1_REQUIRED_TOOLS.issubset(tool_names)
         elif expect_oauth:
             report["next_actions"].append("Provide --bearer-token to confirm authenticated tools/list behavior.")
 

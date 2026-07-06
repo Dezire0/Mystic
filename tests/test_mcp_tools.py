@@ -75,10 +75,13 @@ class MCPToolsTests(unittest.TestCase):
             status = toolbox.mystic_status()
         self.assertIn("local_prime", status["models"])
         self.assertEqual(status["tools"]["mystic_status"], "ready")
+        self.assertEqual(status["tools"]["health_check"], "ready")
         self.assertNotIn("details", status["models"]["local_prime"]["status"])
         self.assertTrue(status["lab_core_available"])
         self.assertGreaterEqual(status["lab_tools_count"], 5)
         self.assertTrue(status["lab_storage_root"].endswith("mystic_data/lab_sessions"))
+        self.assertEqual(status["storage_backend"], "local")
+        self.assertEqual(status["storage_status"]["backend"], "local")
         self.assertEqual(status["remote_mcp_public_endpoint"], "https://mystic.dexproject.workers.dev/mcp")
         self.assertTrue(status["oauth_enabled"])
         self.assertTrue(status["oauth_configured"])
@@ -91,6 +94,31 @@ class MCPToolsTests(unittest.TestCase):
         self.assertIn("MANUAL_IMPORT_NOT_VERIFIED", status["blockers"])
         self.assertNotIn("sk-test-secret", json.dumps(status))
         self.assertNotIn("oauth-signing-secret", json.dumps(status))
+
+    def test_health_check_returns_minimal_local_status(self):
+        toolbox = self._make_toolbox()
+        result = toolbox.health_check()
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["mode"], "local_backend")
+        self.assertEqual(result["storage_backend"], "local")
+        self.assertIn("health_check", result["phase_1_tools"])
+
+    def test_status_reports_supabase_storage_blocker_when_unconfigured(self):
+        with patch.dict(
+            os.environ,
+            {
+                "MYSTIC_STORAGE_BACKEND": "supabase",
+                "MYSTIC_OAUTH_ENABLED": "true",
+                "MYSTIC_OAUTH_ISSUER": "https://mystic.dexproject.workers.dev",
+                "MYSTIC_OAUTH_SIGNING_SECRET": "oauth-signing-secret",
+            },
+            clear=False,
+        ):
+            toolbox = self._make_toolbox()
+            status = toolbox.mystic_status()
+        self.assertEqual(status["storage_backend"], "supabase")
+        self.assertFalse(status["storage_status"]["configured"])
+        self.assertIn("LAB_STORAGE_NOT_CONFIGURED", status["blockers"])
 
     def test_status_reports_manual_import_summary_without_secrets(self):
         with patch.dict(

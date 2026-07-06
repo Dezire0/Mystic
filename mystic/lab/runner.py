@@ -257,11 +257,9 @@ class LabRunner:
         failures = []
         experiments = []
         edges = []
-        for session_dir in sorted(self.storage.base_dir.iterdir(), reverse=True):
-            if not session_dir.is_dir():
-                continue
+        for session_id in self.storage.list_session_ids():
             try:
-                bundle = self.storage.load_bundle(session_dir.name)
+                bundle = self.storage.load_bundle(session_id)
             except Exception:
                 continue
             if domain and bundle.session.domain != domain:

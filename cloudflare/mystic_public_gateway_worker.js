@@ -2,6 +2,74 @@ const CONFIG_URL = "https://gist.githubusercontent.com/Dezire0/778759ccca8f7d9a5
 const DEFAULT_SCOPES = "tools:read tools:execute";
 const DEFAULT_TOKEN_TTL_SECONDS = 3600;
 const MANUAL_IMPORT_VERIFICATION_PATH = "/mystic_data/e2e/remote_mcp_lab_smoke/chatgpt_import_verified.json";
+const DEFAULT_SUPABASE_SCHEMA = "public";
+const CLOUD_PHASE1_TOOL_DEFINITIONS = [
+  {
+    name: "mystic_status",
+    title: "Mystic Status",
+    description: "Return current Mystic cloud-worker and storage availability status.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "health_check",
+    title: "Health Check",
+    description: "Return a minimal cloud-native Mystic health summary.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "lab_session_create",
+    title: "Create Lab Session",
+    description: "Create a phase-1 Mystic Lab session in Supabase-backed cloud storage.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        problem: { type: "string", minLength: 1 },
+        domain: { type: "string", minLength: 1 },
+        goal: { type: "string", minLength: 1 },
+        mode: { type: "string", minLength: 1 },
+        participants: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 8 },
+      },
+      required: ["problem", "domain", "goal", "mode", "participants"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "lab_session_get",
+    title: "Get Lab Session",
+    description: "Load the current cloud-native lab session state from Supabase.",
+    inputSchema: {
+      type: "object",
+      properties: { session_id: { type: "string", minLength: 1 } },
+      required: ["session_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "lab_report_generate",
+    title: "Generate Lab Report",
+    description: "Generate a markdown report from Supabase-backed cloud-native lab data.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", minLength: 1 },
+        format: { type: "string", enum: ["markdown"] },
+        include_failures: { type: "boolean" },
+        include_next_actions: { type: "boolean" },
+      },
+      required: ["session_id", "format", "include_failures", "include_next_actions"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+];
+const CLOUD_PHASE1_TOOL_NAMES = new Set(CLOUD_PHASE1_TOOL_DEFINITIONS.map((tool) => tool.name));
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -120,6 +188,590 @@ function htmlResponse(body, status = 200) {
 
 function errorResponse(message, status = 400, headers = {}) {
   return jsonResponse({ error: message }, status, headers);
+}
+
+function storageBackend(env) {
+  return String(env.MYSTIC_STORAGE_BACKEND || "").trim().toLowerCase() || "local";
+}
+
+function cloudPhase1Enabled(env) {
+  return storageBackend(env) === "supabase";
+}
+
+function supabaseState(env) {
+  const url = normalizeBaseUrl(env.MYSTIC_SUPABASE_URL || "");
+  const serviceRoleKey = String(env.MYSTIC_SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  const schema = String(env.MYSTIC_SUPABASE_SCHEMA || DEFAULT_SUPABASE_SCHEMA).trim() || DEFAULT_SUPABASE_SCHEMA;
+  return {
+    url,
+    serviceRoleKey,
+    schema,
+    configured: Boolean(url && serviceRoleKey),
+    storageRoot: `supabase://${schema}/lab_sessions`,
+  };
+}
+
+function cloudArtifactPaths(schema, sessionId) {
+  return {
+    session: `supabase://${schema}/lab_sessions/${sessionId}`,
+    turns: `supabase://${schema}/lab_turns?session_id=${sessionId}`,
+    claims: `supabase://${schema}/claims?session_id=${sessionId}`,
+    experiments: `supabase://${schema}/lab_sessions/${sessionId}#experiments`,
+    failures: `supabase://${schema}/failures?session_id=${sessionId}`,
+    memory_edges: `supabase://${schema}/memory_edges?session_id=${sessionId}`,
+    notebook: `supabase://${schema}/lab_sessions/${sessionId}#notebook`,
+    report: `supabase://${schema}/reports/${sessionId}`,
+  };
+}
+
+function phase1Blockers(state, supabase) {
+  const blockers = [];
+  if (!state.enabled) {
+    blockers.push("OAUTH_NOT_CONFIGURED");
+  } else if (!state.configured) {
+    blockers.push("OAUTH_METADATA_MISSING");
+  }
+  if (!supabase.configured) {
+    blockers.push("LAB_STORAGE_NOT_CONFIGURED");
+  }
+  blockers.push("MANUAL_IMPORT_NOT_VERIFIED");
+  return blockers;
+}
+
+function phase1MysticStatus(state, supabase) {
+  return {
+    models: {},
+    tools: {
+      mystic_status: "ready",
+      health_check: "ready",
+      lab_session_create: supabase.configured ? "ready" : "blocked",
+      lab_session_get: supabase.configured ? "ready" : "blocked",
+      lab_report_generate: supabase.configured ? "ready" : "blocked",
+    },
+    lab_core_available: true,
+    lab_tools_count: 3,
+    phase_1_tools_count: CLOUD_PHASE1_TOOL_DEFINITIONS.length,
+    storage_backend: "supabase",
+    storage_status: {
+      backend: "supabase",
+      configured: supabase.configured,
+      write_capable: supabase.configured,
+      storage_root: supabase.storageRoot,
+      storage_root_uri: supabase.storageRoot,
+      schema: supabase.schema,
+      project_url: supabase.url,
+      missing_env: [
+        ...(!supabase.url ? ["MYSTIC_SUPABASE_URL"] : []),
+        ...(!supabase.serviceRoleKey ? ["MYSTIC_SUPABASE_SERVICE_ROLE_KEY"] : []),
+      ],
+    },
+    lab_storage_root: supabase.storageRoot,
+    remote_mcp_public_endpoint: `${state.issuer}/mcp`,
+    oauth_configured: state.configured,
+    oauth_enabled: state.enabled,
+    oauth_metadata_available: state.metadataAvailable,
+    chatgpt_remote_import_ready: false,
+    chatgpt_remote_import_ready_candidate: state.metadataAvailable && supabase.configured,
+    manual_import_verification_checked: false,
+    manual_import_verified: false,
+    manual_import_verification_path: MANUAL_IMPORT_VERIFICATION_PATH,
+    manual_import_verification_summary: {},
+    blockers: phase1Blockers(state, supabase),
+    datasets: {},
+    adapter_status: { available: [] },
+    recent_runs: [],
+    recent_errors: [],
+    mcp_server_status: "ready",
+    runtime_mode: "cloud_native_worker_phase_1",
+  };
+}
+
+function phase1HealthCheck(state, supabase) {
+  return {
+    status: supabase.configured ? "ok" : "error",
+    mode: "cloud_native_worker",
+    storage_backend: "supabase",
+    storage_status: {
+      backend: "supabase",
+      configured: supabase.configured,
+      write_capable: supabase.configured,
+      storage_root: supabase.storageRoot,
+      storage_root_uri: supabase.storageRoot,
+      schema: supabase.schema,
+      project_url: supabase.url,
+      missing_env: [
+        ...(!supabase.url ? ["MYSTIC_SUPABASE_URL"] : []),
+        ...(!supabase.serviceRoleKey ? ["MYSTIC_SUPABASE_SERVICE_ROLE_KEY"] : []),
+      ],
+    },
+    oauth_enabled: state.enabled,
+    oauth_configured: state.configured,
+    phase_1_tools: CLOUD_PHASE1_TOOL_DEFINITIONS.map((tool) => tool.name),
+  };
+}
+
+function jsonRpcResponse(requestId, result) {
+  return jsonResponse({ jsonrpc: "2.0", id: requestId, result }, 200, { "cache-control": "no-store" });
+}
+
+function jsonRpcError(requestId, code, message, data = undefined) {
+  const payload = {
+    jsonrpc: "2.0",
+    id: requestId,
+    error: { code, message },
+  };
+  if (data !== undefined) {
+    payload.error.data = data;
+  }
+  return jsonResponse(payload, 200, { "cache-control": "no-store" });
+}
+
+function validateCloudToolArguments(name, args) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return ["arguments must be a JSON object"];
+  }
+  const errors = [];
+  if (name === "lab_session_create") {
+    if (typeof args.problem !== "string" || !args.problem.trim()) {
+      errors.push("problem is required");
+    }
+    if (typeof args.domain !== "string" || !args.domain.trim()) {
+      errors.push("domain is required");
+    }
+    if (typeof args.goal !== "string" || !args.goal.trim()) {
+      errors.push("goal is required");
+    }
+    if (typeof args.mode !== "string" || !args.mode.trim()) {
+      errors.push("mode is required");
+    }
+    if (!Array.isArray(args.participants) || args.participants.length < 1) {
+      errors.push("participants must contain at least one entry");
+    }
+  }
+  if (name === "lab_session_get" || name === "lab_report_generate") {
+    if (typeof args.session_id !== "string" || !args.session_id.trim()) {
+      errors.push("session_id is required");
+    }
+  }
+  if (name === "lab_report_generate") {
+    if (args.format !== "markdown") {
+      errors.push("format must be markdown");
+    }
+    if (typeof args.include_failures !== "boolean") {
+      errors.push("include_failures must be boolean");
+    }
+    if (typeof args.include_next_actions !== "boolean") {
+      errors.push("include_next_actions must be boolean");
+    }
+  }
+  return errors;
+}
+
+function makeCloudSessionId() {
+  const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const random = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+  return `lab-${timestamp}-${random}`;
+}
+
+function makeCloudController() {
+  return {
+    model_id: "gpt_controller",
+    provider: "controller",
+    model_name: "GPT Controller",
+    role: "judge",
+  };
+}
+
+function makeCloudParticipants(participants) {
+  return participants.map((item) => ({
+    model_id: String(item),
+    provider: "cloud_phase1",
+    model_name: String(item),
+    status: {
+      state: "deferred",
+      available: false,
+      authenticated: false,
+      message: "Phase-1 cloud-native mode stores the session without invoking live model providers.",
+    },
+  }));
+}
+
+function buildCloudSessionBundle({ sessionId, problem, domain, goal, mode, participants, schema }) {
+  const createdAt = new Date().toISOString();
+  const session = {
+    session_id: sessionId,
+    problem,
+    domain,
+    goal,
+    mode,
+    status: "created",
+    current_phase: "problem_intake",
+    active_room: "Control Panel",
+    created_at: createdAt,
+    updated_at: createdAt,
+    controller: makeCloudController(),
+    participants: makeCloudParticipants(participants),
+    artifact_paths: cloudArtifactPaths(schema, sessionId),
+    next_actions: [
+      "Review the created lab session in ChatGPT.",
+      "Use lab_report_generate to snapshot the current session state.",
+    ],
+    warnings: [
+      "Phase-1 cloud-native mode stores sessions in Supabase and defers long-running model execution.",
+    ],
+  };
+  return {
+    session,
+    turns: [],
+    claims: [],
+    experiments: [],
+    failures: [],
+    memory_edges: [],
+    notebook_markdown: `# Lab Notebook ${sessionId}\n\nProblem: ${problem}\n\n`,
+    report_markdown: "",
+  };
+}
+
+function renderCloudReport(bundle) {
+  const survivingClaims = bundle.claims.filter((claim) => ["PROVED", "TESTED", "HEURISTIC"].includes(claim.status));
+  const failedClaims = bundle.claims.filter((claim) => ["FAILED", "REFUTED", "NEEDS_MORE_DETAIL"].includes(claim.status));
+  const keyLessons = bundle.failures.slice(-5).map((failure) => failure.lesson);
+  const survivingLines = survivingClaims.length ? survivingClaims.map((claim) => `- ${claim.text} [${claim.status}]`) : ["- None"];
+  const failedLines = failedClaims.length ? failedClaims.map((claim) => `- ${claim.text} [${claim.status}]`) : ["- None"];
+  const experimentLines = bundle.experiments.length
+    ? bundle.experiments.map((experiment) => `- ${experiment.question} => ${experiment.verdict}`)
+    : ["- None"];
+  const lessonLines = keyLessons.length ? keyLessons.map((lesson) => `- ${lesson}`) : ["- None"];
+  const nextActionLines = bundle.session.next_actions.length
+    ? bundle.session.next_actions.map((item) => `- ${item}`)
+    : ["- None"];
+  const markdown = [
+    `# Mystic Lab Report: ${bundle.session.session_id}`,
+    "",
+    `Problem: ${bundle.session.problem}`,
+    `Domain: ${bundle.session.domain}`,
+    "",
+    "## Surviving Claims",
+    ...survivingLines,
+    "",
+    "## Failed Claims",
+    ...failedLines,
+    "",
+    "## Experiments",
+    ...experimentLines,
+    "",
+    "## Key Lessons",
+    ...lessonLines,
+    "",
+    "## Next Actions",
+    ...nextActionLines,
+    "",
+  ].join("\n");
+  return {
+    session_id: bundle.session.session_id,
+    title: `Mystic Lab Report ${bundle.session.session_id}`,
+    problem: bundle.session.problem,
+    domain: bundle.session.domain,
+    surviving_claims: survivingClaims,
+    failed_claims: failedClaims,
+    experiments: bundle.experiments,
+    key_lessons: keyLessons,
+    next_actions: [...bundle.session.next_actions],
+    markdown,
+  };
+}
+
+function parseCloudBundle(sessionRow, turns, claims, failures, memoryEdges, reportRow) {
+  const experiments = Array.isArray(sessionRow.experiments_json) ? sessionRow.experiments_json : [];
+  return {
+    session: {
+      session_id: sessionRow.session_id,
+      problem: sessionRow.problem,
+      domain: sessionRow.domain,
+      goal: sessionRow.goal,
+      mode: sessionRow.mode,
+      status: sessionRow.status,
+      current_phase: sessionRow.current_phase,
+      active_room: sessionRow.active_room,
+      created_at: sessionRow.created_at,
+      updated_at: sessionRow.updated_at,
+      controller: sessionRow.controller || {},
+      participants: Array.isArray(sessionRow.participants) ? sessionRow.participants : [],
+      artifact_paths: sessionRow.artifact_paths || cloudArtifactPaths(DEFAULT_SUPABASE_SCHEMA, sessionRow.session_id),
+      next_actions: Array.isArray(sessionRow.next_actions) ? sessionRow.next_actions : [],
+      warnings: Array.isArray(sessionRow.warnings) ? sessionRow.warnings : [],
+    },
+    turns,
+    claims,
+    experiments,
+    failures,
+    memory_edges: memoryEdges,
+    notebook_markdown: String(sessionRow.notebook_markdown || ""),
+    report_markdown: String((reportRow && reportRow.markdown) || ""),
+  };
+}
+
+async function supabaseRequest(env, method, table, options = {}) {
+  const state = supabaseState(env);
+  if (!state.configured) {
+    throw new Error("Supabase storage is not configured.");
+  }
+  const url = new URL(`${state.url}/rest/v1/${table}`);
+  const params = options.params || {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, value);
+    }
+  }
+  const headers = new Headers({
+    Accept: "application/json",
+    apikey: state.serviceRoleKey,
+    Authorization: `Bearer ${state.serviceRoleKey}`,
+  });
+  if (options.body !== undefined) {
+    headers.set("content-type", "application/json");
+  }
+  if (state.schema && state.schema !== DEFAULT_SUPABASE_SCHEMA) {
+    headers.set("accept-profile", state.schema);
+    headers.set("content-profile", state.schema);
+  }
+  if (options.prefer) {
+    headers.set("prefer", options.prefer);
+  }
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Supabase ${method} ${table} failed with ${response.status}: ${text.slice(0, 400)}`);
+  }
+  if (!text.trim()) {
+    return null;
+  }
+  return JSON.parse(text);
+}
+
+async function supabaseSelectRows(env, table, filters = {}, options = {}) {
+  const params = { select: options.select || "*", ...filters };
+  if (options.order) {
+    params.order = options.order;
+  }
+  const payload = await supabaseRequest(env, "GET", table, { params });
+  return Array.isArray(payload) ? payload : [];
+}
+
+async function supabaseSelectOne(env, table, filters = {}, options = {}) {
+  const rows = await supabaseSelectRows(env, table, filters, options);
+  return rows[0] || null;
+}
+
+async function supabaseDeleteRows(env, table, filters) {
+  await supabaseRequest(env, "DELETE", table, { params: filters, prefer: "return=minimal" });
+}
+
+async function supabaseInsertRows(env, table, rows) {
+  await supabaseRequest(env, "POST", table, { body: rows, prefer: "return=representation" });
+}
+
+async function supabaseUpsertRows(env, table, rows, onConflict) {
+  await supabaseRequest(env, "POST", table, {
+    params: { on_conflict: onConflict },
+    body: rows,
+    prefer: "resolution=merge-duplicates,return=representation",
+  });
+}
+
+async function loadCloudBundle(env, sessionId) {
+  const sessionRow = await supabaseSelectOne(env, "lab_sessions", { session_id: `eq.${sessionId}` });
+  if (!sessionRow) {
+    return null;
+  }
+  const [turns, claims, failures, memoryEdges, reportRow] = await Promise.all([
+    supabaseSelectRows(env, "lab_turns", { session_id: `eq.${sessionId}` }, { order: "created_at.asc" }),
+    supabaseSelectRows(env, "claims", { session_id: `eq.${sessionId}` }, { order: "created_at.asc" }),
+    supabaseSelectRows(env, "failures", { session_id: `eq.${sessionId}` }, { order: "created_at.asc" }),
+    supabaseSelectRows(env, "memory_edges", { session_id: `eq.${sessionId}` }, { order: "created_at.asc" }),
+    supabaseSelectOne(env, "reports", { session_id: `eq.${sessionId}` }),
+  ]);
+  return parseCloudBundle(sessionRow, turns, claims, failures, memoryEdges, reportRow);
+}
+
+async function saveCloudBundle(env, bundle) {
+  const schema = supabaseState(env).schema;
+  bundle.session.artifact_paths = cloudArtifactPaths(schema, bundle.session.session_id);
+  const sessionRow = {
+    ...bundle.session,
+    notebook_markdown: bundle.notebook_markdown || "",
+    experiments_json: Array.isArray(bundle.experiments) ? bundle.experiments : [],
+  };
+  await supabaseUpsertRows(env, "lab_sessions", [sessionRow], "session_id");
+  await Promise.all([
+    supabaseDeleteRows(env, "lab_turns", { session_id: `eq.${bundle.session.session_id}` }),
+    supabaseDeleteRows(env, "claims", { session_id: `eq.${bundle.session.session_id}` }),
+    supabaseDeleteRows(env, "failures", { session_id: `eq.${bundle.session.session_id}` }),
+    supabaseDeleteRows(env, "memory_edges", { session_id: `eq.${bundle.session.session_id}` }),
+  ]);
+  if (Array.isArray(bundle.turns) && bundle.turns.length) {
+    await supabaseInsertRows(env, "lab_turns", bundle.turns);
+  }
+  if (Array.isArray(bundle.claims) && bundle.claims.length) {
+    await supabaseInsertRows(env, "claims", bundle.claims);
+  }
+  if (Array.isArray(bundle.failures) && bundle.failures.length) {
+    await supabaseInsertRows(env, "failures", bundle.failures);
+  }
+  if (Array.isArray(bundle.memory_edges) && bundle.memory_edges.length) {
+    await supabaseInsertRows(env, "memory_edges", bundle.memory_edges);
+  }
+  if (bundle.report_markdown) {
+    const report = renderCloudReport(bundle);
+    report.markdown = bundle.report_markdown;
+    await supabaseUpsertRows(env, "reports", [report], "session_id");
+  } else {
+    await supabaseDeleteRows(env, "reports", { session_id: `eq.${bundle.session.session_id}` });
+  }
+  return bundle.session.artifact_paths;
+}
+
+function cloudSessionPayload(bundle) {
+  return {
+    session: bundle.session,
+    session_id: bundle.session.session_id,
+    latest_turns: bundle.turns.slice(-10),
+    turns: bundle.turns,
+    claims: bundle.claims,
+    experiments: bundle.experiments,
+    failures: bundle.failures,
+    memory_edges: bundle.memory_edges,
+    next_actions: [...bundle.session.next_actions],
+    notebook_path: bundle.session.artifact_paths.notebook || "",
+    report_path: bundle.session.artifact_paths.report || "",
+    notebook_markdown: bundle.notebook_markdown,
+    report_markdown: bundle.report_markdown,
+  };
+}
+
+async function callCloudTool(name, args, env, state) {
+  const supabase = supabaseState(env);
+  if (name === "mystic_status") {
+    return phase1MysticStatus(state, supabase);
+  }
+  if (name === "health_check") {
+    return phase1HealthCheck(state, supabase);
+  }
+  if (!supabase.configured) {
+    throw new Error("Supabase storage is not configured for cloud-native phase-1 mode.");
+  }
+  if (name === "lab_session_create") {
+    const sessionId = makeCloudSessionId();
+    const bundle = buildCloudSessionBundle({
+      sessionId,
+      problem: args.problem.trim(),
+      domain: args.domain.trim(),
+      goal: args.goal.trim(),
+      mode: args.mode.trim(),
+      participants: args.participants.map((item) => String(item)),
+      schema: supabase.schema,
+    });
+    const paths = await saveCloudBundle(env, bundle);
+    return {
+      session_id: sessionId,
+      status: bundle.session.status,
+      current_phase: bundle.session.current_phase,
+      paths,
+    };
+  }
+  if (name === "lab_session_get") {
+    const bundle = await loadCloudBundle(env, args.session_id.trim());
+    if (!bundle) {
+      throw new Error(`Unknown session_id: ${args.session_id}`);
+    }
+    return cloudSessionPayload(bundle);
+  }
+  if (name === "lab_report_generate") {
+    const bundle = await loadCloudBundle(env, args.session_id.trim());
+    if (!bundle) {
+      throw new Error(`Unknown session_id: ${args.session_id}`);
+    }
+    const report = renderCloudReport(bundle);
+    bundle.report_markdown = report.markdown;
+    bundle.session.current_phase = "completed";
+    bundle.session.status = "completed";
+    bundle.session.next_actions = [];
+    bundle.session.updated_at = new Date().toISOString();
+    const paths = await saveCloudBundle(env, bundle);
+    if (!args.include_failures) {
+      report.failed_claims = [];
+    }
+    if (!args.include_next_actions) {
+      report.next_actions = [];
+    }
+    return {
+      report_path: paths.report,
+      markdown: report.markdown,
+      summary: {
+        surviving_claims: report.surviving_claims.length,
+        failed_claims: report.failed_claims.length,
+        next_actions: report.next_actions.length,
+      },
+    };
+  }
+  throw new Error(`Unsupported cloud-native tool: ${name}`);
+}
+
+async function handleCloudPhase1Mcp(request, env, state) {
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405, headers: { allow: "POST" } });
+  }
+  let payload;
+  try {
+    payload = await request.json();
+  } catch (error) {
+    return jsonRpcError(null, -32700, `Invalid JSON: ${error.message}`);
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return jsonRpcError(null, -32600, "MCP requests must be a single JSON-RPC object.");
+  }
+  const requestId = payload.id ?? null;
+  const method = String(payload.method || "");
+  if (method === "initialize") {
+    return jsonRpcResponse(requestId, {
+      protocolVersion: "2025-06-18",
+      capabilities: { tools: {} },
+      serverInfo: { name: "mystic-cloud-worker", version: "0.1.0" },
+    });
+  }
+  if (method === "ping") {
+    return jsonRpcResponse(requestId, {});
+  }
+  if (method === "tools/list") {
+    return jsonRpcResponse(requestId, { tools: CLOUD_PHASE1_TOOL_DEFINITIONS });
+  }
+  if (method !== "tools/call") {
+    return jsonRpcError(requestId, -32601, `Unknown method: ${method}`);
+  }
+  const params = payload.params || {};
+  const name = String(params.name || "");
+  const args = params.arguments || {};
+  if (!CLOUD_PHASE1_TOOL_NAMES.has(name)) {
+    return jsonRpcError(requestId, -32601, `Unknown tool: ${name}`);
+  }
+  const argumentErrors = validateCloudToolArguments(name, args);
+  if (argumentErrors.length) {
+    return jsonRpcError(requestId, -32000, `Invalid params: ${argumentErrors.join("; ")}`);
+  }
+  try {
+    const result = await callCloudTool(name, args, env, state);
+    return jsonRpcResponse(requestId, {
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      structuredContent: result,
+      isError: false,
+    });
+  } catch (error) {
+    return jsonRpcError(requestId, -32000, error.message);
+  }
 }
 
 function b64urlEncodeBytes(bytes) {
@@ -604,6 +1256,7 @@ async function routeRequest(request, env) {
   const sourceUrl = new URL(request.url);
   const state = oauthState(env, request.url);
   const pathname = sourceUrl.pathname;
+  const phase1CloudMode = cloudPhase1Enabled(env);
 
   if (pathname === "/.well-known/oauth-protected-resource" || pathname === "/.well-known/oauth-protected-resource/mcp") {
     if (!state.metadataAvailable) {
@@ -634,14 +1287,98 @@ async function routeRequest(request, env) {
     return errorResponse("Dynamic client registration is not implemented.", 501);
   }
 
+  if (pathname === "/health" && phase1CloudMode) {
+    const supabase = supabaseState(env);
+    const status = supabase.configured ? 200 : 503;
+    return jsonResponse(
+      supabase.configured
+        ? { status: "ok" }
+        : {
+            status: "error",
+            storage_backend: "supabase",
+            configured: false,
+            missing_env: [
+              ...(!supabase.url ? ["MYSTIC_SUPABASE_URL"] : []),
+              ...(!supabase.serviceRoleKey ? ["MYSTIC_SUPABASE_SERVICE_ROLE_KEY"] : []),
+            ],
+          },
+      status,
+      {
+        "cache-control": "no-store",
+        "x-mystic-public-origin": "worker://supabase",
+      },
+    );
+  }
+
   if (pathname === "/mcp") {
     const authorization = await authorizeMcpRequest(request, state);
     if (!authorization.ok) {
       return authorization.response;
     }
+    if (phase1CloudMode) {
+      return handleCloudPhase1Mcp(request, env, state);
+    }
   }
 
   return proxyRequest(request, env, sourceUrl, state);
+}
+
+async function simulateWorkerRequest(input) {
+  const originalFetch = globalThis.fetch;
+  const fetchCalls = [];
+  if (Array.isArray(input.fetchResponses)) {
+    globalThis.fetch = async (url, init = {}) => {
+      const target = typeof url === "string" ? url : url.url;
+      const method = String(init.method || "GET").toUpperCase();
+      fetchCalls.push({
+        url: target,
+        method,
+        body: typeof init.body === "string" ? init.body : "",
+        headers: Object.fromEntries(new Headers(init.headers || {}).entries()),
+      });
+      const key = `${method} ${target}`;
+      const entry = input.fetchResponses.find(
+        (item) =>
+          item.key === key ||
+          item.key === target ||
+          (item.prefix && target.startsWith(item.prefix)) ||
+          (item.methodPrefix && key.startsWith(item.methodPrefix)),
+      );
+      if (!entry) {
+        throw new Error(`Unexpected fetch: ${key}`);
+      }
+      return new Response(entry.body === undefined ? "" : JSON.stringify(entry.body), {
+        status: entry.status || 200,
+        headers: entry.headers || { "content-type": "application/json; charset=utf-8" },
+      });
+    };
+  }
+  try {
+    const request = new Request(input.requestUrl, {
+      method: input.method || "POST",
+      headers: input.headers || {},
+      body: input.body === undefined ? undefined : JSON.stringify(input.body),
+    });
+    const response = await routeRequest(request, input.env || {});
+    const contentType = response.headers.get("content-type") || "";
+    const text = await response.text();
+    let body = text;
+    if (contentType.includes("json")) {
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        body = text;
+      }
+    }
+    return {
+      status: response.status,
+      headers: Object.fromEntries(response.headers.entries()),
+      body,
+      fetchCalls,
+    };
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 export const __test = {
@@ -711,6 +1448,9 @@ export const __test = {
   },
   async pkceChallenge(input) {
     return sha256Base64Url(input.codeVerifier);
+  },
+  async simulateRequest(input) {
+    return simulateWorkerRequest(input);
   },
 };
 
