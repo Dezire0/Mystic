@@ -110,6 +110,7 @@ LAB_ENGINE_ADAPTERS = {
 LAB_SIMULATION_STATUSES = {
     "completed",
     "engine_required",
+    "unsupported_expression",
     "deferred",
     "error",
 }

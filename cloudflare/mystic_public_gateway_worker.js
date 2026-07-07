@@ -1314,6 +1314,561 @@ function cloudCompleted(adapterId, { inputs, outputs, evidence, warnings = [] })
   };
 }
 
+function cloudUnsupportedExpression(adapterId, message, extra = {}) {
+  return {
+    status: "unsupported_expression",
+    adapter_id: adapterId,
+    message,
+    supported_in_cloud_mode: true,
+    ...extra,
+  };
+}
+
+function normalizeMathExpression(expression) {
+  return String(expression || "");
+}
+
+function mathNumberNode(value) {
+  let normalized = Number(value);
+  if (Math.abs(normalized) <= 1e-12) {
+    normalized = 0;
+  }
+  if (Math.abs(normalized - Math.round(normalized)) <= 1e-12) {
+    normalized = Math.round(normalized);
+  }
+  return { type: "number", value: normalized };
+}
+
+function isMathNumberNode(node) {
+  return node?.type === "number" && Number.isFinite(node.value);
+}
+
+function mathIsZeroNode(node) {
+  return isMathNumberNode(node) && Math.abs(node.value) <= 1e-12;
+}
+
+function mathIsOneNode(node) {
+  return isMathNumberNode(node) && Math.abs(node.value - 1) <= 1e-12;
+}
+
+function tokenizeMathExpression(expression) {
+  const text = normalizeMathExpression(expression);
+  const tokens = [];
+  let index = 0;
+  while (index < text.length) {
+    const char = text[index];
+    if (/\s/.test(char)) {
+      index += 1;
+      continue;
+    }
+    if ("+-*/^()".includes(char)) {
+      tokens.push({ type: char });
+      index += 1;
+      continue;
+    }
+    if (char === "=") {
+      tokens.push({ type: "=" });
+      index += 1;
+      continue;
+    }
+    if (/[0-9.]/.test(char)) {
+      const start = index;
+      let seenDot = false;
+      let seenDigit = false;
+      while (index < text.length) {
+        const current = text[index];
+        if (/[0-9]/.test(current)) {
+          seenDigit = true;
+          index += 1;
+          continue;
+        }
+        if (current === "." && !seenDot) {
+          seenDot = true;
+          index += 1;
+          continue;
+        }
+        break;
+      }
+      const raw = text.slice(start, index);
+      if (!seenDigit) {
+        throw new Error("Invalid numeric literal");
+      }
+      const value = Number(raw);
+      if (!Number.isFinite(value)) {
+        throw new Error("Invalid numeric literal");
+      }
+      tokens.push({ type: "number", value });
+      continue;
+    }
+    if (/[A-Za-z_]/.test(char)) {
+      const start = index;
+      index += 1;
+      while (index < text.length && /[A-Za-z0-9_]/.test(text[index])) {
+        index += 1;
+      }
+      tokens.push({ type: "identifier", value: text.slice(start, index) });
+      continue;
+    }
+    throw new Error(`Unsupported token: ${char}`);
+  }
+  tokens.push({ type: "eof" });
+  return tokens;
+}
+
+function parseMathExpression(expression) {
+  const tokens = tokenizeMathExpression(expression);
+  let index = 0;
+  const peek = () => tokens[index];
+  const consume = (type) => {
+    const token = tokens[index];
+    if (!token || token.type !== type) {
+      throw new Error(`Expected '${type}'`);
+    }
+    index += 1;
+    return token;
+  };
+
+  function parseExpression() {
+    return parseAdditive();
+  }
+
+  function parseAdditive() {
+    let node = parseMultiplicative();
+    while (peek().type === "+" || peek().type === "-") {
+      const operator = consume(peek().type).type;
+      node = { type: "binary", operator, left: node, right: parseMultiplicative() };
+    }
+    return node;
+  }
+
+  function parseMultiplicative() {
+    let node = parsePower();
+    while (peek().type === "*" || peek().type === "/") {
+      const operator = consume(peek().type).type;
+      node = { type: "binary", operator, left: node, right: parsePower() };
+    }
+    return node;
+  }
+
+  function parsePower() {
+    let node = parseUnary();
+    if (peek().type === "^") {
+      consume("^");
+      node = { type: "binary", operator: "^", left: node, right: parsePower() };
+    }
+    return node;
+  }
+
+  function parseUnary() {
+    if (peek().type === "+" || peek().type === "-") {
+      const operator = consume(peek().type).type;
+      return { type: "unary", operator, operand: parseUnary() };
+    }
+    return parsePrimary();
+  }
+
+  function parsePrimary() {
+    if (peek().type === "number") {
+      return mathNumberNode(consume("number").value);
+    }
+    if (peek().type === "identifier") {
+      const token = consume("identifier");
+      if (peek().type === "(") {
+        throw new Error(`Unsupported function call: ${token.value}`);
+      }
+      return { type: "variable", name: token.value };
+    }
+    if (peek().type === "(") {
+      consume("(");
+      const node = parseExpression();
+      consume(")");
+      return node;
+    }
+    throw new Error(`Unexpected token: ${peek().type}`);
+  }
+
+  const parsed = parseExpression();
+  if (peek().type !== "eof") {
+    throw new Error(`Unexpected token: ${peek().type}`);
+  }
+  return parsed;
+}
+
+function cloudMathVariables(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const payload = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === "boolean") {
+      continue;
+    }
+    const numeric = Number(item);
+    if (Number.isFinite(numeric)) {
+      payload[String(key)] = numeric;
+    }
+  }
+  return payload;
+}
+
+function evaluateNumericMathAst(node) {
+  if (isMathNumberNode(node)) {
+    return node.value;
+  }
+  if (node?.type === "unary") {
+    const operand = evaluateNumericMathAst(node.operand);
+    if (node.operator === "+") {
+      return operand;
+    }
+    if (node.operator === "-") {
+      return -operand;
+    }
+  }
+  if (node?.type === "binary") {
+    const left = evaluateNumericMathAst(node.left);
+    const right = evaluateNumericMathAst(node.right);
+    if (node.operator === "+") {
+      return left + right;
+    }
+    if (node.operator === "-") {
+      return left - right;
+    }
+    if (node.operator === "*") {
+      return left * right;
+    }
+    if (node.operator === "/") {
+      return left / right;
+    }
+    if (node.operator === "^") {
+      return left ** right;
+    }
+  }
+  throw new Error("Unsupported expression for math.sympy cloud subset");
+}
+
+function substituteMathAst(node, variables) {
+  if (isMathNumberNode(node)) {
+    return mathNumberNode(node.value);
+  }
+  if (node?.type === "variable") {
+    if (Object.prototype.hasOwnProperty.call(variables, node.name)) {
+      return mathNumberNode(variables[node.name]);
+    }
+    return { type: "variable", name: node.name };
+  }
+  if (node?.type === "unary") {
+    return { type: "unary", operator: node.operator, operand: substituteMathAst(node.operand, variables) };
+  }
+  if (node?.type === "binary") {
+    return {
+      type: "binary",
+      operator: node.operator,
+      left: substituteMathAst(node.left, variables),
+      right: substituteMathAst(node.right, variables),
+    };
+  }
+  throw new Error("Unsupported expression for math.sympy cloud subset");
+}
+
+function simplifyMathAst(node) {
+  if (isMathNumberNode(node)) {
+    return mathNumberNode(node.value);
+  }
+  if (node?.type === "variable") {
+    return { type: "variable", name: node.name };
+  }
+  if (node?.type === "unary") {
+    const operand = simplifyMathAst(node.operand);
+    if (node.operator === "+") {
+      return operand;
+    }
+    if (node.operator === "-") {
+      if (isMathNumberNode(operand)) {
+        return mathNumberNode(-operand.value);
+      }
+      return { type: "unary", operator: "-", operand };
+    }
+  }
+  if (node?.type === "binary") {
+    const left = simplifyMathAst(node.left);
+    const right = simplifyMathAst(node.right);
+    if (isMathNumberNode(left) && isMathNumberNode(right)) {
+      return mathNumberNode(evaluateNumericMathAst({ type: "binary", operator: node.operator, left, right }));
+    }
+    if (node.operator === "+") {
+      if (mathIsZeroNode(left)) {
+        return right;
+      }
+      if (mathIsZeroNode(right)) {
+        return left;
+      }
+    }
+    if (node.operator === "-") {
+      if (mathIsZeroNode(right)) {
+        return left;
+      }
+    }
+    if (node.operator === "*") {
+      if (mathIsZeroNode(left) || mathIsZeroNode(right)) {
+        return mathNumberNode(0);
+      }
+      if (mathIsOneNode(left)) {
+        return right;
+      }
+      if (mathIsOneNode(right)) {
+        return left;
+      }
+    }
+    if (node.operator === "/") {
+      if (mathIsZeroNode(left) && isMathNumberNode(right) && Math.abs(right.value) > 1e-12) {
+        return mathNumberNode(0);
+      }
+      if (mathIsOneNode(right)) {
+        return left;
+      }
+    }
+    if (node.operator === "^") {
+      if (mathIsZeroNode(right)) {
+        return mathNumberNode(1);
+      }
+      if (mathIsOneNode(right)) {
+        return left;
+      }
+      if (mathIsOneNode(left)) {
+        return mathNumberNode(1);
+      }
+      if (mathIsZeroNode(left) && isMathNumberNode(right) && right.value > 0) {
+        return mathNumberNode(0);
+      }
+    }
+    return { type: "binary", operator: node.operator, left, right };
+  }
+  throw new Error("Unsupported expression for math.sympy cloud subset");
+}
+
+function collectMathSymbols(node, symbols = new Set()) {
+  if (isMathNumberNode(node)) {
+    return symbols;
+  }
+  if (node?.type === "variable") {
+    symbols.add(node.name);
+    return symbols;
+  }
+  if (node?.type === "unary") {
+    return collectMathSymbols(node.operand, symbols);
+  }
+  if (node?.type === "binary") {
+    collectMathSymbols(node.left, symbols);
+    collectMathSymbols(node.right, symbols);
+    return symbols;
+  }
+  throw new Error("Unsupported expression for math.sympy cloud subset");
+}
+
+function formatMathNumber(value) {
+  if (Math.abs(value - Math.round(value)) <= 1e-12) {
+    return String(Math.round(value));
+  }
+  return Number(value.toFixed(12)).toString();
+}
+
+function mathPrecedence(node) {
+  if (isMathNumberNode(node) || node?.type === "variable") {
+    return 4;
+  }
+  if (node?.type === "unary") {
+    return 3;
+  }
+  if (node?.type === "binary") {
+    if (node.operator === "^") {
+      return 3;
+    }
+    if (node.operator === "*" || node.operator === "/") {
+      return 2;
+    }
+    if (node.operator === "+" || node.operator === "-") {
+      return 1;
+    }
+  }
+  throw new Error("Unsupported expression for math.sympy cloud subset");
+}
+
+function formatMathAst(node, parentPrecedence = -1, isRightChild = false) {
+  if (isMathNumberNode(node)) {
+    return formatMathNumber(node.value);
+  }
+  if (node?.type === "variable") {
+    return node.name;
+  }
+  if (node?.type === "unary") {
+    const precedence = 3;
+    const text = `${node.operator}${formatMathAst(node.operand, precedence)}`;
+    return precedence < parentPrecedence ? `(${text})` : text;
+  }
+  if (node?.type === "binary") {
+    const precedence = mathPrecedence(node);
+    const leftText = formatMathAst(node.left, precedence);
+    const rightText = formatMathAst(
+      node.right,
+      node.operator === "^" ? precedence : precedence + 1,
+      true,
+    );
+    const text = `${leftText} ${node.operator} ${rightText}`;
+    if (node.operator === "^" && isRightChild && precedence < parentPrecedence) {
+      return `(${text})`;
+    }
+    return precedence < parentPrecedence ? `(${text})` : text;
+  }
+  throw new Error("Unsupported expression for math.sympy cloud subset");
+}
+
+function linearMathForm(node, variable, variables) {
+  if (isMathNumberNode(node)) {
+    return { coefficient: 0, constant: node.value };
+  }
+  if (node?.type === "variable") {
+    if (node.name === variable) {
+      return { coefficient: 1, constant: 0 };
+    }
+    if (Object.prototype.hasOwnProperty.call(variables, node.name)) {
+      return { coefficient: 0, constant: variables[node.name] };
+    }
+    throw new Error(`Unknown variable: ${node.name}`);
+  }
+  if (node?.type === "unary") {
+    const value = linearMathForm(node.operand, variable, variables);
+    if (node.operator === "+") {
+      return value;
+    }
+    if (node.operator === "-") {
+      return { coefficient: -value.coefficient, constant: -value.constant };
+    }
+  }
+  if (node?.type === "binary") {
+    const left = linearMathForm(node.left, variable, variables);
+    const right = linearMathForm(node.right, variable, variables);
+    if (node.operator === "+") {
+      return { coefficient: left.coefficient + right.coefficient, constant: left.constant + right.constant };
+    }
+    if (node.operator === "-") {
+      return { coefficient: left.coefficient - right.coefficient, constant: left.constant - right.constant };
+    }
+    if (node.operator === "*") {
+      if (Math.abs(left.coefficient) > 1e-12 && Math.abs(right.coefficient) > 1e-12) {
+        throw new Error("Non-linear multiplication is unsupported");
+      }
+      if (Math.abs(left.coefficient) > 1e-12) {
+        return { coefficient: left.coefficient * right.constant, constant: left.constant * right.constant };
+      }
+      if (Math.abs(right.coefficient) > 1e-12) {
+        return { coefficient: right.coefficient * left.constant, constant: right.constant * left.constant };
+      }
+      return { coefficient: 0, constant: left.constant * right.constant };
+    }
+    if (node.operator === "/") {
+      if (Math.abs(right.coefficient) > 1e-12) {
+        throw new Error("Division by a symbolic term is unsupported");
+      }
+      return { coefficient: left.coefficient / right.constant, constant: left.constant / right.constant };
+    }
+    if (node.operator === "^") {
+      if (Math.abs(left.coefficient) > 1e-12 || Math.abs(right.coefficient) > 1e-12) {
+        throw new Error("Symbolic powers are unsupported");
+      }
+      return { coefficient: 0, constant: left.constant ** right.constant };
+    }
+  }
+  throw new Error("Unsupported expression for solve_linear cloud subset");
+}
+
+function runCloudMathSympy(inputs) {
+  const operation = trimmed(inputs.operation, "evaluate") || "evaluate";
+  const warnings = ["cloud_native_math_subset"];
+  const variables = cloudMathVariables(inputs.variables);
+  try {
+    if (operation === "evaluate") {
+      const expression = trimmed(inputs.expression);
+      if (!expression) {
+        return cloudEngineRequired("math.sympy", "expression is required for math.sympy evaluate");
+      }
+      const simplified = simplifyMathAst(substituteMathAst(parseMathExpression(expression), variables));
+      const remaining = Array.from(collectMathSymbols(simplified)).sort();
+      if (remaining.length) {
+        throw new Error(`evaluate requires numeric values for all variables; unresolved: ${remaining.join(", ")}`);
+      }
+      return cloudCompleted("math.sympy", {
+        inputs,
+        outputs: { operation, result: evaluateNumericMathAst(simplified) },
+        evidence: { implementation: "cloud_native_subset", grammar: "arithmetic_v1" },
+        warnings,
+      });
+    }
+    if (operation === "substitute") {
+      const expression = trimmed(inputs.expression);
+      if (!expression) {
+        return cloudEngineRequired("math.sympy", "expression is required for math.sympy substitute");
+      }
+      const simplified = simplifyMathAst(substituteMathAst(parseMathExpression(expression), variables));
+      const remaining = Array.from(collectMathSymbols(simplified)).sort();
+      const outputs = {
+        operation,
+        expression: formatMathAst(simplified),
+        remaining_variables: remaining,
+      };
+      if (!remaining.length) {
+        outputs.result = evaluateNumericMathAst(simplified);
+      }
+      return cloudCompleted("math.sympy", {
+        inputs,
+        outputs,
+        evidence: { implementation: "cloud_native_subset", grammar: "arithmetic_v1" },
+        warnings,
+      });
+    }
+    if (operation === "simplify") {
+      const expression = trimmed(inputs.expression);
+      if (!expression) {
+        return cloudEngineRequired("math.sympy", "expression is required for math.sympy simplify");
+      }
+      const simplified = simplifyMathAst(parseMathExpression(expression));
+      return cloudCompleted("math.sympy", {
+        inputs,
+        outputs: { operation, result: formatMathAst(simplified) },
+        evidence: { implementation: "cloud_native_subset", grammar: "arithmetic_v1" },
+        warnings,
+      });
+    }
+    if (operation === "solve_linear") {
+      const equation = trimmed(inputs.equation);
+      const variable = trimmed(inputs.variable, "x") || "x";
+      if (!equation || !equation.includes("=")) {
+        return cloudEngineRequired("math.sympy", "solve_linear requires an equation string containing '='");
+      }
+      const [lhsText, rhsText] = equation.split("=", 2).map((item) => item.trim());
+      const lhs = linearMathForm(parseMathExpression(lhsText), variable, variables);
+      const rhs = linearMathForm(parseMathExpression(rhsText), variable, variables);
+      const coefficient = lhs.coefficient - rhs.coefficient;
+      const constant = rhs.constant - lhs.constant;
+      if (Math.abs(coefficient) <= 1e-12) {
+        throw new Error("Equation is not solvable as a single-variable linear form");
+      }
+      return cloudCompleted("math.sympy", {
+        inputs,
+        outputs: { operation, variable, solution: constant / coefficient },
+        evidence: { implementation: "cloud_native_subset", grammar: "arithmetic_v1" },
+        warnings,
+      });
+    }
+    return cloudEngineRequired(
+      "math.sympy",
+      `operation=${operation} requires a fuller symbolic engine than the cloud-native subset provides.`,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unsupported expression";
+    return cloudUnsupportedExpression("math.sympy", message, { operation });
+  }
+}
+
 function gravityVector(primary, fallback) {
   const selected = primary !== undefined ? primary : fallback;
   if (typeof selected === "number" && Number.isFinite(selected)) {
@@ -1453,10 +2008,7 @@ function runCloudCollision(bundle, inputs) {
 
 function runCloudSceneAdapter(adapterId, bundle, inputs) {
   if (adapterId === "math.sympy") {
-    return cloudEngineRequired(
-      adapterId,
-      "math.sympy is not available inside the Cloudflare Worker runtime. Use local mode or a future external engine bridge.",
-    );
+    return runCloudMathSympy(inputs);
   }
   if (adapterId === "physics.simple_projectile") {
     return runCloudProjectile(bundle, inputs);
@@ -2214,8 +2766,9 @@ async function cloudMysticStatus(state, supabase, env) {
     blockers: [...blockers, "MANUAL_IMPORT_NOT_VERIFIED"],
     datasets: {},
     adapter_status: {
-      available: ["physics.simple_projectile", "physics.simple_collision", "scene.three_json"],
-      engine_required: ["math.sympy"],
+      available: ["math.sympy", "physics.simple_projectile", "physics.simple_collision", "scene.three_json"],
+      limited_subsets: ["math.sympy"],
+      engine_required: [],
     },
     recent_runs: [],
     recent_errors: registry.warnings,

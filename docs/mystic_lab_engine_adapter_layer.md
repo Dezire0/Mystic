@@ -32,8 +32,7 @@ Current implemented building blocks:
 - Phase 1 scene/simulation storage and execution for public Worker mode and local mode
 
 Current limitation:
-
-- the public Worker does not ship a real SymPy runtime, so cloud-native `math.sympy` returns structured `engine_required`.
+- the public Worker only exposes a restricted cloud-native `math.sympy` subset, not arbitrary SymPy execution.
 
 ## Target Adapter Contract
 
@@ -86,8 +85,10 @@ Purpose:
 
 Current behavior:
 
-- local mode exposes a deterministic local/native subset for basic arithmetic evaluation and simple linear solving
-- cloud-native Worker mode returns structured `engine_required` when real SymPy execution is required
+- local mode exposes a deterministic subset for arithmetic evaluation, numeric substitution, simple simplification, and simple linear solving
+- cloud-native Worker mode exposes the same restricted subset without using Python or arbitrary code execution
+- unsupported expressions return structured `unsupported_expression`
+- richer symbolic requests still return structured `engine_required`
 
 ### `physics.simple_projectile`
 
@@ -152,6 +153,10 @@ Use when a model-backed action was requested but the required provider is not ex
 
 Use when the requested simulation path depends on an engine that is not available or not configured.
 
+### `unsupported_expression`
+
+Use when the requested expression is outside the restricted grammar or symbolic capabilities of the safe cloud-native subset.
+
 ### `deferred`
 
 Use when the tool is intentionally exposed but the worker-native execution path is not implemented yet.
@@ -180,7 +185,7 @@ Cloud-native mode should use Supabase-backed persistence without requiring a loc
 | Experiment orchestration | Implemented | Session and experiment state exists |
 | Structured deferred responses | Implemented | Cloud-native mode does not crash on unsupported heavy paths |
 | Formal engine adapter registry | Partial | Phase 1 execution surface exists; broader registry work remains |
-| `math.sympy` adapter | Partial | Deterministic local/native subset is live; Worker returns `engine_required` |
+| `math.sympy` adapter | Partial | Deterministic subset is live in local mode and Worker mode; unsupported symbolic forms stay structured |
 | `physics.simple_projectile` adapter | Implemented | Deterministic Phase 1 execution is live |
 | `physics.simple_collision` adapter | Implemented | Deterministic Phase 1 execution is live |
 | `scene.three_json` exporter | Implemented | Three.js-friendly JSON export is live |
