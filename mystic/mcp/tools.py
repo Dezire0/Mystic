@@ -50,6 +50,16 @@ LAB_TOOL_NAMES = (
     "lab_memory_write",
     "lab_models_debate",
     "lab_report_generate",
+    "create_lab_scene",
+    "get_lab_scene",
+    "add_lab_object",
+    "update_lab_object",
+    "remove_lab_object",
+    "set_lab_parameters",
+    "run_lab_simulation",
+    "attach_simulation_to_scene",
+    "export_lab_snapshot",
+    "generate_lab_report",
 )
 
 PHASE_1_TOOL_NAMES = (
@@ -137,6 +147,16 @@ class MysticToolbox:
                 "lab_memory_write": "ready",
                 "lab_models_debate": "ready",
                 "lab_report_generate": "ready",
+                "create_lab_scene": "ready",
+                "get_lab_scene": "ready",
+                "add_lab_object": "ready",
+                "update_lab_object": "ready",
+                "remove_lab_object": "ready",
+                "set_lab_parameters": "ready",
+                "run_lab_simulation": "ready",
+                "attach_simulation_to_scene": "ready",
+                "export_lab_snapshot": "ready",
+                "generate_lab_report": "ready",
             },
             "lab_core_available": True,
             "lab_tools_count": len(LAB_TOOL_NAMES),
@@ -596,6 +616,102 @@ class MysticToolbox:
             format=format,
             include_failures=include_failures,
             include_next_actions=include_next_actions,
+        )
+
+    def create_lab_scene(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        description: str = "",
+        units: dict[str, Any] | None = None,
+        parameters: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self.lab_runner.create_scene(
+            session_id=session_id,
+            title=title,
+            description=description,
+            units=units,
+            parameters=parameters,
+            metadata=metadata,
+        )
+
+    def get_lab_scene(self, *, scene_id: str) -> dict[str, Any]:
+        return self.lab_runner.get_scene(scene_id=scene_id)
+
+    def add_lab_object(self, *, scene_id: str, object: dict[str, Any]) -> dict[str, Any]:
+        return self.lab_runner.add_object(scene_id=scene_id, object=object)
+
+    def update_lab_object(self, *, scene_id: str, object_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        return self.lab_runner.update_object(scene_id=scene_id, object_id=object_id, patch=patch)
+
+    def remove_lab_object(self, *, scene_id: str, object_id: str) -> dict[str, Any]:
+        return self.lab_runner.remove_object(scene_id=scene_id, object_id=object_id)
+
+    def set_lab_parameters(
+        self,
+        *,
+        scene_id: str,
+        parameters: dict[str, Any],
+        units: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self.lab_runner.set_scene_parameters(
+            scene_id=scene_id,
+            parameters=parameters,
+            units=units,
+            metadata=metadata,
+        )
+
+    def run_lab_simulation(self, *, scene_id: str, adapter_id: str, inputs: dict[str, Any]) -> dict[str, Any]:
+        return self.lab_runner.run_simulation(scene_id=scene_id, adapter_id=adapter_id, inputs=inputs)
+
+    def attach_simulation_to_scene(
+        self,
+        *,
+        scene_id: str,
+        simulation_id: str,
+        object_ids: list[str] | None = None,
+        evidence_refs: list[str] | None = None,
+        report_refs: list[str] | None = None,
+        apply_object_updates: bool = True,
+    ) -> dict[str, Any]:
+        return self.lab_runner.attach_simulation_to_scene(
+            scene_id=scene_id,
+            simulation_id=simulation_id,
+            object_ids=object_ids,
+            evidence_refs=evidence_refs,
+            report_refs=report_refs,
+            apply_object_updates=apply_object_updates,
+        )
+
+    def export_lab_snapshot(
+        self,
+        *,
+        scene_id: str,
+        adapter_id: str = "scene.three_json",
+        include_simulations: bool = True,
+    ) -> dict[str, Any]:
+        return self.lab_runner.export_snapshot(
+            scene_id=scene_id,
+            adapter_id=adapter_id,
+            include_simulations=include_simulations,
+        )
+
+    def generate_lab_report(
+        self,
+        *,
+        scene_id: str,
+        format: str,
+        include_objects: bool,
+        include_simulations: bool,
+    ) -> dict[str, Any]:
+        return self.lab_runner.generate_scene_report(
+            scene_id=scene_id,
+            format=format,
+            include_objects=include_objects,
+            include_simulations=include_simulations,
         )
 
     def mystic_export_teacher_packet(

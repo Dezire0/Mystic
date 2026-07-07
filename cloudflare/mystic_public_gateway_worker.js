@@ -3,7 +3,69 @@ const DEFAULT_SCOPES = "tools:read tools:execute";
 const DEFAULT_TOKEN_TTL_SECONDS = 3600;
 const MANUAL_IMPORT_VERIFICATION_PATH = "/mystic_data/e2e/remote_mcp_lab_smoke/chatgpt_import_verified.json";
 const DEFAULT_SUPABASE_SCHEMA = "public";
-const CLOUD_PHASE1_TOOL_DEFINITIONS = [
+const CLOUD_REQUIRED_TOOL_NAMES = [
+  "mystic_status",
+  "health_check",
+  "lab_session_create",
+  "lab_session_get",
+  "lab_report_generate",
+];
+const LAB_PHASES = [
+  "problem_intake",
+  "background_scan",
+  "hypothesis_generation",
+  "experiment_design",
+  "simulation_or_execution",
+  "referee_review",
+  "failure_archive",
+  "knowledge_update",
+  "next_experiment_planning",
+  "report_generation",
+  "completed",
+];
+const LAB_PHASE_TO_ROOM = {
+  problem_intake: "Main Lab Room",
+  background_scan: "Theory Room",
+  hypothesis_generation: "Hypothesis Chamber",
+  experiment_design: "Experiment Room",
+  simulation_or_execution: "Simulation Tank",
+  referee_review: "Referee Court",
+  failure_archive: "Failure Museum",
+  knowledge_update: "Research Memory Graph",
+  next_experiment_planning: "Control Panel",
+  report_generation: "Paper Room",
+  completed: "Main Lab Room",
+};
+const LAB_PHASE_TO_AGENT_ROLE = {
+  problem_intake: "Director",
+  background_scan: "Theorist",
+  hypothesis_generation: "HypothesisGenerator",
+  experiment_design: "ExperimentDesigner",
+  simulation_or_execution: "Simulator",
+  referee_review: "Referee",
+  failure_archive: "Archivist",
+  knowledge_update: "Synthesizer",
+  next_experiment_planning: "Director",
+  report_generation: "PaperWriter",
+};
+const SCENE_OBJECT_SCHEMA = {
+  type: "object",
+  properties: {
+    id: { type: "string", minLength: 1 },
+    type: { type: "string", minLength: 1 },
+    label: { type: "string", minLength: 1 },
+    position: { type: "object" },
+    rotation: { type: "object" },
+    scale: { type: "object" },
+    geometry: { type: "object" },
+    material: { type: "object" },
+    data: { type: "object" },
+    metadata: { type: "object" },
+  },
+  required: ["id", "type", "label", "position", "rotation", "scale", "geometry", "material", "data", "metadata"],
+  additionalProperties: false,
+};
+const CLOUD_TOOL_DEFINITIONS = [
   {
     name: "mystic_status",
     title: "Mystic Status",
@@ -23,7 +85,7 @@ const CLOUD_PHASE1_TOOL_DEFINITIONS = [
   {
     name: "lab_session_create",
     title: "Create Lab Session",
-    description: "Create a phase-1 Mystic Lab session in Supabase-backed cloud storage.",
+    description: "Create a cloud-native Mystic Lab session in Supabase-backed storage.",
     inputSchema: {
       type: "object",
       properties: {
@@ -52,6 +114,164 @@ const CLOUD_PHASE1_TOOL_DEFINITIONS = [
     annotations: { readOnlyHint: true },
   },
   {
+    name: "lab_session_advance",
+    title: "Advance Lab Session",
+    description: "Advance a cloud-native lab session through the next structured research steps.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", minLength: 1 },
+        max_steps: { type: "integer", minimum: 1, maximum: 10 },
+        target_phase: { type: "string", enum: LAB_PHASES.filter((item) => item !== "completed") },
+        use_model_arena: { type: "boolean" },
+        use_verifier: { type: "boolean" },
+      },
+      required: ["session_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "lab_agent_run",
+    title: "Run Lab Agent",
+    description: "Run a single cloud-native lab agent turn through an explicitly configured external provider.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", minLength: 1 },
+        agent_role: {
+          type: "string",
+          enum: [
+            "Director",
+            "Theorist",
+            "HypothesisGenerator",
+            "ExperimentDesigner",
+            "Simulator",
+            "ProofForger",
+            "Referee",
+            "Archivist",
+            "Synthesizer",
+            "PaperWriter",
+            "ModelArena",
+            "CodeRunner",
+          ],
+        },
+        provider: { type: "string", enum: ["auto", "openai_compatible", "gemini", "anthropic", "local_backend"] },
+        task: { type: "string", minLength: 1 },
+        context_ids: { type: "array", items: { type: "string" }, maxItems: 16 },
+      },
+      required: ["session_id", "agent_role", "provider", "task", "context_ids"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "lab_referee_review",
+    title: "Referee Review",
+    description: "Run a structured cloud-native referee review and return a deterministic or deferred verdict.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", minLength: 1 },
+        claim_id: { type: "string" },
+        text: { type: "string" },
+        strictness: { type: "string", enum: ["normal", "hostile"] },
+      },
+      required: ["session_id", "text", "strictness"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "lab_experiment_create",
+    title: "Create Experiment",
+    description: "Create a cloud-native experiment linked to an existing claim.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", minLength: 1 },
+        claim_id: { type: "string", minLength: 1 },
+        question: { type: "string", minLength: 1 },
+        method: {
+          type: "string",
+          enum: ["python_bruteforce", "symbolic", "simulation", "unit_test", "model_debate", "manual_review"],
+        },
+        inputs: { type: "object" },
+      },
+      required: ["session_id", "claim_id", "question", "method", "inputs"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "lab_experiment_run",
+    title: "Run Experiment",
+    description: "Run a cloud-native experiment or return a structured deferred/provider-required response.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", minLength: 1 },
+        experiment_id: { type: "string", minLength: 1 },
+        dry_run: { type: "boolean" },
+      },
+      required: ["session_id", "experiment_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "lab_memory_search",
+    title: "Search Lab Memory",
+    description: "Search stored cloud-native lab sessions, claims, failures, experiments, and edges.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", minLength: 1 },
+        domain: { type: "string" },
+        status_filter: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: 50 },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "lab_memory_write",
+    title: "Write Lab Memory",
+    description: "Write structured claims, failures, experiments, notes, or edges into a cloud-native lab session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", minLength: 1 },
+        kind: { type: "string", enum: ["claim", "failure", "experiment", "note", "edge"] },
+        payload: { type: "object" },
+      },
+      required: ["session_id", "kind", "payload"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "lab_models_debate",
+    title: "Run Model Arena Debate",
+    description: "Run a cloud-native Model Arena debate through explicitly configured external providers.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", minLength: 1 },
+        question: { type: "string", minLength: 1 },
+        participants: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 4 },
+        rounds: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 8 },
+        use_existing_research_table: { type: "boolean" },
+      },
+      required: ["session_id", "question", "participants", "rounds", "use_existing_research_table"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
     name: "lab_report_generate",
     title: "Generate Lab Report",
     description: "Generate a markdown report from Supabase-backed cloud-native lab data.",
@@ -68,10 +288,177 @@ const CLOUD_PHASE1_TOOL_DEFINITIONS = [
     },
     securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
   },
+  {
+    name: "create_lab_scene",
+    title: "Create Lab Scene",
+    description: "Create a persisted Phase 1 scene linked to an existing cloud-native lab session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", minLength: 1 },
+        title: { type: "string", minLength: 1 },
+        description: { type: "string" },
+        units: { type: "object" },
+        parameters: { type: "object" },
+        metadata: { type: "object" },
+      },
+      required: ["session_id", "title"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "get_lab_scene",
+    title: "Get Lab Scene",
+    description: "Load a persisted Phase 1 scene, including its objects, simulations, report, and exports.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scene_id: { type: "string", minLength: 1 },
+      },
+      required: ["scene_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "add_lab_object",
+    title: "Add Lab Object",
+    description: "Add a structured object to a persisted Phase 1 scene.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scene_id: { type: "string", minLength: 1 },
+        object: SCENE_OBJECT_SCHEMA,
+      },
+      required: ["scene_id", "object"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "update_lab_object",
+    title: "Update Lab Object",
+    description: "Update a structured object inside a persisted Phase 1 scene.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scene_id: { type: "string", minLength: 1 },
+        object_id: { type: "string", minLength: 1 },
+        patch: { type: "object" },
+      },
+      required: ["scene_id", "object_id", "patch"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "remove_lab_object",
+    title: "Remove Lab Object",
+    description: "Remove a structured object from a persisted Phase 1 scene.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scene_id: { type: "string", minLength: 1 },
+        object_id: { type: "string", minLength: 1 },
+      },
+      required: ["scene_id", "object_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "set_lab_parameters",
+    title: "Set Lab Parameters",
+    description: "Set or update Phase 1 scene parameters, units, and metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scene_id: { type: "string", minLength: 1 },
+        parameters: { type: "object" },
+        units: { type: "object" },
+        metadata: { type: "object" },
+      },
+      required: ["scene_id", "parameters"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "run_lab_simulation",
+    title: "Run Lab Simulation",
+    description: "Run a deterministic Phase 1 scene adapter or return a structured engine-required result.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scene_id: { type: "string", minLength: 1 },
+        adapter_id: { type: "string", enum: ["math.sympy", "physics.simple_projectile", "physics.simple_collision"] },
+        inputs: { type: "object" },
+      },
+      required: ["scene_id", "adapter_id", "inputs"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "attach_simulation_to_scene",
+    title: "Attach Simulation To Scene",
+    description: "Attach a stored simulation result to a scene and optionally apply its object updates.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scene_id: { type: "string", minLength: 1 },
+        simulation_id: { type: "string", minLength: 1 },
+        object_ids: { type: "array", items: { type: "string" }, maxItems: 32 },
+        evidence_refs: { type: "array", items: { type: "string" }, maxItems: 32 },
+        report_refs: { type: "array", items: { type: "string" }, maxItems: 32 },
+        apply_object_updates: { type: "boolean" },
+      },
+      required: ["scene_id", "simulation_id", "apply_object_updates"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "export_lab_snapshot",
+    title: "Export Lab Snapshot",
+    description: "Export a persisted scene through the scene.three_json Phase 1 adapter.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scene_id: { type: "string", minLength: 1 },
+        adapter_id: { type: "string", enum: ["scene.three_json"] },
+        include_simulations: { type: "boolean" },
+      },
+      required: ["scene_id", "adapter_id", "include_simulations"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "generate_lab_report",
+    title: "Generate Scene Report",
+    description: "Generate a markdown scene report that links objects, simulations, and archive references.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scene_id: { type: "string", minLength: 1 },
+        format: { type: "string", enum: ["markdown"] },
+        include_objects: { type: "boolean" },
+        include_simulations: { type: "boolean" },
+      },
+      required: ["scene_id", "format", "include_objects", "include_simulations"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
 ];
-const CLOUD_PHASE1_TOOL_NAMES = new Set(CLOUD_PHASE1_TOOL_DEFINITIONS.map((tool) => tool.name));
+const CLOUD_TOOL_NAMES = new Set(CLOUD_TOOL_DEFINITIONS.map((tool) => tool.name));
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const authorizationCodeMemoryStore = new Map();
 
 function parseBoolean(value) {
   return String(value || "").trim().toLowerCase() === "true";
@@ -224,89 +611,143 @@ function cloudArtifactPaths(schema, sessionId) {
   };
 }
 
-function phase1Blockers(state, supabase) {
-  const blockers = [];
-  if (!state.enabled) {
-    blockers.push("OAUTH_NOT_CONFIGURED");
-  } else if (!state.configured) {
-    blockers.push("OAUTH_METADATA_MISSING");
-  }
-  if (!supabase.configured) {
-    blockers.push("LAB_STORAGE_NOT_CONFIGURED");
-  }
-  blockers.push("MANUAL_IMPORT_NOT_VERIFIED");
-  return blockers;
-}
-
-function phase1MysticStatus(state, supabase) {
+function cloudSceneArtifactPaths(schema, sceneId) {
   return {
-    models: {},
-    tools: {
-      mystic_status: "ready",
-      health_check: "ready",
-      lab_session_create: supabase.configured ? "ready" : "blocked",
-      lab_session_get: supabase.configured ? "ready" : "blocked",
-      lab_report_generate: supabase.configured ? "ready" : "blocked",
-    },
-    lab_core_available: true,
-    lab_tools_count: 3,
-    phase_1_tools_count: CLOUD_PHASE1_TOOL_DEFINITIONS.length,
-    storage_backend: "supabase",
-    storage_status: {
-      backend: "supabase",
-      configured: supabase.configured,
-      write_capable: supabase.configured,
-      storage_root: supabase.storageRoot,
-      storage_root_uri: supabase.storageRoot,
-      schema: supabase.schema,
-      project_url: supabase.url,
-      missing_env: [
-        ...(!supabase.url ? ["MYSTIC_SUPABASE_URL"] : []),
-        ...(!supabase.serviceRoleKey ? ["MYSTIC_SUPABASE_SERVICE_ROLE_KEY"] : []),
-      ],
-    },
-    lab_storage_root: supabase.storageRoot,
-    remote_mcp_public_endpoint: `${state.issuer}/mcp`,
-    oauth_configured: state.configured,
-    oauth_enabled: state.enabled,
-    oauth_metadata_available: state.metadataAvailable,
-    chatgpt_remote_import_ready: false,
-    chatgpt_remote_import_ready_candidate: state.metadataAvailable && supabase.configured,
-    manual_import_verification_checked: false,
-    manual_import_verified: false,
-    manual_import_verification_path: MANUAL_IMPORT_VERIFICATION_PATH,
-    manual_import_verification_summary: {},
-    blockers: phase1Blockers(state, supabase),
-    datasets: {},
-    adapter_status: { available: [] },
-    recent_runs: [],
-    recent_errors: [],
-    mcp_server_status: "ready",
-    runtime_mode: "cloud_native_worker_phase_1",
+    scene: `supabase://${schema}/lab_scenes/${sceneId}`,
+    objects: `supabase://${schema}/lab_scene_objects?scene_id=${sceneId}`,
+    simulations: `supabase://${schema}/lab_simulations?scene_id=${sceneId}`,
+    report: `supabase://${schema}/lab_scenes/${sceneId}#report`,
+    snapshot: `supabase://${schema}/lab_scenes/${sceneId}#exports`,
   };
 }
 
-function phase1HealthCheck(state, supabase) {
+function objectMapping(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? { ...value } : {};
+}
+
+function numericValue(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeVector(value, defaults = { x: 0, y: 0, z: 0 }) {
+  const payload = objectMapping(value);
   return {
-    status: supabase.configured ? "ok" : "error",
-    mode: "cloud_native_worker",
-    storage_backend: "supabase",
-    storage_status: {
-      backend: "supabase",
-      configured: supabase.configured,
-      write_capable: supabase.configured,
-      storage_root: supabase.storageRoot,
-      storage_root_uri: supabase.storageRoot,
-      schema: supabase.schema,
-      project_url: supabase.url,
-      missing_env: [
-        ...(!supabase.url ? ["MYSTIC_SUPABASE_URL"] : []),
-        ...(!supabase.serviceRoleKey ? ["MYSTIC_SUPABASE_SERVICE_ROLE_KEY"] : []),
-      ],
+    x: numericValue(payload.x, defaults.x),
+    y: numericValue(payload.y, defaults.y),
+    z: numericValue(payload.z, defaults.z),
+  };
+}
+
+function normalizeSceneObjectPayload(sceneId, payload, existing = {}) {
+  const merged = { ...objectMapping(existing), ...objectMapping(payload) };
+  const objectId = trimmed(merged.id, `obj-${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`);
+  const objectType = trimmed(merged.type);
+  const label = trimmed(merged.label, objectType || objectId);
+  if (!objectType) {
+    throw new Error("scene object type is required");
+  }
+  return {
+    scene_id: sceneId,
+    id: objectId,
+    type: objectType,
+    label,
+    position: normalizeVector(merged.position, { x: 0, y: 0, z: 0 }),
+    rotation: normalizeVector(merged.rotation, { x: 0, y: 0, z: 0 }),
+    scale: normalizeVector(merged.scale, { x: 1, y: 1, z: 1 }),
+    geometry: objectMapping(merged.geometry),
+    material: objectMapping(merged.material),
+    data: objectMapping(merged.data),
+    metadata: objectMapping(merged.metadata),
+    created_at: trimmed(merged.created_at, nowIso()),
+    updated_at: nowIso(),
+  };
+}
+
+function parseCloudSceneBundle(sceneRow, objectRows, simulationRows) {
+  return {
+    scene: {
+      scene_id: sceneRow.scene_id,
+      session_id: sceneRow.session_id,
+      domain: sceneRow.domain,
+      title: sceneRow.title,
+      description: trimmed(sceneRow.description),
+      units: objectMapping(sceneRow.units),
+      parameters: objectMapping(sceneRow.parameters),
+      attached_simulations: asStringArray(sceneRow.attached_simulations),
+      evidence_refs: asStringArray(sceneRow.evidence_refs),
+      report_refs: asStringArray(sceneRow.report_refs),
+      metadata: objectMapping(sceneRow.metadata),
+      artifact_paths: objectMapping(sceneRow.artifact_paths),
+      exports_json: objectMapping(sceneRow.exports_json),
+      report_markdown: trimmed(sceneRow.report_markdown),
+      created_at: trimmed(sceneRow.created_at),
+      updated_at: trimmed(sceneRow.updated_at),
     },
-    oauth_enabled: state.enabled,
-    oauth_configured: state.configured,
-    phase_1_tools: CLOUD_PHASE1_TOOL_DEFINITIONS.map((tool) => tool.name),
+    objects: Array.isArray(objectRows) ? objectRows.map((row) => normalizeSceneObjectPayload(sceneRow.scene_id, row, row)) : [],
+    simulations: Array.isArray(simulationRows)
+      ? simulationRows.map((row) => ({
+          simulation_id: row.simulation_id,
+          scene_id: row.scene_id,
+          session_id: row.session_id,
+          adapter_id: row.adapter_id,
+          status: row.status,
+          inputs: objectMapping(row.inputs),
+          outputs: objectMapping(row.outputs),
+          evidence: objectMapping(row.evidence),
+          warnings: asStringArray(row.warnings),
+          errors: asStringArray(row.errors),
+          attached_object_ids: asStringArray(row.attached_object_ids),
+          metadata: objectMapping(row.metadata),
+          created_at: trimmed(row.created_at),
+          updated_at: trimmed(row.updated_at),
+        }))
+      : [],
+  };
+}
+
+async function loadCloudSceneBundle(env, sceneId) {
+  const sceneRow = await supabaseSelectOne(env, "lab_scenes", { scene_id: `eq.${sceneId}` });
+  if (!sceneRow) {
+    return null;
+  }
+  const [objectRows, simulationRows] = await Promise.all([
+    supabaseSelectRows(env, "lab_scene_objects", { scene_id: `eq.${sceneId}` }, { order: "created_at.asc" }),
+    supabaseSelectRows(env, "lab_simulations", { scene_id: `eq.${sceneId}` }, { order: "created_at.asc" }),
+  ]);
+  return parseCloudSceneBundle(sceneRow, objectRows, simulationRows);
+}
+
+async function saveCloudSceneBundle(env, bundle) {
+  const schema = supabaseState(env).schema;
+  bundle.scene.artifact_paths = cloudSceneArtifactPaths(schema, bundle.scene.scene_id);
+  bundle.scene.updated_at = nowIso();
+  await supabaseUpsertRows(env, "lab_scenes", [bundle.scene], "scene_id");
+  await Promise.all([
+    supabaseDeleteRows(env, "lab_scene_objects", { scene_id: `eq.${bundle.scene.scene_id}` }),
+    supabaseDeleteRows(env, "lab_simulations", { scene_id: `eq.${bundle.scene.scene_id}` }),
+  ]);
+  if (Array.isArray(bundle.objects) && bundle.objects.length) {
+    await supabaseInsertRows(env, "lab_scene_objects", bundle.objects);
+  }
+  if (Array.isArray(bundle.simulations) && bundle.simulations.length) {
+    await supabaseInsertRows(env, "lab_simulations", bundle.simulations);
+  }
+  return bundle.scene.artifact_paths;
+}
+
+function cloudScenePayload(bundle) {
+  return {
+    scene: bundle.scene,
+    scene_id: bundle.scene.scene_id,
+    session_id: bundle.scene.session_id,
+    objects: bundle.objects,
+    simulations: bundle.simulations,
+    attached_simulations: [...bundle.scene.attached_simulations],
+    report_path: bundle.scene.artifact_paths.report || "",
+    snapshot_path: bundle.scene.artifact_paths.snapshot || "",
+    report_markdown: bundle.scene.report_markdown,
+    exports: bundle.scene.exports_json,
   };
 }
 
@@ -348,9 +789,126 @@ function validateCloudToolArguments(name, args) {
       errors.push("participants must contain at least one entry");
     }
   }
-  if (name === "lab_session_get" || name === "lab_report_generate") {
+  if (
+    name === "lab_session_get" ||
+    name === "lab_report_generate" ||
+    name === "lab_session_advance" ||
+    name === "lab_agent_run" ||
+    name === "lab_referee_review" ||
+    name === "lab_experiment_create" ||
+    name === "lab_experiment_run" ||
+    name === "lab_memory_write" ||
+    name === "lab_models_debate" ||
+    name === "create_lab_scene"
+  ) {
     if (typeof args.session_id !== "string" || !args.session_id.trim()) {
       errors.push("session_id is required");
+    }
+  }
+  if (
+    name === "get_lab_scene" ||
+    name === "add_lab_object" ||
+    name === "update_lab_object" ||
+    name === "remove_lab_object" ||
+    name === "set_lab_parameters" ||
+    name === "run_lab_simulation" ||
+    name === "attach_simulation_to_scene" ||
+    name === "export_lab_snapshot" ||
+    name === "generate_lab_report"
+  ) {
+    if (typeof args.scene_id !== "string" || !args.scene_id.trim()) {
+      errors.push("scene_id is required");
+    }
+  }
+  if (name === "lab_session_advance") {
+    if (args.max_steps !== undefined && (!Number.isInteger(args.max_steps) || args.max_steps < 1 || args.max_steps > 10)) {
+      errors.push("max_steps must be an integer between 1 and 10");
+    }
+    if (args.target_phase !== undefined && typeof args.target_phase !== "string") {
+      errors.push("target_phase must be a string");
+    }
+    if (args.use_model_arena !== undefined && typeof args.use_model_arena !== "boolean") {
+      errors.push("use_model_arena must be boolean");
+    }
+    if (args.use_verifier !== undefined && typeof args.use_verifier !== "boolean") {
+      errors.push("use_verifier must be boolean");
+    }
+  }
+  if (name === "lab_agent_run") {
+    if (typeof args.agent_role !== "string" || !args.agent_role.trim()) {
+      errors.push("agent_role is required");
+    }
+    if (typeof args.provider !== "string" || !args.provider.trim()) {
+      errors.push("provider is required");
+    }
+    if (typeof args.task !== "string" || !args.task.trim()) {
+      errors.push("task is required");
+    }
+    if (!Array.isArray(args.context_ids)) {
+      errors.push("context_ids must be an array");
+    }
+  }
+  if (name === "lab_referee_review") {
+    if (typeof args.text !== "string") {
+      errors.push("text must be a string");
+    }
+    if (typeof args.strictness !== "string" || !["normal", "hostile"].includes(args.strictness)) {
+      errors.push("strictness must be normal or hostile");
+    }
+    if (args.claim_id !== undefined && typeof args.claim_id !== "string") {
+      errors.push("claim_id must be a string when provided");
+    }
+  }
+  if (name === "lab_experiment_create") {
+    if (typeof args.claim_id !== "string" || !args.claim_id.trim()) {
+      errors.push("claim_id is required");
+    }
+    if (typeof args.question !== "string" || !args.question.trim()) {
+      errors.push("question is required");
+    }
+    if (typeof args.method !== "string" || !args.method.trim()) {
+      errors.push("method is required");
+    }
+    if (!args.inputs || typeof args.inputs !== "object" || Array.isArray(args.inputs)) {
+      errors.push("inputs must be an object");
+    }
+  }
+  if (name === "lab_experiment_run") {
+    if (typeof args.experiment_id !== "string" || !args.experiment_id.trim()) {
+      errors.push("experiment_id is required");
+    }
+    if (args.dry_run !== undefined && typeof args.dry_run !== "boolean") {
+      errors.push("dry_run must be boolean");
+    }
+  }
+  if (name === "lab_memory_search") {
+    if (typeof args.query !== "string" || !args.query.trim()) {
+      errors.push("query is required");
+    }
+    if (args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 50)) {
+      errors.push("limit must be an integer between 1 and 50");
+    }
+  }
+  if (name === "lab_memory_write") {
+    if (typeof args.kind !== "string" || !args.kind.trim()) {
+      errors.push("kind is required");
+    }
+    if (!args.payload || typeof args.payload !== "object" || Array.isArray(args.payload)) {
+      errors.push("payload must be an object");
+    }
+  }
+  if (name === "lab_models_debate") {
+    if (typeof args.question !== "string" || !args.question.trim()) {
+      errors.push("question is required");
+    }
+    if (!Array.isArray(args.participants) || args.participants.length < 1) {
+      errors.push("participants must contain at least one entry");
+    }
+    if (!Array.isArray(args.rounds) || args.rounds.length < 1) {
+      errors.push("rounds must contain at least one entry");
+    }
+    if (typeof args.use_existing_research_table !== "boolean") {
+      errors.push("use_existing_research_table must be boolean");
     }
   }
   if (name === "lab_report_generate") {
@@ -362,6 +920,87 @@ function validateCloudToolArguments(name, args) {
     }
     if (typeof args.include_next_actions !== "boolean") {
       errors.push("include_next_actions must be boolean");
+    }
+  }
+  if (name === "create_lab_scene") {
+    if (typeof args.title !== "string" || !args.title.trim()) {
+      errors.push("title is required");
+    }
+    for (const key of ["description", "units", "parameters", "metadata"]) {
+      if (args[key] !== undefined && key === "description" && typeof args[key] !== "string") {
+        errors.push("description must be a string");
+      }
+      if (args[key] !== undefined && key !== "description" && (!args[key] || typeof args[key] !== "object" || Array.isArray(args[key]))) {
+        errors.push(`${key} must be an object`);
+      }
+    }
+  }
+  if (name === "add_lab_object") {
+    if (!args.object || typeof args.object !== "object" || Array.isArray(args.object)) {
+      errors.push("object must be an object");
+    }
+  }
+  if (name === "update_lab_object") {
+    if (typeof args.object_id !== "string" || !args.object_id.trim()) {
+      errors.push("object_id is required");
+    }
+    if (!args.patch || typeof args.patch !== "object" || Array.isArray(args.patch)) {
+      errors.push("patch must be an object");
+    }
+  }
+  if (name === "remove_lab_object") {
+    if (typeof args.object_id !== "string" || !args.object_id.trim()) {
+      errors.push("object_id is required");
+    }
+  }
+  if (name === "set_lab_parameters") {
+    if (!args.parameters || typeof args.parameters !== "object" || Array.isArray(args.parameters)) {
+      errors.push("parameters must be an object");
+    }
+    for (const key of ["units", "metadata"]) {
+      if (args[key] !== undefined && (!args[key] || typeof args[key] !== "object" || Array.isArray(args[key]))) {
+        errors.push(`${key} must be an object`);
+      }
+    }
+  }
+  if (name === "run_lab_simulation") {
+    if (typeof args.adapter_id !== "string" || !args.adapter_id.trim()) {
+      errors.push("adapter_id is required");
+    }
+    if (!args.inputs || typeof args.inputs !== "object" || Array.isArray(args.inputs)) {
+      errors.push("inputs must be an object");
+    }
+  }
+  if (name === "attach_simulation_to_scene") {
+    if (typeof args.simulation_id !== "string" || !args.simulation_id.trim()) {
+      errors.push("simulation_id is required");
+    }
+    if (typeof args.apply_object_updates !== "boolean") {
+      errors.push("apply_object_updates must be boolean");
+    }
+    for (const key of ["object_ids", "evidence_refs", "report_refs"]) {
+      if (args[key] !== undefined && !Array.isArray(args[key])) {
+        errors.push(`${key} must be an array`);
+      }
+    }
+  }
+  if (name === "export_lab_snapshot") {
+    if (args.adapter_id !== "scene.three_json") {
+      errors.push("adapter_id must be scene.three_json");
+    }
+    if (typeof args.include_simulations !== "boolean") {
+      errors.push("include_simulations must be boolean");
+    }
+  }
+  if (name === "generate_lab_report") {
+    if (args.format !== "markdown") {
+      errors.push("format must be markdown");
+    }
+    if (typeof args.include_objects !== "boolean") {
+      errors.push("include_objects must be boolean");
+    }
+    if (typeof args.include_simulations !== "boolean") {
+      errors.push("include_simulations must be boolean");
     }
   }
   return errors;
@@ -653,16 +1292,1190 @@ function cloudSessionPayload(bundle) {
   };
 }
 
+function cloudEngineRequired(adapterId, message, extra = {}) {
+  return {
+    status: "engine_required",
+    adapter_id: adapterId,
+    message,
+    supported_in_cloud_mode: adapterId !== "math.sympy",
+    ...extra,
+  };
+}
+
+function cloudCompleted(adapterId, { inputs, outputs, evidence, warnings = [] }) {
+  return {
+    status: "completed",
+    adapter_id: adapterId,
+    inputs,
+    outputs,
+    evidence,
+    warnings,
+    errors: [],
+  };
+}
+
+function gravityVector(primary, fallback) {
+  const selected = primary !== undefined ? primary : fallback;
+  if (typeof selected === "number" && Number.isFinite(selected)) {
+    return { x: 0, y: -selected, z: 0 };
+  }
+  const vector = normalizeVector(selected, { x: 0, y: -9.81, z: 0 });
+  if (vector.x === 0 && vector.y === 0 && vector.z === 0) {
+    return { x: 0, y: -9.81, z: 0 };
+  }
+  return vector;
+}
+
+function findSceneObject(bundle, objectId) {
+  if (!objectId) {
+    return bundle.objects[0] || null;
+  }
+  return bundle.objects.find((item) => item.id === objectId) || null;
+}
+
+function axisVector(value) {
+  const vector = normalizeVector(value, { x: 1, y: 0, z: 0 });
+  const length = Math.sqrt((vector.x ** 2) + (vector.y ** 2) + (vector.z ** 2));
+  if (length <= 1e-12) {
+    return { x: 1, y: 0, z: 0 };
+  }
+  return {
+    x: vector.x / length,
+    y: vector.y / length,
+    z: vector.z / length,
+  };
+}
+
+function dot(a, b) {
+  return (a.x * b.x) + (a.y * b.y) + (a.z * b.z);
+}
+
+function replaceAxisComponent(velocity, axis, scalar) {
+  const currentScalar = dot(velocity, axis);
+  const delta = scalar - currentScalar;
+  return {
+    x: velocity.x + (axis.x * delta),
+    y: velocity.y + (axis.y * delta),
+    z: velocity.z + (axis.z * delta),
+  };
+}
+
+function runCloudProjectile(bundle, inputs) {
+  const objectId = trimmed(inputs.object_id);
+  const obj = findSceneObject(bundle, objectId);
+  const initialPosition = normalizeVector(
+    inputs.initial_position && typeof inputs.initial_position === "object" ? inputs.initial_position : obj?.position,
+    { x: 0, y: 0, z: 0 },
+  );
+  const initialVelocity = normalizeVector(
+    inputs.initial_velocity && typeof inputs.initial_velocity === "object" ? inputs.initial_velocity : obj?.data?.velocity,
+    { x: 0, y: 0, z: 0 },
+  );
+  const gravity = gravityVector(inputs.gravity, bundle.scene.parameters.gravity);
+  const duration = Math.max(numericValue(inputs.duration, 2), 0);
+  const timeStep = Math.max(numericValue(inputs.time_step, 0.1), 0.01);
+  const groundY = numericValue(inputs.ground_y, 0);
+  const stopOnGround = inputs.stop_on_ground !== false;
+  const trajectory = [];
+  let maxHeight = initialPosition.y;
+  for (let elapsed = 0; elapsed <= duration + 1e-9; elapsed += timeStep) {
+    const position = {
+      x: initialPosition.x + (initialVelocity.x * elapsed) + (0.5 * gravity.x * elapsed * elapsed),
+      y: initialPosition.y + (initialVelocity.y * elapsed) + (0.5 * gravity.y * elapsed * elapsed),
+      z: initialPosition.z + (initialVelocity.z * elapsed) + (0.5 * gravity.z * elapsed * elapsed),
+    };
+    const velocity = {
+      x: initialVelocity.x + (gravity.x * elapsed),
+      y: initialVelocity.y + (gravity.y * elapsed),
+      z: initialVelocity.z + (gravity.z * elapsed),
+    };
+    trajectory.push({ time: Number(elapsed.toFixed(6)), position, velocity });
+    maxHeight = Math.max(maxHeight, position.y);
+    if (stopOnGround && elapsed > 0 && position.y <= groundY) {
+      break;
+    }
+  }
+  const finalSample = trajectory[trajectory.length - 1];
+  return cloudCompleted("physics.simple_projectile", {
+    inputs,
+    outputs: {
+      object_id: objectId,
+      trajectory,
+      final_position: finalSample.position,
+      final_velocity: finalSample.velocity,
+      max_height: maxHeight,
+      duration_used: finalSample.time,
+    },
+    evidence: { equations: ["p = p0 + vt + 0.5at^2", "v = v0 + at"] },
+  });
+}
+
+function runCloudCollision(bundle, inputs) {
+  const objectIds = asStringArray(inputs.object_ids).slice(0, 2);
+  if (objectIds.length !== 2) {
+    return cloudEngineRequired("physics.simple_collision", "object_ids must contain exactly two scene object ids");
+  }
+  const objectA = findSceneObject(bundle, objectIds[0]);
+  const objectB = findSceneObject(bundle, objectIds[1]);
+  if (!objectA || !objectB) {
+    return cloudEngineRequired("physics.simple_collision", "Both collision objects must exist in the scene before simulation.");
+  }
+  const axis = axisVector(inputs.axis);
+  const massA = numericValue(inputs.mass_a, numericValue(objectA.data.mass, 1));
+  const massB = numericValue(inputs.mass_b, numericValue(objectB.data.mass, 1));
+  const restitution = Math.min(Math.max(numericValue(inputs.coefficient_of_restitution, 1), 0), 1);
+  const velocityA = normalizeVector(inputs.velocity_a || objectA.data.velocity, { x: 0, y: 0, z: 0 });
+  const velocityB = normalizeVector(inputs.velocity_b || objectB.data.velocity, { x: 0, y: 0, z: 0 });
+  const scalarA = dot(velocityA, axis);
+  const scalarB = dot(velocityB, axis);
+  const postA = ((massA * scalarA) + (massB * scalarB) - (massB * restitution * (scalarA - scalarB))) / (massA + massB);
+  const postB = ((massA * scalarA) + (massB * scalarB) + (massA * restitution * (scalarA - scalarB))) / (massA + massB);
+  return cloudCompleted("physics.simple_collision", {
+    inputs,
+    outputs: {
+      axis,
+      pre_collision: {
+        [objectA.id]: velocityA,
+        [objectB.id]: velocityB,
+      },
+      post_collision: {
+        [objectA.id]: replaceAxisComponent(velocityA, axis, postA),
+        [objectB.id]: replaceAxisComponent(velocityB, axis, postB),
+      },
+      momentum: {
+        before: (massA * scalarA) + (massB * scalarB),
+        after: (massA * postA) + (massB * postB),
+      },
+    },
+    evidence: { equations: ["conservation_of_momentum", "coefficient_of_restitution"] },
+  });
+}
+
+function runCloudSceneAdapter(adapterId, bundle, inputs) {
+  if (adapterId === "math.sympy") {
+    return cloudEngineRequired(
+      adapterId,
+      "math.sympy is not available inside the Cloudflare Worker runtime. Use local mode or a future external engine bridge.",
+    );
+  }
+  if (adapterId === "physics.simple_projectile") {
+    return runCloudProjectile(bundle, inputs);
+  }
+  if (adapterId === "physics.simple_collision") {
+    return runCloudCollision(bundle, inputs);
+  }
+  return cloudEngineRequired(adapterId, "The requested Phase 1 adapter is not registered in cloud-native mode.");
+}
+
+function exportCloudScene(bundle, adapterId, includeSimulations) {
+  if (adapterId !== "scene.three_json") {
+    return cloudEngineRequired(adapterId, "This scene export adapter is unavailable in cloud-native mode.");
+  }
+  const snapshot = {
+    metadata: {
+      adapter_id: adapterId,
+      type: "MysticLABScene",
+      version: 1,
+    },
+    scene: {
+      uuid: bundle.scene.scene_id,
+      name: bundle.scene.title,
+      type: "Scene",
+      userData: {
+        session_id: bundle.scene.session_id,
+        domain: bundle.scene.domain,
+        description: bundle.scene.description,
+        parameters: bundle.scene.parameters,
+        units: bundle.scene.units,
+        attached_simulations: bundle.scene.attached_simulations,
+        metadata: bundle.scene.metadata,
+      },
+    },
+    objects: bundle.objects.map((item) => ({
+      uuid: item.id,
+      name: item.label,
+      type: item.type,
+      position: [item.position.x, item.position.y, item.position.z],
+      rotation: [item.rotation.x, item.rotation.y, item.rotation.z],
+      scale: [item.scale.x, item.scale.y, item.scale.z],
+      geometry: item.geometry,
+      material: item.material,
+      userData: {
+        data: item.data,
+        metadata: item.metadata,
+      },
+    })),
+  };
+  if (includeSimulations) {
+    snapshot.simulations = bundle.simulations.map((item) => ({
+      simulation_id: item.simulation_id,
+      adapter_id: item.adapter_id,
+      status: item.status,
+      attached_object_ids: item.attached_object_ids,
+      outputs: item.outputs,
+    }));
+  }
+  return cloudCompleted(adapterId, {
+    inputs: { include_simulations: includeSimulations },
+    outputs: { snapshot },
+    evidence: { scene_id: bundle.scene.scene_id, object_count: bundle.objects.length },
+  });
+}
+
+function renderCloudSceneReport(bundle) {
+  const parameterLines = Object.entries(bundle.scene.parameters || {}).map(([key, value]) => `- ${key}: ${value}`);
+  const objectLines = bundle.objects.map(
+    (item) => `- ${item.label} (${item.type}) @ (${item.position.x.toFixed(3)}, ${item.position.y.toFixed(3)}, ${item.position.z.toFixed(3)})`,
+  );
+  const simulationLines = bundle.simulations.map((item) => `- ${item.simulation_id} [${item.adapter_id}] => ${item.status}`);
+  const evidenceLines = bundle.scene.evidence_refs.length ? bundle.scene.evidence_refs.map((item) => `- ${item}`) : ["- None"];
+  return [
+    `# Mystic LAB Scene Report: ${bundle.scene.title}`,
+    "",
+    `Scene ID: ${bundle.scene.scene_id}`,
+    `Session ID: ${bundle.scene.session_id}`,
+    `Domain: ${bundle.scene.domain}`,
+    "",
+    "## Description",
+    bundle.scene.description || "No description.",
+    "",
+    "## Parameters",
+    ...(parameterLines.length ? parameterLines : ["- None"]),
+    "",
+    "## Objects",
+    ...(objectLines.length ? objectLines : ["- None"]),
+    "",
+    "## Simulations",
+    ...(simulationLines.length ? simulationLines : ["- None"]),
+    "",
+    "## Evidence Refs",
+    ...evidenceLines,
+    "",
+  ].join("\n");
+}
+
+function applyCloudSimulationToScene(bundle, simulation, objectIds) {
+  const selectedIds = objectIds && objectIds.length ? objectIds : simulation.attached_object_ids;
+  if (simulation.adapter_id === "physics.simple_projectile") {
+    const targetId = trimmed(simulation.outputs.object_id);
+    const target = bundle.objects.find((item) => item.id === targetId && selectedIds.includes(item.id));
+    if (!target) {
+      return;
+    }
+    target.position = normalizeVector(simulation.outputs.final_position, { x: 0, y: 0, z: 0 });
+    target.data = { ...target.data, velocity: normalizeVector(simulation.outputs.final_velocity, { x: 0, y: 0, z: 0 }), trajectory: simulation.outputs.trajectory || [] };
+    target.metadata = { ...target.metadata, last_simulation_id: simulation.simulation_id };
+    target.updated_at = nowIso();
+    return;
+  }
+  if (simulation.adapter_id === "physics.simple_collision") {
+    const postCollision = objectMapping(simulation.outputs.post_collision);
+    bundle.objects = bundle.objects.map((item) => {
+      if (!selectedIds.includes(item.id) || !postCollision[item.id] || typeof postCollision[item.id] !== "object") {
+        return item;
+      }
+      return {
+        ...item,
+        data: { ...item.data, velocity: normalizeVector(postCollision[item.id], { x: 0, y: 0, z: 0 }) },
+        metadata: { ...item.metadata, last_simulation_id: simulation.simulation_id },
+        updated_at: nowIso(),
+      };
+    });
+  }
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function cloudId(prefix) {
+  return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function trimmed(value, fallback = "") {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+}
+
+function requestTargetUrl(value) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value && typeof value.url === "string") {
+    return value.url;
+  }
+  if (value instanceof URL) {
+    return value.toString();
+  }
+  return "";
+}
+
+function asStringArray(value) {
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+}
+
+function cloudNextPhase(currentPhase) {
+  const index = LAB_PHASES.indexOf(currentPhase);
+  if (index === -1 || index >= LAB_PHASES.length - 1) {
+    return "completed";
+  }
+  return LAB_PHASES[index + 1];
+}
+
+function cloudNextActionsForPhase(phase) {
+  if (phase === "completed") {
+    return [];
+  }
+  const room = LAB_PHASE_TO_ROOM[phase] || "Main Lab Room";
+  return [`Advance to ${phase} in ${room}.`, "Inspect newly saved artifacts, claims, and failures."];
+}
+
+function makeCloudTurn({
+  sessionId,
+  phase,
+  agentRole,
+  provider,
+  modelName,
+  inputSummary,
+  output,
+  status = "completed",
+  requestedTools = [],
+  toolResults = [],
+  replyTo = [],
+  error = "",
+}) {
+  return {
+    session_id: sessionId,
+    phase,
+    room: LAB_PHASE_TO_ROOM[phase] || "Main Lab Room",
+    agent_role: agentRole,
+    provider,
+    model_name: modelName,
+    input_summary: inputSummary,
+    output,
+    extracted_claims: [],
+    requested_tools: requestedTools,
+    tool_results: toolResults,
+    status,
+    error,
+    reply_to: replyTo,
+    turn_id: cloudId("turn"),
+    created_at: nowIso(),
+  };
+}
+
+function extractCloudClaimPayloads(text, phase) {
+  const claims = [];
+  for (const raw of String(text || "").split(/\r?\n/)) {
+    const line = raw.replace(/^[-* \t]+/, "").trim();
+    if (line.length < 18) {
+      continue;
+    }
+    claims.push({
+      text: line.slice(0, 400),
+      claim_type: phase === "background_scan" ? "observation" : "hypothesis",
+      status: phase === "knowledge_update" ? "TESTED" : "HEURISTIC",
+      confidence: phase === "knowledge_update" ? "medium" : "low",
+    });
+    if (claims.length >= 5) {
+      break;
+    }
+  }
+  return claims;
+}
+
+function claimsFromTurn(sessionId, turn) {
+  const payloads = extractCloudClaimPayloads(turn.output, turn.phase);
+  turn.extracted_claims = payloads;
+  return payloads.map((item) => ({
+    session_id: sessionId,
+    text: item.text,
+    claim_type: item.claim_type,
+    status: item.status,
+    confidence: item.confidence,
+    source_turn_id: turn.turn_id,
+    supporting_evidence: [],
+    refuting_evidence: [],
+    related_experiments: [],
+    related_failures: [],
+    created_at: nowIso(),
+    updated_at: nowIso(),
+    claim_id: cloudId("claim"),
+  }));
+}
+
+function makeFailure({
+  sessionId,
+  claimId = "",
+  sourceTurnId = "",
+  firstFatalError,
+  failureType = "tool_error",
+  lesson = "Cloud-native execution could not complete this step yet.",
+  reusableAsTrainingData = false,
+}) {
+  return {
+    session_id: sessionId,
+    claim_id: claimId,
+    source_turn_id: sourceTurnId,
+    first_fatal_error: firstFatalError,
+    failure_type: failureType,
+    lesson,
+    reusable_as_training_data: Boolean(reusableAsTrainingData),
+    created_at: nowIso(),
+    failure_id: cloudId("failure"),
+  };
+}
+
+function makeMemoryEdge({ sessionId, fromId, toId, relation, evidence }) {
+  return {
+    session_id: sessionId,
+    from_id: fromId,
+    to_id: toId,
+    relation,
+    evidence,
+    created_at: nowIso(),
+    edge_id: cloudId("edge"),
+  };
+}
+
+function findClaim(bundle, claimId) {
+  return bundle.claims.find((item) => item.claim_id === claimId) || null;
+}
+
+function findExperiment(bundle, experimentId) {
+  return bundle.experiments.find((item) => item.experiment_id === experimentId) || null;
+}
+
+function latestClaim(bundle) {
+  return bundle.claims.length ? bundle.claims[bundle.claims.length - 1] : null;
+}
+
+function phaseContext(bundle, phase) {
+  const parts = [
+    `Current phase: ${phase}`,
+    `Problem: ${bundle.session.problem}`,
+    `Goal: ${bundle.session.goal}`,
+    `Claims: ${bundle.claims.length}`,
+    `Experiments: ${bundle.experiments.length}`,
+    `Failures: ${bundle.failures.length}`,
+  ];
+  const claim = latestClaim(bundle);
+  if (claim) {
+    parts.push(`Latest claim: ${claim.text}`);
+  }
+  return parts.join("\n");
+}
+
+function contextFromIds(bundle, contextIds) {
+  if (!Array.isArray(contextIds) || !contextIds.length) {
+    return String(bundle.notebook_markdown || "").slice(-2000);
+  }
+  const parts = [];
+  for (const turn of bundle.turns) {
+    if (contextIds.includes(turn.turn_id)) {
+      parts.push(turn.output);
+    }
+  }
+  for (const claim of bundle.claims) {
+    if (contextIds.includes(claim.claim_id)) {
+      parts.push(claim.text);
+    }
+  }
+  return parts.join("\n\n");
+}
+
+function providerSecret(env, names) {
+  for (const name of names) {
+    const value = String(env[name] || "").trim();
+    if (value) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function defaultProviderRegistry(env) {
+  const openAiBaseUrl = normalizeBaseUrl(env.MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL || "");
+  const openAiSecret = providerSecret(env, [
+    "MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY",
+    "MYSTIC_PROVIDER_OPENAI_COMPAT_BEARER_TOKEN",
+  ]);
+  const geminiSecret = providerSecret(env, [
+    "MYSTIC_PROVIDER_GEMINI_API_KEY",
+    "MYSTIC_PROVIDER_GEMINI_BEARER_TOKEN",
+  ]);
+  const anthropicSecret = providerSecret(env, [
+    "MYSTIC_PROVIDER_ANTHROPIC_API_KEY",
+    "MYSTIC_PROVIDER_ANTHROPIC_BEARER_TOKEN",
+  ]);
+  return [
+    {
+      provider_id: "openai_compatible",
+      provider_type: "openai_compatible",
+      auth_method: String(env.MYSTIC_PROVIDER_OPENAI_COMPAT_BEARER_TOKEN || "").trim() ? "oauth_bearer_token" : "api_key",
+      status: openAiBaseUrl && openAiSecret ? "ready" : "provider_required",
+      scopes: ["model:generate"],
+      created_at: "",
+      setup_url: trimmed(env.MYSTIC_PROVIDER_OPENAI_COMPAT_SETUP_URL, "https://platform.openai.com/api-keys"),
+      setup_instructions:
+        "Store MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY as a Cloudflare secret and set MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL and MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL.",
+      model_name: trimmed(env.MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL, "openai-compatible"),
+      ready: Boolean(openAiBaseUrl && openAiSecret),
+    },
+    {
+      provider_id: "gemini",
+      provider_type: "gemini",
+      auth_method: String(env.MYSTIC_PROVIDER_GEMINI_BEARER_TOKEN || "").trim() ? "oauth_bearer_token" : "api_key",
+      status: geminiSecret ? "ready" : "provider_required",
+      scopes: ["model:generate"],
+      created_at: "",
+      setup_url: trimmed(env.MYSTIC_PROVIDER_GEMINI_SETUP_URL, "https://aistudio.google.com/app/apikey"),
+      setup_instructions:
+        "Store MYSTIC_PROVIDER_GEMINI_API_KEY as a Cloudflare secret or provide a Gemini OAuth bearer token via Cloudflare secret storage.",
+      model_name: trimmed(env.MYSTIC_PROVIDER_GEMINI_MODEL, "gemini-1.5-flash"),
+      ready: Boolean(geminiSecret),
+    },
+    {
+      provider_id: "anthropic",
+      provider_type: "anthropic",
+      auth_method: String(env.MYSTIC_PROVIDER_ANTHROPIC_BEARER_TOKEN || "").trim() ? "oauth_bearer_token" : "api_key",
+      status: anthropicSecret ? "ready" : "provider_required",
+      scopes: ["model:generate"],
+      created_at: "",
+      setup_url: trimmed(env.MYSTIC_PROVIDER_ANTHROPIC_SETUP_URL, "https://console.anthropic.com/settings/keys"),
+      setup_instructions:
+        "Store MYSTIC_PROVIDER_ANTHROPIC_API_KEY as a Cloudflare secret or provide an authorized bearer token via Cloudflare secret storage.",
+      model_name: trimmed(env.MYSTIC_PROVIDER_ANTHROPIC_MODEL, "claude-3-5-sonnet-latest"),
+      ready: Boolean(anthropicSecret),
+    },
+  ];
+}
+
+function normalizeProviderRecord(baseRecord, row = {}) {
+  const scopes = Array.isArray(row.scopes) ? row.scopes.map((item) => String(item)) : baseRecord.scopes;
+  return {
+    ...baseRecord,
+    provider_type: trimmed(row.provider_type, baseRecord.provider_type),
+    auth_method: trimmed(row.auth_method, baseRecord.auth_method),
+    status: trimmed(row.status, baseRecord.status),
+    scopes,
+    created_at: trimmed(row.created_at, baseRecord.created_at),
+    setup_url: trimmed(row.setup_url, baseRecord.setup_url),
+    setup_instructions: trimmed(row.setup_instructions, baseRecord.setup_instructions),
+  };
+}
+
+async function loadProviderRegistry(env) {
+  const fallback = defaultProviderRegistry(env);
+  const providerMap = new Map(fallback.map((item) => [item.provider_id, item]));
+  const warnings = [];
+  if (!supabaseState(env).configured) {
+    return { providers: fallback, warnings };
+  }
+  try {
+    const rows = await supabaseSelectRows(env, "provider_connections", {}, { order: "created_at.asc" });
+    for (const row of rows) {
+      const providerId = trimmed(row.provider_id);
+      if (!providerId) {
+        continue;
+      }
+      const baseRecord =
+        providerMap.get(providerId) ||
+        {
+          provider_id: providerId,
+          provider_type: "future",
+          auth_method: "manual",
+          status: "provider_required",
+          scopes: [],
+          created_at: "",
+          setup_url: "",
+          setup_instructions: "Connect this provider explicitly before cloud-native LAB tools can use it.",
+          model_name: providerId,
+          ready: false,
+        };
+      providerMap.set(providerId, normalizeProviderRecord(baseRecord, row));
+    }
+  } catch (error) {
+    warnings.push(`provider_registry_unavailable:${String(error.message || error).slice(0, 120)}`);
+  }
+  return { providers: Array.from(providerMap.values()), warnings };
+}
+
+function providerRegistryMap(registry) {
+  return new Map(registry.providers.map((item) => [item.provider_id, item]));
+}
+
+function normalizeRequestedProvider(value) {
+  const normalized = trimmed(value, "auto").toLowerCase();
+  if (normalized === "openai") {
+    return "openai_compatible";
+  }
+  if (normalized === "google") {
+    return "gemini";
+  }
+  if (normalized === "claude") {
+    return "anthropic";
+  }
+  if (normalized === "local") {
+    return "local_backend";
+  }
+  return normalized;
+}
+
+function localBackendDeferredResult() {
+  return {
+    status: "deferred",
+    deferred: true,
+    provider_required: false,
+    provider: "local_backend",
+    required_auth_method: "local_process",
+    setup_url: "",
+    setup_instructions: "Cloud-native mode does not use the local Mystic backend or a quick tunnel.",
+    message: "This cloud-native LAB action cannot fall back to the local backend in public Worker mode.",
+    supported_in_cloud_mode: false,
+  };
+}
+
+function providerRequiredResult(providerRecord, message) {
+  return {
+    status: "provider_required",
+    deferred: false,
+    provider_required: true,
+    provider: providerRecord.provider_id,
+    provider_type: providerRecord.provider_type,
+    required_auth_method: providerRecord.auth_method,
+    setup_url: providerRecord.setup_url,
+    setup_instructions: providerRecord.setup_instructions,
+    scopes: providerRecord.scopes,
+    created_at: providerRecord.created_at,
+    message,
+    supported_in_cloud_mode: true,
+  };
+}
+
+function deferredResult(message, extra = {}) {
+  return {
+    status: "deferred",
+    deferred: true,
+    provider_required: false,
+    supported_in_cloud_mode: false,
+    message,
+    ...extra,
+  };
+}
+
+function selectCloudProvider(registry, requestedProvider) {
+  const normalized = normalizeRequestedProvider(requestedProvider);
+  if (normalized === "local_backend") {
+    return { selection: null, deferred: localBackendDeferredResult() };
+  }
+  const providerMap = providerRegistryMap(registry);
+  if (normalized && normalized !== "auto") {
+    const selected = providerMap.get(normalized);
+    if (!selected) {
+      return { selection: null, deferred: deferredResult(`Unknown provider: ${requestedProvider}`) };
+    }
+    if (!selected.ready) {
+      return {
+        selection: null,
+        providerRequired: providerRequiredResult(selected, `${selected.provider_id} must be explicitly connected before this LAB action can run.`),
+      };
+    }
+    return { selection: selected };
+  }
+  const ready = registry.providers.find((item) => item.ready);
+  if (ready) {
+    return { selection: ready };
+  }
+  const preferred = registry.providers[0];
+  return {
+    selection: null,
+    providerRequired: providerRequiredResult(
+      preferred,
+      "No cloud-native model provider is connected. Configure an external provider secret before running this LAB action.",
+    ),
+  };
+}
+
+async function providerRequestJson(url, options) {
+  const response = await fetch(url, options);
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = { raw: text };
+  }
+  if (!response.ok) {
+    throw new Error(`provider_http_${response.status}`);
+  }
+  return payload;
+}
+
+function normalizeTextOutput(value) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === "string" ? item : typeof item?.text === "string" ? item.text : ""))
+      .filter(Boolean)
+      .join("\n");
+  }
+  return "";
+}
+
+function extractOpenAICompatibleText(payload) {
+  const choice = Array.isArray(payload?.choices) ? payload.choices[0] : null;
+  if (!choice || typeof choice !== "object") {
+    return "";
+  }
+  return normalizeTextOutput(choice.message?.content || choice.text || "");
+}
+
+function extractGeminiText(payload) {
+  const candidate = Array.isArray(payload?.candidates) ? payload.candidates[0] : null;
+  const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+  return normalizeTextOutput(parts.map((item) => item?.text || ""));
+}
+
+function extractAnthropicText(payload) {
+  return normalizeTextOutput(Array.isArray(payload?.content) ? payload.content.map((item) => item?.text || "") : []);
+}
+
+async function invokeCloudProvider(env, providerRecord, prompt) {
+  const startedAt = Date.now();
+  if (providerRecord.provider_id === "openai_compatible") {
+    const baseUrl = normalizeBaseUrl(env.MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL || "");
+    const secret = providerSecret(env, [
+      "MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY",
+      "MYSTIC_PROVIDER_OPENAI_COMPAT_BEARER_TOKEN",
+    ]);
+    const payload = await providerRequestJson(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${secret}`,
+      },
+      body: JSON.stringify({
+        model: trimmed(env.MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL, providerRecord.model_name),
+        messages: [
+          { role: "system", content: "You are a Mystic Virtual Research Lab agent operating in cloud-native mode." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.2,
+      }),
+    });
+    return {
+      ok: true,
+      provider: providerRecord.provider_id,
+      model_name: trimmed(env.MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL, providerRecord.model_name),
+      latency_sec: (Date.now() - startedAt) / 1000,
+      content: extractOpenAICompatibleText(payload),
+    };
+  }
+  if (providerRecord.provider_id === "gemini") {
+    const apiKey = providerSecret(env, ["MYSTIC_PROVIDER_GEMINI_API_KEY"]);
+    const bearerToken = providerSecret(env, ["MYSTIC_PROVIDER_GEMINI_BEARER_TOKEN"]);
+    const modelName = trimmed(env.MYSTIC_PROVIDER_GEMINI_MODEL, providerRecord.model_name);
+    const url = apiKey
+      ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(apiKey)}`
+      : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`;
+    const headers = { "content-type": "application/json" };
+    if (bearerToken) {
+      headers.Authorization = `Bearer ${bearerToken}`;
+    }
+    const payload = await providerRequestJson(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+      }),
+    });
+    return {
+      ok: true,
+      provider: providerRecord.provider_id,
+      model_name: modelName,
+      latency_sec: (Date.now() - startedAt) / 1000,
+      content: extractGeminiText(payload),
+    };
+  }
+  if (providerRecord.provider_id === "anthropic") {
+    const apiKey = providerSecret(env, ["MYSTIC_PROVIDER_ANTHROPIC_API_KEY"]);
+    const bearerToken = providerSecret(env, ["MYSTIC_PROVIDER_ANTHROPIC_BEARER_TOKEN"]);
+    const headers = {
+      "content-type": "application/json",
+      "anthropic-version": "2023-06-01",
+    };
+    if (apiKey) {
+      headers["x-api-key"] = apiKey;
+    }
+    if (bearerToken) {
+      headers.Authorization = `Bearer ${bearerToken}`;
+    }
+    const payload = await providerRequestJson("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: trimmed(env.MYSTIC_PROVIDER_ANTHROPIC_MODEL, providerRecord.model_name),
+        max_tokens: 1024,
+        system: "You are a Mystic Virtual Research Lab agent operating in cloud-native mode.",
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    return {
+      ok: true,
+      provider: providerRecord.provider_id,
+      model_name: trimmed(env.MYSTIC_PROVIDER_ANTHROPIC_MODEL, providerRecord.model_name),
+      latency_sec: (Date.now() - startedAt) / 1000,
+      content: extractAnthropicText(payload),
+    };
+  }
+  throw new Error(`unsupported_provider_${providerRecord.provider_id}`);
+}
+
+async function cloudMysticStatus(state, supabase, env) {
+  const registry = await loadProviderRegistry(env);
+  const toolStates = {
+    mystic_status: "ready",
+    health_check: "ready",
+    lab_session_create: supabase.configured ? "ready" : "blocked",
+    lab_session_get: supabase.configured ? "ready" : "blocked",
+    lab_session_advance: supabase.configured ? "ready" : "blocked",
+    lab_agent_run: registry.providers.some((item) => item.ready) ? "ready" : "provider_required",
+    lab_referee_review: supabase.configured ? "deferred" : "blocked",
+    lab_experiment_create: supabase.configured ? "ready" : "blocked",
+    lab_experiment_run: supabase.configured ? "deferred" : "blocked",
+    lab_memory_search: supabase.configured ? "ready" : "blocked",
+    lab_memory_write: supabase.configured ? "ready" : "blocked",
+    lab_models_debate: registry.providers.some((item) => item.ready) ? "ready" : "provider_required",
+    lab_report_generate: supabase.configured ? "ready" : "blocked",
+    create_lab_scene: supabase.configured ? "ready" : "blocked",
+    get_lab_scene: supabase.configured ? "ready" : "blocked",
+    add_lab_object: supabase.configured ? "ready" : "blocked",
+    update_lab_object: supabase.configured ? "ready" : "blocked",
+    remove_lab_object: supabase.configured ? "ready" : "blocked",
+    set_lab_parameters: supabase.configured ? "ready" : "blocked",
+    run_lab_simulation: supabase.configured ? "ready" : "blocked",
+    attach_simulation_to_scene: supabase.configured ? "ready" : "blocked",
+    export_lab_snapshot: supabase.configured ? "ready" : "blocked",
+    generate_lab_report: supabase.configured ? "ready" : "blocked",
+  };
+  const blockers = [];
+  if (!state.enabled) {
+    blockers.push("OAUTH_NOT_CONFIGURED");
+  } else if (!state.configured) {
+    blockers.push("OAUTH_METADATA_MISSING");
+  }
+  if (!supabase.configured) {
+    blockers.push("LAB_STORAGE_NOT_CONFIGURED");
+  }
+  return {
+    models: {},
+    provider_registry: registry.providers.map((item) => ({
+      provider_id: item.provider_id,
+      provider_type: item.provider_type,
+      auth_method: item.auth_method,
+      status: item.status,
+      scopes: item.scopes,
+      created_at: item.created_at,
+      setup_url: item.setup_url,
+      setup_instructions: item.setup_instructions,
+    })),
+    tools: toolStates,
+    lab_core_available: true,
+    lab_tools_count: CLOUD_TOOL_DEFINITIONS.filter((tool) => !["mystic_status", "health_check"].includes(tool.name)).length,
+    phase_1_tools_count: CLOUD_REQUIRED_TOOL_NAMES.length,
+    storage_backend: "supabase",
+    storage_status: {
+      backend: "supabase",
+      configured: supabase.configured,
+      write_capable: supabase.configured,
+      storage_root: supabase.storageRoot,
+      storage_root_uri: supabase.storageRoot,
+      schema: supabase.schema,
+      project_url: supabase.url,
+      missing_env: [
+        ...(!supabase.url ? ["MYSTIC_SUPABASE_URL"] : []),
+        ...(!supabase.serviceRoleKey ? ["MYSTIC_SUPABASE_SERVICE_ROLE_KEY"] : []),
+      ],
+    },
+    lab_storage_root: supabase.storageRoot,
+    remote_mcp_public_endpoint: `${state.issuer}/mcp`,
+    oauth_configured: state.configured,
+    oauth_enabled: state.enabled,
+    oauth_metadata_available: state.metadataAvailable,
+    chatgpt_remote_import_ready: false,
+    chatgpt_remote_import_ready_candidate: state.metadataAvailable && supabase.configured,
+    manual_import_verification_checked: false,
+    manual_import_verified: false,
+    manual_import_verification_path: MANUAL_IMPORT_VERIFICATION_PATH,
+    manual_import_verification_summary: {},
+    blockers: [...blockers, "MANUAL_IMPORT_NOT_VERIFIED"],
+    datasets: {},
+    adapter_status: {
+      available: ["physics.simple_projectile", "physics.simple_collision", "scene.three_json"],
+      engine_required: ["math.sympy"],
+    },
+    recent_runs: [],
+    recent_errors: registry.warnings,
+    mcp_server_status: "ready",
+    runtime_mode: "cloud_native_worker_lab_v0",
+  };
+}
+
+async function cloudHealthCheck(state, supabase, env) {
+  const registry = await loadProviderRegistry(env);
+  return {
+    status: supabase.configured ? "ok" : "error",
+    mode: "cloud_native_worker",
+    storage_backend: "supabase",
+    storage_status: {
+      backend: "supabase",
+      configured: supabase.configured,
+      write_capable: supabase.configured,
+      storage_root: supabase.storageRoot,
+      storage_root_uri: supabase.storageRoot,
+      schema: supabase.schema,
+      project_url: supabase.url,
+      missing_env: [
+        ...(!supabase.url ? ["MYSTIC_SUPABASE_URL"] : []),
+        ...(!supabase.serviceRoleKey ? ["MYSTIC_SUPABASE_SERVICE_ROLE_KEY"] : []),
+      ],
+    },
+    oauth_enabled: state.enabled,
+    oauth_configured: state.configured,
+    phase_1_tools: CLOUD_REQUIRED_TOOL_NAMES,
+    provider_registry: registry.providers.map((item) => ({
+      provider_id: item.provider_id,
+      status: item.status,
+      auth_method: item.auth_method,
+    })),
+  };
+}
+
+function cloudExperimentSummary(experiment, claimStatus) {
+  return {
+    experiment_id: experiment.experiment_id,
+    verdict: experiment.verdict,
+    outputs: experiment.outputs,
+    evidence_summary: experiment.evidence_summary,
+    updated_claim_status: claimStatus || "UNKNOWN",
+  };
+}
+
+async function runCloudAgentTurn({
+  env,
+  bundle,
+  phase,
+  agentRole,
+  task,
+  providerPreference,
+  contextIds = [],
+  replyTo = [],
+}) {
+  const registry = await loadProviderRegistry(env);
+  const providerDecision = selectCloudProvider(registry, providerPreference);
+  const context = contextFromIds(bundle, contextIds) || phaseContext(bundle, phase);
+  const prompt = [
+    `Agent role: ${agentRole}`,
+    `Phase: ${phase}`,
+    `Problem: ${bundle.session.problem}`,
+    `Goal: ${bundle.session.goal}`,
+    `Task: ${task}`,
+    "",
+    "Context:",
+    context,
+  ].join("\n");
+  if (providerDecision.deferred) {
+    const turn = makeCloudTurn({
+      sessionId: bundle.session.session_id,
+      phase,
+      agentRole,
+      provider: "tool",
+      modelName: "local_backend_unavailable",
+      inputSummary: task.slice(0, 200),
+      output: providerDecision.deferred.message,
+      status: "blocked",
+      requestedTools: [],
+      toolResults: [providerDecision.deferred],
+      replyTo,
+    });
+    bundle.turns.push(turn);
+    bundle.session.status = "waiting_for_user";
+    bundle.session.next_actions = [providerDecision.deferred.setup_instructions || providerDecision.deferred.message];
+    return { turn, claims: [], response: providerDecision.deferred };
+  }
+  if (providerDecision.providerRequired) {
+    const turn = makeCloudTurn({
+      sessionId: bundle.session.session_id,
+      phase,
+      agentRole,
+      provider: providerDecision.providerRequired.provider,
+      modelName: providerDecision.providerRequired.provider,
+      inputSummary: task.slice(0, 200),
+      output: providerDecision.providerRequired.message,
+      status: "AUTH_REQUIRED",
+      requestedTools: [],
+      toolResults: [providerDecision.providerRequired],
+      replyTo,
+    });
+    bundle.turns.push(turn);
+    bundle.session.status = "waiting_for_user";
+    bundle.session.next_actions = [
+      providerDecision.providerRequired.setup_instructions,
+      "Retry the same LAB action after connecting the provider.",
+    ];
+    return { turn, claims: [], response: providerDecision.providerRequired };
+  }
+
+  try {
+    const invocation = await invokeCloudProvider(env, providerDecision.selection, prompt);
+    const turn = makeCloudTurn({
+      sessionId: bundle.session.session_id,
+      phase,
+      agentRole,
+      provider: invocation.provider,
+      modelName: invocation.model_name,
+      inputSummary: task.slice(0, 200),
+      output: invocation.content || "Provider returned no text output.",
+      status: "completed",
+      requestedTools: [],
+      toolResults: [
+        {
+          provider: invocation.provider,
+          model_name: invocation.model_name,
+          latency_sec: invocation.latency_sec,
+        },
+      ],
+      replyTo,
+    });
+    const claims = claimsFromTurn(bundle.session.session_id, turn);
+    bundle.turns.push(turn);
+    if (claims.length) {
+      bundle.claims.push(...claims);
+    }
+    bundle.session.status = "running";
+    bundle.session.next_actions = ["Review the new agent turn.", "Decide whether to advance the session or run a referee review."];
+    return {
+      turn,
+      claims,
+      response: {
+        status: "completed",
+        provider_required: false,
+        provider: invocation.provider,
+        model_name: invocation.model_name,
+        latency_sec: invocation.latency_sec,
+      },
+    };
+  } catch (error) {
+    const failure = deferredResult(
+      `Provider execution failed for ${providerDecision.selection.provider_id}. Retry after checking provider credentials or API availability.`,
+      {
+        provider: providerDecision.selection.provider_id,
+        error_code: trimmed(error.message, "provider_error"),
+      },
+    );
+    const turn = makeCloudTurn({
+      sessionId: bundle.session.session_id,
+      phase,
+      agentRole,
+      provider: providerDecision.selection.provider_id,
+      modelName: providerDecision.selection.model_name,
+      inputSummary: task.slice(0, 200),
+      output: failure.message,
+      status: "ERROR",
+      requestedTools: [],
+      toolResults: [failure],
+      replyTo,
+      error: failure.error_code || "provider_error",
+    });
+    bundle.turns.push(turn);
+    bundle.session.status = "blocked";
+    bundle.session.next_actions = ["Inspect provider configuration.", "Retry the LAB action after resolving the provider error."];
+    return { turn, claims: [], response: failure };
+  }
+}
+
+async function cloudMemorySearch(env, { query, domain, statusFilter, limit }) {
+  const queryText = String(query || "").toLowerCase();
+  const [sessionRows, claimRows, failureRows, memoryEdgeRows] = await Promise.all([
+    supabaseSelectRows(env, "lab_sessions", {}, { order: "updated_at.desc" }),
+    supabaseSelectRows(env, "claims", {}, { order: "updated_at.desc" }),
+    supabaseSelectRows(env, "failures", {}, { order: "created_at.desc" }),
+    supabaseSelectRows(env, "memory_edges", {}, { order: "created_at.desc" }),
+  ]);
+  const matchingSessions = [];
+  const claims = [];
+  const failures = [];
+  const experiments = [];
+  const edges = [];
+  const eligibleSessionIds = new Set();
+  for (const sessionRow of sessionRows) {
+    if (domain && trimmed(sessionRow.domain) !== domain) {
+      continue;
+    }
+    const sessionId = trimmed(sessionRow.session_id);
+    if (!sessionId) {
+      continue;
+    }
+    eligibleSessionIds.add(sessionId);
+    if (String(JSON.stringify(sessionRow) || "").toLowerCase().includes(queryText)) {
+      matchingSessions.push(sessionRow);
+    }
+    const experimentRows = Array.isArray(sessionRow.experiments_json) ? sessionRow.experiments_json : [];
+    for (const experiment of experimentRows) {
+      if (String(JSON.stringify(experiment) || "").toLowerCase().includes(queryText)) {
+        experiments.push(experiment);
+      }
+    }
+  }
+  for (const claim of claimRows) {
+    if (!eligibleSessionIds.has(trimmed(claim.session_id))) {
+      continue;
+    }
+    if (statusFilter && trimmed(claim.status) !== statusFilter) {
+      continue;
+    }
+    if (String(claim.text || "").toLowerCase().includes(queryText)) {
+      claims.push(claim);
+    }
+  }
+  for (const failure of failureRows) {
+    if (!eligibleSessionIds.has(trimmed(failure.session_id))) {
+      continue;
+    }
+    if (String(JSON.stringify(failure) || "").toLowerCase().includes(queryText)) {
+      failures.push(failure);
+    }
+  }
+  for (const edge of memoryEdgeRows) {
+    if (!eligibleSessionIds.has(trimmed(edge.session_id))) {
+      continue;
+    }
+    if (String(JSON.stringify(edge) || "").toLowerCase().includes(queryText)) {
+      edges.push(edge);
+    }
+  }
+  return {
+    matching_sessions: matchingSessions.slice(0, limit),
+    claims: claims.slice(0, limit),
+    failures: failures.slice(0, limit),
+    experiments: experiments.slice(0, limit),
+    memory_edges: edges.slice(0, limit),
+  };
+}
+
 async function callCloudTool(name, args, env, state) {
   const supabase = supabaseState(env);
   if (name === "mystic_status") {
-    return phase1MysticStatus(state, supabase);
+    return cloudMysticStatus(state, supabase, env);
   }
   if (name === "health_check") {
-    return phase1HealthCheck(state, supabase);
+    return cloudHealthCheck(state, supabase, env);
   }
   if (!supabase.configured) {
-    throw new Error("Supabase storage is not configured for cloud-native phase-1 mode.");
+    throw new Error("Supabase storage is not configured for cloud-native LAB mode.");
   }
   if (name === "lab_session_create") {
     const sessionId = makeCloudSessionId();
@@ -678,10 +2491,10 @@ async function callCloudTool(name, args, env, state) {
     const paths = await saveCloudBundle(env, bundle);
     return {
       session_id: sessionId,
-      status: bundle.session.status,
-      current_phase: bundle.session.current_phase,
-      paths,
-    };
+        status: bundle.session.status,
+        current_phase: bundle.session.current_phase,
+        paths,
+      };
   }
   if (name === "lab_session_get") {
     const bundle = await loadCloudBundle(env, args.session_id.trim());
@@ -689,6 +2502,520 @@ async function callCloudTool(name, args, env, state) {
       throw new Error(`Unknown session_id: ${args.session_id}`);
     }
     return cloudSessionPayload(bundle);
+  }
+  if (name === "lab_session_advance") {
+    const bundle = await loadCloudBundle(env, args.session_id.trim());
+    if (!bundle) {
+      throw new Error(`Unknown session_id: ${args.session_id}`);
+    }
+    const newTurns = [];
+    const newClaims = [];
+    const newExperiments = [];
+    const newFailures = [];
+    const maxSteps = Number.isInteger(args.max_steps) ? args.max_steps : 1;
+    for (let index = 0; index < Math.max(1, maxSteps); index += 1) {
+      const phase = bundle.session.current_phase;
+      if (phase === "completed") {
+        break;
+      }
+      if (phase === "problem_intake") {
+        const turn = makeCloudTurn({
+          sessionId: bundle.session.session_id,
+          phase,
+          agentRole: "Director",
+          provider: "tool",
+          modelName: "cloud_worker",
+          inputSummary: bundle.session.problem.slice(0, 200),
+          output: "Cloud-native intake recorded the problem, goal, and participants in Supabase.",
+          status: "completed",
+          requestedTools: [],
+        });
+        bundle.turns.push(turn);
+        newTurns.push(turn);
+        bundle.notebook_markdown += `\n## ${phase}\n\n${turn.output}\n`;
+        bundle.session.current_phase = cloudNextPhase(phase);
+        bundle.session.active_room = LAB_PHASE_TO_ROOM[bundle.session.current_phase] || bundle.session.active_room;
+        bundle.session.status = "running";
+        bundle.session.next_actions = cloudNextActionsForPhase(bundle.session.current_phase);
+      } else if (phase === "experiment_design") {
+        const claim = latestClaim(bundle);
+        const experiment = {
+          session_id: bundle.session.session_id,
+          claim_id: claim ? claim.claim_id : "",
+          question: claim ? `Test claim: ${claim.text}` : `Design an experiment for: ${bundle.session.problem}`,
+          method: args.use_verifier === false ? "manual_review" : "python_bruteforce",
+          inputs: {
+            candidate_answer: claim ? claim.text : "",
+            source: "cloud_native_auto_planner",
+          },
+          outputs: {},
+          tool_name: args.use_verifier === false ? "manual_review" : "cloud_deferred_verifier",
+          verdict: "inconclusive",
+          evidence_summary: "Cloud-native LAB planned the next experiment and stored it in Supabase.",
+          created_at: nowIso(),
+          experiment_id: cloudId("experiment"),
+        };
+        bundle.experiments.push(experiment);
+        newExperiments.push(experiment);
+        if (claim) {
+          bundle.memory_edges.push(
+            makeMemoryEdge({
+              sessionId: bundle.session.session_id,
+              fromId: claim.claim_id,
+              toId: experiment.experiment_id,
+              relation: "generated_experiment",
+              evidence: experiment.question,
+            }),
+          );
+        }
+        const turn = makeCloudTurn({
+          sessionId: bundle.session.session_id,
+          phase,
+          agentRole: "ExperimentDesigner",
+          provider: "tool",
+          modelName: "cloud_worker",
+          inputSummary: experiment.question.slice(0, 200),
+          output: `Experiment planned: ${experiment.question}`,
+          status: "completed",
+        });
+        bundle.turns.push(turn);
+        newTurns.push(turn);
+        bundle.notebook_markdown += `\n## ${phase}\n\n${turn.output}\n`;
+        bundle.session.current_phase = cloudNextPhase(phase);
+        bundle.session.active_room = LAB_PHASE_TO_ROOM[bundle.session.current_phase] || bundle.session.active_room;
+        bundle.session.next_actions = cloudNextActionsForPhase(bundle.session.current_phase);
+      } else if (phase === "failure_archive") {
+        const turn = makeCloudTurn({
+          sessionId: bundle.session.session_id,
+          phase,
+          agentRole: "Archivist",
+          provider: "tool",
+          modelName: "cloud_worker",
+          inputSummary: "Archive current failures",
+          output: `Failure archive contains ${bundle.failures.length} recorded failures.`,
+          status: "completed",
+        });
+        bundle.turns.push(turn);
+        newTurns.push(turn);
+        bundle.notebook_markdown += `\n## ${phase}\n\n${turn.output}\n`;
+        bundle.session.current_phase = cloudNextPhase(phase);
+        bundle.session.active_room = LAB_PHASE_TO_ROOM[bundle.session.current_phase] || bundle.session.active_room;
+        bundle.session.next_actions = cloudNextActionsForPhase(bundle.session.current_phase);
+      } else if (phase === "report_generation") {
+        const report = renderCloudReport(bundle);
+        bundle.report_markdown = report.markdown;
+        const turn = makeCloudTurn({
+          sessionId: bundle.session.session_id,
+          phase,
+          agentRole: "PaperWriter",
+          provider: "tool",
+          modelName: "cloud_worker",
+          inputSummary: "Generate final markdown report",
+          output: "Cloud-native report generated and stored in Supabase.",
+          status: "completed",
+        });
+        bundle.turns.push(turn);
+        newTurns.push(turn);
+        bundle.session.current_phase = "completed";
+        bundle.session.active_room = LAB_PHASE_TO_ROOM.completed;
+        bundle.session.status = "completed";
+        bundle.session.next_actions = [];
+      } else if (phase === "referee_review") {
+        const deferred = deferredResult(
+          "Cloud-native referee review is exposed but still requires a future worker-native verifier or an explicitly connected verifier-capable provider.",
+          { required_capability: "referee_review" },
+        );
+        const turn = makeCloudTurn({
+          sessionId: bundle.session.session_id,
+          phase,
+          agentRole: "Referee",
+          provider: "tool",
+          modelName: "cloud_referee_deferred",
+          inputSummary: bundle.session.problem.slice(0, 200),
+          output: deferred.message,
+          status: "blocked",
+          toolResults: [deferred],
+        });
+        bundle.turns.push(turn);
+        newTurns.push(turn);
+        bundle.session.status = "waiting_for_user";
+        bundle.session.next_actions = [deferred.message];
+        break;
+      } else {
+        const role = LAB_PHASE_TO_AGENT_ROLE[phase] || "Director";
+        const outcome = await runCloudAgentTurn({
+          env,
+          bundle,
+          phase,
+          agentRole: role,
+          task: `Advance the Mystic LAB through ${phase} for problem: ${bundle.session.problem}`,
+          providerPreference: "auto",
+        });
+        newTurns.push(outcome.turn);
+        if (outcome.claims.length) {
+          newClaims.push(...outcome.claims);
+        }
+        bundle.notebook_markdown += `\n## ${phase}\n\n${outcome.turn.output.slice(0, 500)}\n`;
+        if (outcome.response.status !== "completed") {
+          break;
+        }
+        bundle.session.current_phase = cloudNextPhase(phase);
+        bundle.session.active_room = LAB_PHASE_TO_ROOM[bundle.session.current_phase] || bundle.session.active_room;
+        bundle.session.next_actions = cloudNextActionsForPhase(bundle.session.current_phase);
+      }
+      if (args.target_phase && bundle.session.current_phase === args.target_phase) {
+        break;
+      }
+    }
+    bundle.session.updated_at = nowIso();
+    const paths = await saveCloudBundle(env, bundle);
+    return {
+      updated_session: bundle.session,
+      new_turns: newTurns,
+      new_claims: newClaims,
+      new_experiments: newExperiments,
+      new_failures: newFailures,
+      next_actions: bundle.session.next_actions,
+      paths,
+    };
+  }
+  if (name === "lab_agent_run") {
+    const bundle = await loadCloudBundle(env, args.session_id.trim());
+    if (!bundle) {
+      throw new Error(`Unknown session_id: ${args.session_id}`);
+    }
+    const outcome = await runCloudAgentTurn({
+      env,
+      bundle,
+      phase: bundle.session.current_phase,
+      agentRole: args.agent_role,
+      task: args.task,
+      providerPreference: args.provider,
+      contextIds: asStringArray(args.context_ids),
+    });
+    bundle.session.updated_at = nowIso();
+    await saveCloudBundle(env, bundle);
+    return {
+      turn_id: outcome.turn.turn_id,
+      status: outcome.turn.status,
+      output: outcome.turn.output,
+      extracted_claims: outcome.claims,
+      next_actions: bundle.session.next_actions,
+      provider_result: outcome.response,
+    };
+  }
+  if (name === "lab_referee_review") {
+    const bundle = await loadCloudBundle(env, args.session_id.trim());
+    if (!bundle) {
+      throw new Error(`Unknown session_id: ${args.session_id}`);
+    }
+    const deferred = deferredResult(
+      "Cloud-native referee review is not yet backed by a worker-native deterministic verifier. Use an explicitly connected future verifier provider or local mode for strict proof review.",
+      { required_capability: "referee_review" },
+    );
+    const turn = makeCloudTurn({
+      sessionId: bundle.session.session_id,
+      phase: "referee_review",
+      agentRole: "Referee",
+      provider: "tool",
+      modelName: "cloud_referee_deferred",
+      inputSummary: String(args.text || "").slice(0, 200),
+      output: deferred.message,
+      status: "blocked",
+      requestedTools: ["lab_referee_review"],
+      toolResults: [deferred],
+      replyTo: args.claim_id ? [args.claim_id] : [],
+    });
+    bundle.turns.push(turn);
+    bundle.session.status = "waiting_for_user";
+    bundle.session.next_actions = [deferred.message];
+    bundle.session.updated_at = nowIso();
+    await saveCloudBundle(env, bundle);
+    return {
+      verdict: "DEFERRED",
+      first_fatal_error: "",
+      critique: deferred.message,
+      recommended_next_action: deferred.message,
+      updated_claims: [],
+      failures: [],
+      turn_id: turn.turn_id,
+      deferred,
+    };
+  }
+  if (name === "lab_experiment_create") {
+    const bundle = await loadCloudBundle(env, args.session_id.trim());
+    if (!bundle) {
+      throw new Error(`Unknown session_id: ${args.session_id}`);
+    }
+    const experiment = {
+      session_id: bundle.session.session_id,
+      claim_id: args.claim_id.trim(),
+      question: args.question.trim(),
+      method: args.method.trim(),
+      inputs: args.inputs,
+      outputs: {},
+      tool_name: "",
+      verdict: "inconclusive",
+      evidence_summary: "",
+      created_at: nowIso(),
+      experiment_id: cloudId("experiment"),
+    };
+    bundle.experiments.push(experiment);
+    bundle.memory_edges.push(
+      makeMemoryEdge({
+        sessionId: bundle.session.session_id,
+        fromId: experiment.claim_id,
+        toId: experiment.experiment_id,
+        relation: "generated_experiment",
+        evidence: experiment.question,
+      }),
+    );
+    bundle.session.updated_at = nowIso();
+    bundle.session.next_actions = [`Run experiment ${experiment.experiment_id}.`];
+    await saveCloudBundle(env, bundle);
+    return { experiment_id: experiment.experiment_id, status: experiment.verdict };
+  }
+  if (name === "lab_experiment_run") {
+    const bundle = await loadCloudBundle(env, args.session_id.trim());
+    if (!bundle) {
+      throw new Error(`Unknown session_id: ${args.session_id}`);
+    }
+    const experiment = findExperiment(bundle, args.experiment_id.trim());
+    if (!experiment) {
+      throw new Error(`Unknown experiment_id: ${args.experiment_id}`);
+    }
+    const claim = findClaim(bundle, experiment.claim_id);
+    if (args.dry_run === true) {
+      return cloudExperimentSummary(experiment, claim?.status);
+    }
+    let response;
+    if (experiment.method === "model_debate") {
+      response = deferredResult(
+        "Cloud-native experiment runs with method=model_debate require an explicitly connected external provider before execution can continue.",
+        { required_capability: "model_debate" },
+      );
+    } else {
+      response = deferredResult(
+        `Cloud-native experiment execution for method=${experiment.method} is exposed but deferred until a worker-native execution backend is added.`,
+        { required_capability: experiment.method },
+      );
+    }
+    experiment.outputs = response;
+    experiment.tool_name = experiment.method === "model_debate" ? "lab_models_debate" : `deferred_${experiment.method}`;
+    experiment.verdict = "inconclusive";
+    experiment.evidence_summary = response.message;
+    bundle.session.updated_at = nowIso();
+    bundle.session.status = "waiting_for_user";
+    bundle.session.next_actions = [response.message];
+    await saveCloudBundle(env, bundle);
+    return { ...cloudExperimentSummary(experiment, claim?.status), deferred: response };
+  }
+  if (name === "lab_memory_search") {
+    return cloudMemorySearch(env, {
+      query: args.query.trim(),
+      domain: args.domain ? String(args.domain).trim() : "",
+      statusFilter: args.status_filter ? String(args.status_filter).trim() : "",
+      limit: Number.isInteger(args.limit) ? args.limit : 10,
+    });
+  }
+  if (name === "lab_memory_write") {
+    const bundle = await loadCloudBundle(env, args.session_id.trim());
+    if (!bundle) {
+      throw new Error(`Unknown session_id: ${args.session_id}`);
+    }
+    const payload = args.payload || {};
+    let writtenObjectId = "";
+    let pathKey = "session";
+    if (args.kind === "claim") {
+      const claim = {
+        session_id: bundle.session.session_id,
+        text: trimmed(payload.text),
+        claim_type: trimmed(payload.claim_type, "observation"),
+        status: trimmed(payload.status, "UNKNOWN"),
+        confidence: trimmed(payload.confidence, "low"),
+        source_turn_id: trimmed(payload.source_turn_id),
+        supporting_evidence: Array.isArray(payload.supporting_evidence) ? payload.supporting_evidence.map(String) : [],
+        refuting_evidence: Array.isArray(payload.refuting_evidence) ? payload.refuting_evidence.map(String) : [],
+        related_experiments: Array.isArray(payload.related_experiments) ? payload.related_experiments.map(String) : [],
+        related_failures: Array.isArray(payload.related_failures) ? payload.related_failures.map(String) : [],
+        created_at: nowIso(),
+        updated_at: nowIso(),
+        claim_id: trimmed(payload.claim_id, cloudId("claim")),
+      };
+      bundle.claims.push(claim);
+      writtenObjectId = claim.claim_id;
+      pathKey = "claims";
+    } else if (args.kind === "failure") {
+      const failure = makeFailure({
+        sessionId: bundle.session.session_id,
+        claimId: trimmed(payload.claim_id),
+        sourceTurnId: trimmed(payload.source_turn_id),
+        firstFatalError: trimmed(payload.first_fatal_error),
+        failureType: trimmed(payload.failure_type, "tool_error"),
+        lesson: trimmed(payload.lesson, "Cloud-native operator note."),
+        reusableAsTrainingData: Boolean(payload.reusable_as_training_data),
+      });
+      bundle.failures.push(failure);
+      writtenObjectId = failure.failure_id;
+      pathKey = "failures";
+    } else if (args.kind === "experiment") {
+      const experiment = {
+        session_id: bundle.session.session_id,
+        claim_id: trimmed(payload.claim_id),
+        question: trimmed(payload.question),
+        method: trimmed(payload.method, "manual_review"),
+        inputs: payload.inputs && typeof payload.inputs === "object" ? payload.inputs : {},
+        outputs: payload.outputs && typeof payload.outputs === "object" ? payload.outputs : {},
+        tool_name: trimmed(payload.tool_name),
+        verdict: trimmed(payload.verdict, "inconclusive"),
+        evidence_summary: trimmed(payload.evidence_summary),
+        created_at: nowIso(),
+        experiment_id: trimmed(payload.experiment_id, cloudId("experiment")),
+      };
+      bundle.experiments.push(experiment);
+      writtenObjectId = experiment.experiment_id;
+      pathKey = "experiments";
+    } else if (args.kind === "edge") {
+      const edge = makeMemoryEdge({
+        sessionId: bundle.session.session_id,
+        fromId: trimmed(payload.from_id),
+        toId: trimmed(payload.to_id),
+        relation: trimmed(payload.relation, "supports"),
+        evidence: trimmed(payload.evidence),
+      });
+      bundle.memory_edges.push(edge);
+      writtenObjectId = edge.edge_id;
+      pathKey = "memory_edges";
+    } else if (args.kind === "note") {
+      const note = trimmed(payload.text);
+      bundle.notebook_markdown += `${bundle.notebook_markdown.endsWith("\n") ? "" : "\n"}- ${note}\n`;
+      writtenObjectId = "note";
+      pathKey = "notebook";
+    } else {
+      throw new Error(`Unsupported memory kind: ${args.kind}`);
+    }
+    bundle.session.updated_at = nowIso();
+    await saveCloudBundle(env, bundle);
+    return { written_object_id: writtenObjectId, path: bundle.session.artifact_paths[pathKey] || bundle.session.artifact_paths.session };
+  }
+  if (name === "lab_models_debate") {
+    const bundle = await loadCloudBundle(env, args.session_id.trim());
+    if (!bundle) {
+      throw new Error(`Unknown session_id: ${args.session_id}`);
+    }
+    if (args.use_existing_research_table !== true) {
+      const deferred = deferredResult(
+        "Cloud-native Model Arena currently requires use_existing_research_table=true semantics, but executes through direct provider calls instead of the local Research Table backend.",
+        { required_capability: "cloud_model_arena" },
+      );
+      return { debate_session_id: "", research_table_session_id: "", imported_claims: 0, imported_failures: 0, summary: deferred.message, deferred };
+    }
+    const registry = await loadProviderRegistry(env);
+    const selectedProviders = asStringArray(args.participants)
+      .map((item) => normalizeRequestedProvider(item))
+      .filter((item) => item && item !== "auto");
+    const providerMap = providerRegistryMap(registry);
+    const missing = selectedProviders
+      .map((providerId) => providerMap.get(providerId))
+      .find((record) => record && !record.ready);
+    if (missing) {
+      const required = providerRequiredResult(
+        missing,
+        `${missing.provider_id} must be explicitly connected before cloud-native Model Arena can run.`,
+      );
+      const turn = makeCloudTurn({
+        sessionId: bundle.session.session_id,
+        phase: "simulation_or_execution",
+        agentRole: "ModelArena",
+        provider: missing.provider_id,
+        modelName: missing.model_name,
+        inputSummary: args.question.slice(0, 200),
+        output: required.message,
+        status: "AUTH_REQUIRED",
+        toolResults: [required],
+      });
+      bundle.turns.push(turn);
+      bundle.session.status = "waiting_for_user";
+      bundle.session.next_actions = [required.setup_instructions];
+      bundle.session.updated_at = nowIso();
+      await saveCloudBundle(env, bundle);
+      return {
+        debate_session_id: "",
+        research_table_session_id: "",
+        imported_claims: 0,
+        imported_failures: 0,
+        summary: required.message,
+        provider_result: required,
+      };
+    }
+    const readyProviders =
+      selectedProviders.length > 0
+        ? selectedProviders.map((providerId) => providerMap.get(providerId)).filter(Boolean)
+        : registry.providers.filter((item) => item.ready).slice(0, 3);
+    if (!readyProviders.length) {
+      const required = providerRequiredResult(
+        registry.providers[0],
+        "No cloud-native model provider is connected. Configure one before running Model Arena.",
+      );
+      return {
+        debate_session_id: "",
+        research_table_session_id: "",
+        imported_claims: 0,
+        imported_failures: 0,
+        summary: required.message,
+        provider_result: required,
+      };
+    }
+    const debateSessionId = cloudId("debate");
+    let importedClaims = 0;
+    for (const providerRecord of readyProviders.slice(0, 3)) {
+      const invocation = await invokeCloudProvider(
+        env,
+        providerRecord,
+        [
+          `Cloud-native Model Arena debate for session ${bundle.session.session_id}.`,
+          `Question: ${args.question}`,
+          `Rounds requested: ${asStringArray(args.rounds).join(", ")}`,
+          `Problem: ${bundle.session.problem}`,
+        ].join("\n"),
+      );
+      const turn = makeCloudTurn({
+        sessionId: bundle.session.session_id,
+        phase: "simulation_or_execution",
+        agentRole: "ModelArena",
+        provider: invocation.provider,
+        modelName: invocation.model_name,
+        inputSummary: args.question.slice(0, 200),
+        output: invocation.content || "Provider returned no text output.",
+        status: "completed",
+      });
+      const claims = claimsFromTurn(bundle.session.session_id, turn);
+      bundle.turns.push(turn);
+      bundle.claims.push(...claims);
+      importedClaims += claims.length;
+    }
+    const summaryTurn = makeCloudTurn({
+      sessionId: bundle.session.session_id,
+      phase: "simulation_or_execution",
+      agentRole: "ModelArena",
+      provider: "tool",
+      modelName: "cloud_model_arena",
+      inputSummary: args.question.slice(0, 200),
+      output: `Cloud-native Model Arena completed with ${readyProviders.length} provider participants and imported ${importedClaims} claims.`,
+      status: "completed",
+    });
+    bundle.turns.push(summaryTurn);
+    bundle.session.status = "running";
+    bundle.session.next_actions = ["Review imported Model Arena claims.", "Run referee review on contested claims when a verifier is available."];
+    bundle.session.updated_at = nowIso();
+    await saveCloudBundle(env, bundle);
+    return {
+      debate_session_id: debateSessionId,
+      research_table_session_id: "",
+      imported_claims: importedClaims,
+      imported_failures: 0,
+      summary: summaryTurn.output,
+    };
   }
   if (name === "lab_report_generate") {
     const bundle = await loadCloudBundle(env, args.session_id.trim());
@@ -715,6 +3042,242 @@ async function callCloudTool(name, args, env, state) {
         surviving_claims: report.surviving_claims.length,
         failed_claims: report.failed_claims.length,
         next_actions: report.next_actions.length,
+      },
+    };
+  }
+  if (name === "create_lab_scene") {
+    const sessionBundle = await loadCloudBundle(env, args.session_id.trim());
+    if (!sessionBundle) {
+      throw new Error(`Unknown session_id: ${args.session_id}`);
+    }
+    const sceneId = cloudId("scene");
+    const scene = {
+      scene_id: sceneId,
+      session_id: sessionBundle.session.session_id,
+      domain: sessionBundle.session.domain,
+      title: args.title.trim(),
+      description: trimmed(args.description),
+      units: objectMapping(args.units),
+      parameters: objectMapping(args.parameters),
+      attached_simulations: [],
+      evidence_refs: [],
+      report_refs: [],
+      metadata: { scene_adapter: "scene.three_json", ...objectMapping(args.metadata) },
+      artifact_paths: cloudSceneArtifactPaths(supabase.schema, sceneId),
+      exports_json: {},
+      report_markdown: "",
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    };
+    const sceneBundle = { scene, objects: [], simulations: [] };
+    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    return { scene_id: sceneId, session_id: scene.session_id, paths, scene };
+  }
+  if (name === "get_lab_scene") {
+    const sceneBundle = await loadCloudSceneBundle(env, args.scene_id.trim());
+    if (!sceneBundle) {
+      throw new Error(`Unknown scene_id: ${args.scene_id}`);
+    }
+    return cloudScenePayload(sceneBundle);
+  }
+  if (name === "add_lab_object") {
+    const sceneBundle = await loadCloudSceneBundle(env, args.scene_id.trim());
+    if (!sceneBundle) {
+      throw new Error(`Unknown scene_id: ${args.scene_id}`);
+    }
+    const sceneObject = normalizeSceneObjectPayload(sceneBundle.scene.scene_id, args.object);
+    sceneBundle.objects.push(sceneObject);
+    sceneBundle.scene.updated_at = nowIso();
+    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    return { scene_id: sceneBundle.scene.scene_id, object_id: sceneObject.id, object: sceneObject, paths };
+  }
+  if (name === "update_lab_object") {
+    const sceneBundle = await loadCloudSceneBundle(env, args.scene_id.trim());
+    if (!sceneBundle) {
+      throw new Error(`Unknown scene_id: ${args.scene_id}`);
+    }
+    const index = sceneBundle.objects.findIndex((item) => item.id === args.object_id.trim());
+    if (index === -1) {
+      throw new Error(`Unknown scene object id: ${args.object_id}`);
+    }
+    const updated = normalizeSceneObjectPayload(sceneBundle.scene.scene_id, args.patch, sceneBundle.objects[index]);
+    sceneBundle.objects[index] = updated;
+    sceneBundle.scene.updated_at = nowIso();
+    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    return { scene_id: sceneBundle.scene.scene_id, object_id: updated.id, object: updated, paths };
+  }
+  if (name === "remove_lab_object") {
+    const sceneBundle = await loadCloudSceneBundle(env, args.scene_id.trim());
+    if (!sceneBundle) {
+      throw new Error(`Unknown scene_id: ${args.scene_id}`);
+    }
+    const objectId = args.object_id.trim();
+    const existing = sceneBundle.objects.find((item) => item.id === objectId);
+    if (!existing) {
+      throw new Error(`Unknown scene object id: ${args.object_id}`);
+    }
+    sceneBundle.objects = sceneBundle.objects.filter((item) => item.id !== objectId);
+    sceneBundle.simulations = sceneBundle.simulations.map((item) => ({
+      ...item,
+      attached_object_ids: item.attached_object_ids.filter((attachedId) => attachedId !== objectId),
+      updated_at: nowIso(),
+    }));
+    sceneBundle.scene.updated_at = nowIso();
+    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    return { scene_id: sceneBundle.scene.scene_id, removed_object_id: objectId, paths };
+  }
+  if (name === "set_lab_parameters") {
+    const sceneBundle = await loadCloudSceneBundle(env, args.scene_id.trim());
+    if (!sceneBundle) {
+      throw new Error(`Unknown scene_id: ${args.scene_id}`);
+    }
+    sceneBundle.scene.parameters = { ...sceneBundle.scene.parameters, ...objectMapping(args.parameters) };
+    if (args.units !== undefined) {
+      sceneBundle.scene.units = { ...sceneBundle.scene.units, ...objectMapping(args.units) };
+    }
+    if (args.metadata !== undefined) {
+      sceneBundle.scene.metadata = { ...sceneBundle.scene.metadata, ...objectMapping(args.metadata) };
+    }
+    sceneBundle.scene.updated_at = nowIso();
+    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    return {
+      scene_id: sceneBundle.scene.scene_id,
+      parameters: sceneBundle.scene.parameters,
+      units: sceneBundle.scene.units,
+      paths,
+    };
+  }
+  if (name === "run_lab_simulation") {
+    const sceneBundle = await loadCloudSceneBundle(env, args.scene_id.trim());
+    if (!sceneBundle) {
+      throw new Error(`Unknown scene_id: ${args.scene_id}`);
+    }
+    const result = runCloudSceneAdapter(args.adapter_id.trim(), sceneBundle, objectMapping(args.inputs));
+    const objectIds = asStringArray(args.inputs.object_ids);
+    const singleObjectId = trimmed(args.inputs.object_id);
+    const simulation = {
+      simulation_id: cloudId("sim"),
+      scene_id: sceneBundle.scene.scene_id,
+      session_id: sceneBundle.scene.session_id,
+      adapter_id: args.adapter_id.trim(),
+      status: result.status,
+      inputs: objectMapping(args.inputs),
+      outputs: objectMapping(result.outputs),
+      evidence: objectMapping(result.evidence),
+      warnings: asStringArray(result.warnings),
+      errors: asStringArray(result.errors),
+      attached_object_ids: objectIds.length ? objectIds : singleObjectId ? [singleObjectId] : [],
+      metadata: {
+        engine_status: result.status,
+        scene_adapter: sceneBundle.scene.metadata.scene_adapter || "scene.three_json",
+      },
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    };
+    sceneBundle.simulations.push(simulation);
+    const simulationRef = `simulation:${simulation.simulation_id}`;
+    if (!sceneBundle.scene.evidence_refs.includes(simulationRef)) {
+      sceneBundle.scene.evidence_refs.push(simulationRef);
+    }
+    sceneBundle.scene.updated_at = nowIso();
+    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    return {
+      scene_id: sceneBundle.scene.scene_id,
+      simulation_id: simulation.simulation_id,
+      status: simulation.status,
+      result,
+      paths,
+    };
+  }
+  if (name === "attach_simulation_to_scene") {
+    const sceneBundle = await loadCloudSceneBundle(env, args.scene_id.trim());
+    if (!sceneBundle) {
+      throw new Error(`Unknown scene_id: ${args.scene_id}`);
+    }
+    const simulation = sceneBundle.simulations.find((item) => item.simulation_id === args.simulation_id.trim());
+    if (!simulation) {
+      throw new Error(`Unknown simulation_id: ${args.simulation_id}`);
+    }
+    const selectedObjectIds = asStringArray(args.object_ids);
+    simulation.attached_object_ids = selectedObjectIds.length ? selectedObjectIds : simulation.attached_object_ids;
+    if (!sceneBundle.scene.attached_simulations.includes(simulation.simulation_id)) {
+      sceneBundle.scene.attached_simulations.push(simulation.simulation_id);
+    }
+    for (const ref of asStringArray(args.evidence_refs)) {
+      if (!sceneBundle.scene.evidence_refs.includes(ref)) {
+        sceneBundle.scene.evidence_refs.push(ref);
+      }
+    }
+    for (const ref of asStringArray(args.report_refs)) {
+      if (!sceneBundle.scene.report_refs.includes(ref)) {
+        sceneBundle.scene.report_refs.push(ref);
+      }
+    }
+    if (args.apply_object_updates === true && simulation.status === "completed") {
+      applyCloudSimulationToScene(sceneBundle, simulation, simulation.attached_object_ids);
+    }
+    simulation.updated_at = nowIso();
+    sceneBundle.scene.updated_at = nowIso();
+    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    return {
+      scene_id: sceneBundle.scene.scene_id,
+      simulation_id: simulation.simulation_id,
+      attached_object_ids: simulation.attached_object_ids,
+      attached_simulations: sceneBundle.scene.attached_simulations,
+      paths,
+    };
+  }
+  if (name === "export_lab_snapshot") {
+    const sceneBundle = await loadCloudSceneBundle(env, args.scene_id.trim());
+    if (!sceneBundle) {
+      throw new Error(`Unknown scene_id: ${args.scene_id}`);
+    }
+    const exportResult = exportCloudScene(sceneBundle, args.adapter_id.trim(), args.include_simulations === true);
+    let paths = sceneBundle.scene.artifact_paths;
+    if (exportResult.status === "completed") {
+      sceneBundle.scene.exports_json[args.adapter_id.trim()] = exportResult.outputs.snapshot;
+      sceneBundle.scene.updated_at = nowIso();
+      paths = await saveCloudSceneBundle(env, sceneBundle);
+    }
+    return {
+      scene_id: sceneBundle.scene.scene_id,
+      adapter_id: args.adapter_id.trim(),
+      status: exportResult.status,
+      snapshot: exportResult.outputs ? exportResult.outputs.snapshot : null,
+      paths,
+    };
+  }
+  if (name === "generate_lab_report") {
+    const sceneBundle = await loadCloudSceneBundle(env, args.scene_id.trim());
+    if (!sceneBundle) {
+      throw new Error(`Unknown scene_id: ${args.scene_id}`);
+    }
+    sceneBundle.scene.report_markdown = renderCloudSceneReport(sceneBundle);
+    const reportPath = sceneBundle.scene.artifact_paths.report || cloudSceneArtifactPaths(supabase.schema, sceneBundle.scene.scene_id).report;
+    if (!sceneBundle.scene.report_refs.includes(reportPath)) {
+      sceneBundle.scene.report_refs.push(reportPath);
+    }
+    sceneBundle.simulations = sceneBundle.simulations.map((item) => {
+      const reportRefs = Array.isArray(item.metadata.report_refs) ? item.metadata.report_refs.map(String) : [];
+      if (!reportRefs.includes(reportPath)) {
+        reportRefs.push(reportPath);
+      }
+      return {
+        ...item,
+        metadata: { ...item.metadata, report_refs: reportRefs },
+        updated_at: nowIso(),
+      };
+    });
+    sceneBundle.scene.updated_at = nowIso();
+    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    return {
+      scene_id: sceneBundle.scene.scene_id,
+      report_path: paths.report,
+      markdown: sceneBundle.scene.report_markdown,
+      summary: {
+        objects: args.include_objects ? sceneBundle.objects.length : 0,
+        simulations: args.include_simulations ? sceneBundle.simulations.length : 0,
+        attached_simulations: sceneBundle.scene.attached_simulations.length,
       },
     };
   }
@@ -747,7 +3310,7 @@ async function handleCloudPhase1Mcp(request, env, state) {
     return jsonRpcResponse(requestId, {});
   }
   if (method === "tools/list") {
-    return jsonRpcResponse(requestId, { tools: CLOUD_PHASE1_TOOL_DEFINITIONS });
+    return jsonRpcResponse(requestId, { tools: CLOUD_TOOL_DEFINITIONS });
   }
   if (method !== "tools/call") {
     return jsonRpcError(requestId, -32601, `Unknown method: ${method}`);
@@ -755,7 +3318,7 @@ async function handleCloudPhase1Mcp(request, env, state) {
   const params = payload.params || {};
   const name = String(params.name || "");
   const args = params.arguments || {};
-  if (!CLOUD_PHASE1_TOOL_NAMES.has(name)) {
+  if (!CLOUD_TOOL_NAMES.has(name)) {
     return jsonRpcError(requestId, -32601, `Unknown tool: ${name}`);
   }
   const argumentErrors = validateCloudToolArguments(name, args);
@@ -931,18 +3494,23 @@ function unauthorizedMcpResponse(state, options = {}) {
 }
 
 async function generateAuthorizationCode({ clientId, redirectUri, scope, codeChallenge, state }) {
+  const codeId = await randomToken();
   const payload = {
     iss: state.issuer,
     aud: state.resource,
+    jti: codeId,
     client_id: clientId,
     redirect_uri: redirectUri,
     scope: scope || DEFAULT_SCOPES,
     code_challenge: codeChallenge,
+    code_challenge_method: "S256",
     exp: Math.floor(Date.now() / 1000) + 600,
     iat: Math.floor(Date.now() / 1000),
     type: "authorization_code",
   };
-  return signEnvelope(payload, state.signingSecret);
+  const code = await signEnvelope(payload, state.signingSecret);
+  await storeAuthorizationCode(codeId, payload, state);
+  return code;
 }
 
 async function generateAccessToken({ clientId, scope, state }) {
@@ -959,19 +3527,30 @@ async function generateAccessToken({ clientId, scope, state }) {
   return signEnvelope(payload, state.signingSecret);
 }
 
-async function exchangeAuthorizationCode({ code, clientId, redirectUri, codeVerifier, state }) {
-  const payload = await verifyEnvelope(code, state.signingSecret);
+async function exchangeAuthorizationCode({ code, clientId, redirectUri, codeVerifier, state, requireStoredCode = false }) {
+  const signedPayload = await verifyEnvelope(code, state.signingSecret);
+  let payload = signedPayload;
+  if (signedPayload?.jti) {
+    const storedPayload = await loadAuthorizationCode(signedPayload.jti, state);
+    payload = storedPayload || (!requireStoredCode ? signedPayload : null);
+  }
   if (!payload || payload.type !== "authorization_code") {
     return { ok: false, error: "invalid_grant", error_description: "Authorization code is invalid." };
   }
   if (payload.exp <= Math.floor(Date.now() / 1000)) {
+    if (payload.jti) {
+      await deleteAuthorizationCode(payload.jti, state);
+    }
     return { ok: false, error: "invalid_grant", error_description: "Authorization code expired." };
   }
   if (payload.client_id !== clientId || payload.redirect_uri !== redirectUri) {
     return { ok: false, error: "invalid_grant", error_description: "Authorization code client binding mismatch." };
   }
-  if ((await sha256Base64Url(codeVerifier)) !== payload.code_challenge) {
+  if (payload.code_challenge_method !== "S256" || (await sha256Base64Url(codeVerifier)) !== payload.code_challenge) {
     return { ok: false, error: "invalid_grant", error_description: "PKCE verification failed." };
+  }
+  if (payload.jti) {
+    await deleteAuthorizationCode(payload.jti, state);
   }
   const accessToken = await generateAccessToken({
     clientId,
@@ -1017,6 +3596,77 @@ function extractBearerToken(request) {
   const header = request.headers.get("authorization") || "";
   const match = header.match(/^Bearer\s+(.+)$/i);
   return match ? match[1].trim() : "";
+}
+
+async function randomToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncodeBytes(bytes);
+}
+
+function usesCacheAuthorizationCodeStore() {
+  return Boolean(globalThis.caches && caches.default);
+}
+
+function base64UrlEncodeBytes(bytes) {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function authorizationCodeCacheKey(codeId, state) {
+  return `${state.issuer}/.well-known/mystic/oauth-codes/${encodeURIComponent(codeId)}`;
+}
+
+async function storeAuthorizationCode(code, payload, state) {
+  const cacheKey = authorizationCodeCacheKey(code, state);
+  const record = JSON.stringify(payload);
+  if (usesCacheAuthorizationCodeStore()) {
+    await caches.default.put(
+      new Request(cacheKey, { method: "GET" }),
+      new Response(record, {
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "private, max-age=600",
+        },
+      }),
+    );
+    return;
+  }
+  authorizationCodeMemoryStore.set(cacheKey, record);
+}
+
+async function loadAuthorizationCode(code, state) {
+  const cacheKey = authorizationCodeCacheKey(code, state);
+  let record = "";
+  if (usesCacheAuthorizationCodeStore()) {
+    const response = await caches.default.match(new Request(cacheKey, { method: "GET" }));
+    if (!response) {
+      return null;
+    }
+    record = await response.text();
+  } else {
+    record = authorizationCodeMemoryStore.get(cacheKey) || "";
+    if (!record) {
+      return null;
+    }
+  }
+  try {
+    return JSON.parse(record);
+  } catch {
+    return null;
+  }
+}
+
+async function deleteAuthorizationCode(code, state) {
+  const cacheKey = authorizationCodeCacheKey(code, state);
+  if (usesCacheAuthorizationCodeStore()) {
+    await caches.default.delete(new Request(cacheKey, { method: "GET" }));
+    return;
+  }
+  authorizationCodeMemoryStore.delete(cacheKey);
 }
 
 async function authorizeMcpRequest(request, state) {
@@ -1080,6 +3730,28 @@ function validateAuthorizeParams(params, state) {
   return "";
 }
 
+function authorizeErrorPage(title, message) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>${title}</title>
+    <style>
+      body { background:#0b1020; color:#e7ecf3; font-family:ui-sans-serif,system-ui,sans-serif; padding:40px; }
+      main { max-width:720px; margin:0 auto; background:#111827; border:1px solid #243041; border-radius:16px; padding:24px; }
+      code { font-family:ui-monospace,SFMono-Regular,monospace; }
+      p.error { color:#fca5a5; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>${title}</h1>
+      <p class="error">${message}</p>
+    </main>
+  </body>
+</html>`;
+}
+
 function authorizeConsentPage(params) {
   const hiddenField = (name, value) =>
     `<input type="hidden" name="${name}" value="${String(value).replace(/"/g, "&quot;")}">`;
@@ -1137,6 +3809,9 @@ async function handleAuthorize(request, state) {
     const params = parseAuthorizeRequest(new URL(request.url));
     const validationError = validateAuthorizeParams(params, state);
     if (validationError) {
+      if (validationError === "Redirect URI is not allowed.") {
+        return htmlResponse(authorizeErrorPage("Mystic MCP OAuth", validationError), 200);
+      }
       return errorResponse(validationError, 400);
     }
     return htmlResponse(authorizeConsentPage(params));
@@ -1328,7 +4003,7 @@ async function simulateWorkerRequest(input) {
   const fetchCalls = [];
   if (Array.isArray(input.fetchResponses)) {
     globalThis.fetch = async (url, init = {}) => {
-      const target = typeof url === "string" ? url : url.url;
+      const target = requestTargetUrl(url);
       const method = String(init.method || "GET").toUpperCase();
       fetchCalls.push({
         url: target,
@@ -1339,16 +4014,22 @@ async function simulateWorkerRequest(input) {
       const key = `${method} ${target}`;
       const entry = input.fetchResponses.find(
         (item) =>
-          item.key === key ||
-          item.key === target ||
-          (item.prefix && target.startsWith(item.prefix)) ||
-          (item.methodPrefix && key.startsWith(item.methodPrefix)),
+          (typeof item.key === "string" && (item.key === key || item.key === target)) ||
+          (typeof item.prefix === "string" && target.startsWith(item.prefix)) ||
+          (typeof item.methodPrefix === "string" && key.startsWith(item.methodPrefix)),
       );
       if (!entry) {
         throw new Error(`Unexpected fetch: ${key}`);
       }
-      return new Response(entry.body === undefined ? "" : JSON.stringify(entry.body), {
-        status: entry.status || 200,
+      const status = entry.status || 200;
+      const responseBody =
+        status === 204 || status === 205 || status === 304
+          ? null
+          : entry.body === undefined
+            ? ""
+            : JSON.stringify(entry.body);
+      return new Response(responseBody, {
+        status,
         headers: entry.headers || { "content-type": "application/json; charset=utf-8" },
       });
     };
@@ -1357,7 +4038,12 @@ async function simulateWorkerRequest(input) {
     const request = new Request(input.requestUrl, {
       method: input.method || "POST",
       headers: input.headers || {},
-      body: input.body === undefined ? undefined : JSON.stringify(input.body),
+      body:
+        input.rawBody !== undefined
+          ? input.rawBody
+          : input.body === undefined
+            ? undefined
+            : JSON.stringify(input.body),
     });
     const response = await routeRequest(request, input.env || {});
     const contentType = response.headers.get("content-type") || "";
@@ -1440,6 +4126,7 @@ export const __test = {
       redirectUri: input.redirectUri,
       codeVerifier: input.codeVerifier,
       state,
+      requireStoredCode: Boolean(input.requireStoredCode),
     });
   },
   async validateAccessToken(input) {
@@ -1448,6 +4135,63 @@ export const __test = {
   },
   async pkceChallenge(input) {
     return sha256Base64Url(input.codeVerifier);
+  },
+  async exerciseAuthorizeFlow(input) {
+    authorizationCodeMemoryStore.clear();
+    const env = input.env || {};
+    const requestUrl = input.requestUrl || "https://mystic.dexproject.workers.dev/mcp";
+    const state = oauthState(env, requestUrl);
+    const authorizeUrl = `${state.authorizationEndpoint}?response_type=code&client_id=${encodeURIComponent(input.clientId)}&redirect_uri=${encodeURIComponent(input.redirectUri)}&state=${encodeURIComponent(input.stateValue)}&scope=${encodeURIComponent(input.scope || DEFAULT_SCOPES)}&code_challenge=${encodeURIComponent(input.codeChallenge)}&code_challenge_method=S256`;
+    const page = await routeRequest(new Request(authorizeUrl, { method: "GET" }), env);
+    const approval = await routeRequest(
+      new Request(state.authorizationEndpoint, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          response_type: "code",
+          client_id: input.clientId,
+          redirect_uri: input.redirectUri,
+          state: input.stateValue,
+          scope: input.scope || DEFAULT_SCOPES,
+          code_challenge: input.codeChallenge,
+          code_challenge_method: "S256",
+          decision: "approve",
+        }),
+      }),
+      env,
+    );
+    const location = approval.headers.get("location") || "";
+    const redirect = new URL(location);
+    const code = redirect.searchParams.get("code") || "";
+    const firstExchange = await exchangeAuthorizationCode({
+      code,
+      clientId: input.clientId,
+      redirectUri: input.redirectUri,
+      codeVerifier: input.codeVerifier,
+      state,
+      requireStoredCode: true,
+    });
+    const secondExchange = await exchangeAuthorizationCode({
+      code,
+      clientId: input.clientId,
+      redirectUri: input.redirectUri,
+      codeVerifier: input.codeVerifier,
+      state,
+      requireStoredCode: true,
+    });
+    return {
+      pageStatus: page.status,
+      pageContentType: page.headers.get("content-type") || "",
+      pageBody: await page.text(),
+      approvalStatus: approval.status,
+      approvalLocation: location,
+      firstExchange,
+      secondExchange,
+    };
+  },
+  resetAuthorizationCodeStore() {
+    authorizationCodeMemoryStore.clear();
+    return { ok: true };
   },
   async simulateRequest(input) {
     return simulateWorkerRequest(input);

@@ -43,6 +43,62 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.auth_headers = {"Authorization": "Bearer dev-static-token"}
         self.request_url = "https://mystic.dexproject.workers.dev/mcp"
 
+    @staticmethod
+    def _session_row(session_id: str) -> dict[str, object]:
+        return {
+            "session_id": session_id,
+            "problem": "x + y = 5",
+            "domain": "math",
+            "goal": "Read a saved session.",
+            "mode": "proof_critical",
+            "status": "created",
+            "current_phase": "problem_intake",
+            "active_room": "Main Lab Room",
+            "created_at": "2026-07-06T01:01:01Z",
+            "updated_at": "2026-07-06T01:01:01Z",
+            "controller": {"model_id": "gpt_controller"},
+            "participants": [],
+            "artifact_paths": {
+                "session": f"supabase://public/lab_sessions/{session_id}",
+                "report": f"supabase://public/reports/{session_id}",
+                "notebook": f"supabase://public/lab_sessions/{session_id}#notebook",
+                "claims": f"supabase://public/claims?session_id={session_id}",
+                "experiments": f"supabase://public/lab_sessions/{session_id}#experiments",
+                "memory_edges": f"supabase://public/memory_edges?session_id={session_id}",
+            },
+            "next_actions": ["Generate report."],
+            "warnings": [],
+            "notebook_markdown": "# Notebook",
+            "experiments_json": [],
+        }
+
+    @staticmethod
+    def _scene_row(scene_id: str, session_id: str, *, domain: str = "physics") -> dict[str, object]:
+        return {
+            "scene_id": scene_id,
+            "session_id": session_id,
+            "domain": domain,
+            "title": "Projectile baseline",
+            "description": "Cloud-native scene",
+            "units": {"length": "m", "time": "s", "mass": "kg"},
+            "parameters": {"gravity": 9.81},
+            "attached_simulations": [],
+            "evidence_refs": [],
+            "report_refs": [],
+            "metadata": {"scene_adapter": "scene.three_json"},
+            "artifact_paths": {
+                "scene": f"supabase://public/lab_scenes/{scene_id}",
+                "objects": f"supabase://public/lab_scene_objects?scene_id={scene_id}",
+                "simulations": f"supabase://public/lab_simulations?scene_id={scene_id}",
+                "report": f"supabase://public/lab_scenes/{scene_id}#report",
+                "snapshot": f"supabase://public/lab_scenes/{scene_id}#exports",
+            },
+            "exports_json": {},
+            "report_markdown": "",
+            "created_at": "2026-07-06T01:01:01Z",
+            "updated_at": "2026-07-06T01:01:01Z",
+        }
+
     def test_cloud_phase1_health_returns_ok_without_backend_proxy(self) -> None:
         result = run_worker_helper(
             "simulateRequest",
@@ -104,7 +160,25 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "health_check",
                 "lab_session_create",
                 "lab_session_get",
+                "lab_session_advance",
+                "lab_agent_run",
+                "lab_referee_review",
+                "lab_experiment_create",
+                "lab_experiment_run",
+                "lab_memory_search",
+                "lab_memory_write",
+                "lab_models_debate",
                 "lab_report_generate",
+                "create_lab_scene",
+                "get_lab_scene",
+                "add_lab_object",
+                "update_lab_object",
+                "remove_lab_object",
+                "set_lab_parameters",
+                "run_lab_simulation",
+                "attach_simulation_to_scene",
+                "export_lab_snapshot",
+                "generate_lab_report",
             ],
         )
 
@@ -143,7 +217,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         payload = result["body"]["result"]["structuredContent"]
         self.assertEqual(payload["storage_backend"], "supabase")
         self.assertTrue(payload["storage_status"]["configured"])
-        self.assertEqual(payload["runtime_mode"], "cloud_native_worker_phase_1")
+        self.assertEqual(payload["runtime_mode"], "cloud_native_worker_lab_v0")
         self.assertIn("health_check", payload["tools"])
         self.assertEqual(result["fetchCalls"], [])
 
@@ -171,6 +245,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 },
                 "fetchResponses": [
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
@@ -188,29 +263,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
 
     def test_cloud_phase1_get_and_report_generate_use_supabase_state(self) -> None:
         session_id = "lab-20260706010101-abcdef12"
-        session_row = {
-            "session_id": session_id,
-            "problem": "x + y = 5",
-            "domain": "math",
-            "goal": "Read a saved session.",
-            "mode": "proof_critical",
-            "status": "created",
-            "current_phase": "problem_intake",
-            "active_room": "Control Panel",
-            "created_at": "2026-07-06T01:01:01Z",
-            "updated_at": "2026-07-06T01:01:01Z",
-            "controller": {"model_id": "gpt_controller"},
-            "participants": [],
-            "artifact_paths": {
-                "session": f"supabase://public/lab_sessions/{session_id}",
-                "report": f"supabase://public/reports/{session_id}",
-                "notebook": f"supabase://public/lab_sessions/{session_id}#notebook",
-            },
-            "next_actions": ["Generate report."],
-            "warnings": [],
-            "notebook_markdown": "# Notebook",
-            "experiments_json": [],
-        }
+        session_row = self._session_row(session_id)
         common_fetch = [
             {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [session_row]},
             {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
@@ -261,6 +314,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "fetchResponses": [
                     *common_fetch,
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
@@ -272,6 +326,738 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         report_payload = report_result["body"]["result"]["structuredContent"]
         self.assertTrue(report_payload["report_path"].startswith("supabase://public/reports/"))
         self.assertIn(session_id, report_payload["markdown"])
+
+    def test_cloud_phase1_lab_session_advance_returns_auth_required_turn_without_provider(self) -> None:
+        session_id = "lab-advance"
+        session_row = self._session_row(session_id)
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 11,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "lab_session_advance",
+                        "arguments": {"session_id": session_id, "max_steps": 2, "use_model_arena": False, "use_verifier": False},
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [session_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/memory_edges", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/reports", "status": 204},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["updated_session"]["status"], "waiting_for_user")
+        self.assertGreaterEqual(len(payload["new_turns"]), 2)
+        self.assertEqual(payload["new_turns"][-1]["status"], "AUTH_REQUIRED")
+
+    def test_cloud_phase1_lab_agent_run_returns_provider_required_turn(self) -> None:
+        session_id = "lab-agent"
+        session_row = self._session_row(session_id)
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 12,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "lab_agent_run",
+                        "arguments": {
+                            "session_id": session_id,
+                            "agent_role": "Theorist",
+                            "provider": "auto",
+                            "task": "Scan the background assumptions.",
+                            "context_ids": [],
+                        },
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [session_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/memory_edges", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/reports", "status": 204},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["status"], "AUTH_REQUIRED")
+        self.assertEqual(payload["provider_result"]["status"], "provider_required")
+
+    def test_cloud_phase1_lab_referee_review_returns_deferred_result(self) -> None:
+        session_id = "lab-referee"
+        session_row = self._session_row(session_id)
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 13,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "lab_referee_review",
+                        "arguments": {
+                            "session_id": session_id,
+                            "text": "(2,4,8)",
+                            "strictness": "hostile",
+                        },
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [session_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/memory_edges", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/reports", "status": 204},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["verdict"], "DEFERRED")
+        self.assertEqual(payload["deferred"]["status"], "deferred")
+
+    def test_cloud_phase1_lab_memory_write_and_search_work(self) -> None:
+        session_id = "lab-memory"
+        session_row = self._session_row(session_id)
+        write_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 14,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "lab_memory_write",
+                        "arguments": {
+                            "session_id": session_id,
+                            "kind": "claim",
+                            "payload": {
+                                "text": "A cloud-written claim",
+                                "claim_type": "observation",
+                                "status": "HEURISTIC",
+                                "confidence": "low",
+                                "source_turn_id": "manual",
+                            },
+                        },
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [session_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/memory_edges", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/reports", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/claims", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        self.assertTrue(write_result["body"]["result"]["structuredContent"]["written_object_id"])
+
+        session_row_with_claim = dict(session_row)
+        session_row_with_claim["updated_at"] = "2026-07-06T01:02:01Z"
+        search_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 15,
+                    "method": "tools/call",
+                    "params": {"name": "lab_memory_search", "arguments": {"query": "cloud-written", "limit": 5}},
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [session_row_with_claim]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/claims",
+                        "status": 200,
+                        "body": [
+                            {
+                                "session_id": session_id,
+                                "text": "A cloud-written claim",
+                                "claim_type": "observation",
+                                "status": "HEURISTIC",
+                                "confidence": "low",
+                                "source_turn_id": "manual",
+                                "supporting_evidence": [],
+                                "refuting_evidence": [],
+                                "related_experiments": [],
+                                "related_failures": [],
+                                "created_at": "2026-07-06T01:02:01Z",
+                                "updated_at": "2026-07-06T01:02:01Z",
+                                "claim_id": "claim-1",
+                            }
+                        ],
+                    },
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                ],
+            },
+        )
+        payload = search_result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["claims"][0]["claim_id"], "claim-1")
+
+    def test_cloud_phase1_lab_experiment_create_and_run_return_deferred_execution(self) -> None:
+        session_id = "lab-experiment"
+        session_row = self._session_row(session_id)
+        session_row["experiments_json"] = []
+        create_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 16,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "lab_experiment_create",
+                        "arguments": {
+                            "session_id": session_id,
+                            "claim_id": "claim-1",
+                            "question": "Test the cloud claim",
+                            "method": "python_bruteforce",
+                            "inputs": {"candidate_answer": "x=1"},
+                        },
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [session_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/memory_edges", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/reports", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/memory_edges", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        experiment_id = create_result["body"]["result"]["structuredContent"]["experiment_id"]
+        session_row_with_experiment = self._session_row(session_id)
+        session_row_with_experiment["experiments_json"] = [
+            {
+                "session_id": session_id,
+                "claim_id": "claim-1",
+                "question": "Test the cloud claim",
+                "method": "python_bruteforce",
+                "inputs": {"candidate_answer": "x=1"},
+                "outputs": {},
+                "tool_name": "",
+                "verdict": "inconclusive",
+                "evidence_summary": "",
+                "created_at": "2026-07-06T01:01:01Z",
+                "experiment_id": experiment_id,
+            }
+        ]
+        run_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 17,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "lab_experiment_run",
+                        "arguments": {"session_id": session_id, "experiment_id": experiment_id},
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [session_row_with_experiment]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/memory_edges", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/reports", "status": 204},
+                ],
+            },
+        )
+        payload = run_result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["deferred"]["status"], "deferred")
+        self.assertEqual(payload["experiment_id"], experiment_id)
+
+    def test_cloud_phase1_lab_models_debate_returns_provider_required_when_unconfigured(self) -> None:
+        session_id = "lab-debate"
+        session_row = self._session_row(session_id)
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 18,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "lab_models_debate",
+                        "arguments": {
+                            "session_id": session_id,
+                            "question": "Debate the claim",
+                            "participants": ["openai_compatible"],
+                            "rounds": ["independent_discovery"],
+                            "use_existing_research_table": True,
+                        },
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [session_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/memory_edges", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/reports", "status": 204},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["provider_result"]["status"], "provider_required")
+
+    def test_cloud_phase1_scene_crud_tools_use_supabase(self) -> None:
+        session_id = "lab-scene"
+        scene_id = "scene-123"
+        session_row = self._session_row(session_id)
+        create_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 19,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "create_lab_scene",
+                        "arguments": {
+                            "session_id": session_id,
+                            "title": "Projectile baseline",
+                            "description": "Cloud scene",
+                            "parameters": {"gravity": 9.81},
+                        },
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [session_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
+                ],
+            },
+        )
+        created_scene_id = create_result["body"]["result"]["structuredContent"]["scene_id"]
+        scene_row = self._scene_row(created_scene_id, session_id)
+        add_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 20,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "add_lab_object",
+                        "arguments": {
+                            "scene_id": created_scene_id,
+                            "object": {
+                                "id": "ball-1",
+                                "type": "rigid_body",
+                                "label": "Projectile",
+                                "position": {"x": 0, "y": 1, "z": 0},
+                                "rotation": {"x": 0, "y": 0, "z": 0},
+                                "scale": {"x": 1, "y": 1, "z": 1},
+                                "geometry": {"kind": "sphere"},
+                                "material": {"color": "#ff7a59"},
+                                "data": {"mass": 0.2, "velocity": {"x": 5, "y": 8, "z": 0}},
+                                "metadata": {"source": "test"},
+                            },
+                        },
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scene_objects", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        object_row = {
+            "scene_id": created_scene_id,
+            "id": "ball-1",
+            "type": "rigid_body",
+            "label": "Projectile",
+            "position": {"x": 0, "y": 1, "z": 0},
+            "rotation": {"x": 0, "y": 0, "z": 0},
+            "scale": {"x": 1, "y": 1, "z": 1},
+            "geometry": {"kind": "sphere"},
+            "material": {"color": "#ff7a59"},
+            "data": {"mass": 0.2, "velocity": {"x": 5, "y": 8, "z": 0}},
+            "metadata": {"source": "test"},
+            "created_at": "2026-07-06T01:01:01Z",
+            "updated_at": "2026-07-06T01:01:01Z",
+        }
+        update_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 21,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "update_lab_object",
+                        "arguments": {"scene_id": created_scene_id, "object_id": "ball-1", "patch": {"label": "Projectile A"}},
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scene_objects", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        get_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {"jsonrpc": "2.0", "id": 22, "method": "tools/call", "params": {"name": "get_lab_scene", "arguments": {"scene_id": created_scene_id}}},
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects",
+                        "status": 200,
+                        "body": [{**object_row, "label": "Projectile A"}],
+                    },
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": []},
+                ],
+            },
+        )
+        remove_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 23,
+                    "method": "tools/call",
+                    "params": {"name": "remove_lab_object", "arguments": {"scene_id": created_scene_id, "object_id": "ball-1"}},
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
+                ],
+            },
+        )
+
+        self.assertTrue(created_scene_id.startswith("scene-"))
+        self.assertEqual(add_result["body"]["result"]["structuredContent"]["object_id"], "ball-1")
+        self.assertEqual(update_result["body"]["result"]["structuredContent"]["object"]["label"], "Projectile A")
+        self.assertEqual(get_result["body"]["result"]["structuredContent"]["objects"][0]["label"], "Projectile A")
+        self.assertEqual(remove_result["body"]["result"]["structuredContent"]["removed_object_id"], "ball-1")
+
+    def test_cloud_phase1_scene_simulation_export_and_report_tools_work(self) -> None:
+        session_id = "lab-scene-sim"
+        scene_id = "scene-456"
+        scene_row = self._scene_row(scene_id, session_id)
+        object_row = {
+            "scene_id": scene_id,
+            "id": "ball-1",
+            "type": "rigid_body",
+            "label": "Projectile",
+            "position": {"x": 0, "y": 1, "z": 0},
+            "rotation": {"x": 0, "y": 0, "z": 0},
+            "scale": {"x": 1, "y": 1, "z": 1},
+            "geometry": {"kind": "sphere"},
+            "material": {"color": "#ff7a59"},
+            "data": {"mass": 0.2, "velocity": {"x": 4, "y": 6, "z": 0}},
+            "metadata": {},
+            "created_at": "2026-07-06T01:01:01Z",
+            "updated_at": "2026-07-06T01:01:01Z",
+        }
+        math_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 24,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "run_lab_simulation",
+                        "arguments": {"scene_id": scene_id, "adapter_id": "math.sympy", "inputs": {"operation": "evaluate", "expression": "2+2"}},
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scene_objects", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_simulations", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        projectile_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 25,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "run_lab_simulation",
+                        "arguments": {
+                            "scene_id": scene_id,
+                            "adapter_id": "physics.simple_projectile",
+                            "inputs": {"object_id": "ball-1", "duration": 1.0, "time_step": 0.25},
+                        },
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scene_objects", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_simulations", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        simulation_id = projectile_result["body"]["result"]["structuredContent"]["simulation_id"]
+        simulation_row = {
+            "simulation_id": simulation_id,
+            "scene_id": scene_id,
+            "session_id": session_id,
+            "adapter_id": "physics.simple_projectile",
+            "status": "completed",
+            "inputs": {"object_id": "ball-1", "duration": 1.0, "time_step": 0.25},
+            "outputs": {
+                "object_id": "ball-1",
+                "trajectory": [{"time": 0.0, "position": {"x": 0, "y": 1, "z": 0}, "velocity": {"x": 4, "y": 6, "z": 0}}],
+                "final_position": {"x": 4, "y": 2, "z": 0},
+                "final_velocity": {"x": 4, "y": -3.81, "z": 0},
+                "max_height": 2.0,
+                "duration_used": 1.0,
+            },
+            "evidence": {"equations": ["p = p0 + vt + 0.5at^2"]},
+            "warnings": [],
+            "errors": [],
+            "attached_object_ids": ["ball-1"],
+            "metadata": {"engine_status": "completed", "scene_adapter": "scene.three_json"},
+            "created_at": "2026-07-06T01:01:01Z",
+            "updated_at": "2026-07-06T01:01:01Z",
+        }
+        attach_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 26,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "attach_simulation_to_scene",
+                        "arguments": {
+                            "scene_id": scene_id,
+                            "simulation_id": simulation_id,
+                            "object_ids": ["ball-1"],
+                            "evidence_refs": [],
+                            "report_refs": [],
+                            "apply_object_updates": True,
+                        },
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": [simulation_row]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scene_objects", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_simulations", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        export_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 27,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "export_lab_snapshot",
+                        "arguments": {"scene_id": scene_id, "adapter_id": "scene.three_json", "include_simulations": True},
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": [simulation_row]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scene_objects", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_simulations", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        report_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 28,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "generate_lab_report",
+                        "arguments": {
+                            "scene_id": scene_id,
+                            "format": "markdown",
+                            "include_objects": True,
+                            "include_simulations": True,
+                        },
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": [simulation_row]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scene_objects", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_simulations", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+
+        self.assertEqual(math_result["body"]["result"]["structuredContent"]["status"], "engine_required")
+        self.assertEqual(projectile_result["body"]["result"]["structuredContent"]["status"], "completed")
+        self.assertEqual(attach_result["body"]["result"]["structuredContent"]["attached_object_ids"], ["ball-1"])
+        self.assertEqual(export_result["body"]["result"]["structuredContent"]["status"], "completed")
+        self.assertEqual(export_result["body"]["result"]["structuredContent"]["snapshot"]["scene"]["name"], "Projectile baseline")
+        self.assertIn("Projectile baseline", report_result["body"]["result"]["structuredContent"]["markdown"])
 
 
 if __name__ == "__main__":
