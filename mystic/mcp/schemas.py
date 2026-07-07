@@ -7,6 +7,11 @@ TOOL_SCHEMAS = {
         "properties": {},
         "additionalProperties": False,
     },
+    "health_check": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    },
     "mystic_verify_answer": {
         "type": "object",
         "properties": {
@@ -309,6 +314,12 @@ TOOL_DEFINITIONS = [
         read_only=True,
     ),
     _tool_definition(
+        "health_check",
+        "Return a minimal local Mystic health summary without depending on external model providers.",
+        title="Health Check",
+        read_only=True,
+    ),
+    _tool_definition(
         "mystic_verify_answer",
         "Deterministically verify candidate answers when direct substitution or bounded search is possible.",
         title="Verify Answer",
@@ -352,12 +363,12 @@ TOOL_DEFINITIONS = [
     ),
     _tool_definition(
         "lab_session_create",
-        "Create a structured Mystic Lab session under mystic_data/lab_sessions.",
+        "Create a structured Mystic Lab session using the active storage backend.",
         title="Create Lab Session",
     ),
     _tool_definition(
         "lab_session_get",
-        "Load the current lab session state, recent turns, claims, experiments, and failures.",
+        "Load the current lab session state, recent turns, claims, experiments, and failures from the active storage backend.",
         title="Get Lab Session",
         read_only=True,
     ),
@@ -404,7 +415,7 @@ TOOL_DEFINITIONS = [
     ),
     _tool_definition(
         "lab_report_generate",
-        "Generate a markdown lab report from structured session state.",
+        "Generate a markdown lab report from structured session state and persist it through the active storage backend.",
         title="Generate Lab Report",
     ),
     _tool_definition(
@@ -422,6 +433,7 @@ TOOL_DEFINITIONS = [
 
 PUBLIC_TOOL_NAMES = [
     "mystic_status",
+    "health_check",
     "mystic_verify_answer",
     "mystic_call_model",
     "mystic_compare_models",

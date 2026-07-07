@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.run_remote_mcp_lab_smoke import (  # noqa: E402
+    EXISTING_TOOLS,
     LAB_TOOLS,
     auth_status_from_response,
     base_url_from_endpoint,
@@ -20,6 +21,9 @@ from scripts.run_remote_mcp_lab_smoke import (  # noqa: E402
     validate_mcp_success,
 )
 from scripts.check_chatgpt_remote_mcp_readiness import http_json_request  # noqa: E402
+
+
+PHASE1_REQUIRED_TOOLS = EXISTING_TOOLS | LAB_TOOLS
 
 
 OK = "OK"
@@ -215,9 +219,9 @@ def check_public_backend_origin(
                 summary["errors"].append("bearer tools/list failed: " + "; ".join(tools_errors))
             else:
                 tool_names = extract_tool_names(tools_list)
-                summary["lab_tools_visible"] = LAB_TOOLS.issubset(tool_names)
+                summary["lab_tools_visible"] = PHASE1_REQUIRED_TOOLS.issubset(tool_names)
                 if not summary["lab_tools_visible"]:
-                    missing_tools = sorted(LAB_TOOLS.difference(tool_names))
+                    missing_tools = sorted(PHASE1_REQUIRED_TOOLS.difference(tool_names))
                     summary["errors"].append("bearer tools/list missing lab tools: " + ", ".join(missing_tools))
             summary["bearer_mcp_ok"] = summary["bearer_initialize_ok"] and summary["bearer_tools_list_ok"] and summary["lab_tools_visible"]
     else:

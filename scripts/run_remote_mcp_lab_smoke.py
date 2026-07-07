@@ -17,18 +17,18 @@ if str(ROOT) not in sys.path:
 
 EXISTING_TOOLS = {
     "mystic_status",
-    "mystic_verify_answer",
-    "mystic_call_model",
-    "mystic_compare_models",
-    "mystic_run_research_table",
+    "health_check",
 }
 
 LAB_TOOLS = {
     "lab_session_create",
     "lab_session_get",
+    "lab_report_generate",
+}
+
+OPTIONAL_LAB_TOOLS = {
     "lab_session_advance",
     "lab_referee_review",
-    "lab_report_generate",
 }
 
 READY_LOCAL = "READY_LOCAL_MCP_LAB"
@@ -201,10 +201,12 @@ def run_remote_mcp_lab_smoke(
         "tools_list_ok": False,
         "existing_tools_present": False,
         "lab_tools_present": False,
+        "optional_lab_tools_present": False,
         "missing_tools": [],
         "session_created": False,
         "session_id": "",
-        "advance_ok": False,
+        "advance_ok": None,
+        "advance_supported": False,
         "get_ok": False,
         "report_ok": False,
         "persisted_paths": [],
@@ -265,6 +267,7 @@ def run_remote_mcp_lab_smoke(
     missing_tools = sorted((EXISTING_TOOLS | LAB_TOOLS).difference(tool_names))
     summary["existing_tools_present"] = EXISTING_TOOLS.issubset(tool_names)
     summary["lab_tools_present"] = LAB_TOOLS.issubset(tool_names)
+    summary["optional_lab_tools_present"] = OPTIONAL_LAB_TOOLS.issubset(tool_names)
     summary["missing_tools"] = missing_tools
     if not summary["lab_tools_present"]:
         summary["errors"].append("required lab tools are missing from tools/list")
@@ -303,30 +306,32 @@ def run_remote_mcp_lab_smoke(
     if isinstance(create_payload.get("paths"), dict):
         summary["persisted_paths"].extend(str(value) for value in create_payload["paths"].values())
 
-    advance_response = mcp_request(
-        endpoint,
-        request_id=4,
-        method="tools/call",
-        params={
-            "name": "lab_session_advance",
-            "arguments": {
-                "session_id": session_id,
-                "max_steps": 1,
-                "use_model_arena": False,
-                "use_verifier": True,
+    if "lab_session_advance" in tool_names:
+        summary["advance_supported"] = True
+        advance_response = mcp_request(
+            endpoint,
+            request_id=4,
+            method="tools/call",
+            params={
+                "name": "lab_session_advance",
+                "arguments": {
+                    "session_id": session_id,
+                    "max_steps": 1,
+                    "use_model_arena": False,
+                    "use_verifier": True,
+                },
             },
-        },
-        timeout_seconds=timeout_seconds,
-        headers=request_headers,
-    )
-    errors = validate_mcp_success(advance_response, expected_id=4)
-    if errors:
-        summary["errors"].extend(errors)
-    else:
-        advance_payload = advance_response["body"]["result"]["structuredContent"]
-        summary["advance_ok"] = isinstance(advance_payload, dict) and "updated_session" in advance_payload
-        if isinstance(advance_payload.get("paths"), dict):
-            summary["persisted_paths"].extend(str(value) for value in advance_payload["paths"].values())
+            timeout_seconds=timeout_seconds,
+            headers=request_headers,
+        )
+        errors = validate_mcp_success(advance_response, expected_id=4)
+        if errors:
+            summary["errors"].extend(errors)
+        else:
+            advance_payload = advance_response["body"]["result"]["structuredContent"]
+            summary["advance_ok"] = isinstance(advance_payload, dict) and "updated_session" in advance_payload
+            if isinstance(advance_payload.get("paths"), dict):
+                summary["persisted_paths"].extend(str(value) for value in advance_payload["paths"].values())
 
     get_response = mcp_request(
         endpoint,
@@ -380,6 +385,8 @@ def run_remote_mcp_lab_smoke(
     if not persisted_paths:
         summary["errors"].append("no persisted artifact paths were returned")
     for path_text in persisted_paths:
+        if "://" in path_text:
+            continue
         if not Path(path_text).exists():
             summary["errors"].append(f"persisted path missing on disk: {path_text}")
 

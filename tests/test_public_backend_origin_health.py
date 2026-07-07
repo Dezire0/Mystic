@@ -116,7 +116,7 @@ class PublicBackendOriginHealthTests(unittest.TestCase):
                     "body": {"error": "unauthorized"},
                 },
                 2: _mcp_success(2, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
-                3: _mcp_success(3, {"tools": [{"name": name} for name in sorted(origin_health.LAB_TOOLS | {"mystic_status"})]}),
+                3: _mcp_success(3, {"tools": [{"name": name} for name in sorted(origin_health.EXISTING_TOOLS | origin_health.LAB_TOOLS)]}),
             }
 
             def fake_http_json_request(url: str, *, payload=None, method="POST", timeout_seconds=30, headers=None):  # type: ignore[no-untyped-def]

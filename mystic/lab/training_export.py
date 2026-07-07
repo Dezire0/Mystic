@@ -132,14 +132,12 @@ def export_lab_failures_for_raven(
     reusable_failures = 0
     skipped_failures = 0
 
-    for session_dir in sorted(storage.base_dir.iterdir()) if storage.base_dir.exists() else []:
-        if not session_dir.is_dir():
-            continue
+    for session_id in storage.list_session_ids():
         sessions_scanned += 1
         try:
-            bundle = storage.load_bundle(session_dir.name)
+            bundle = storage.load_bundle(session_id)
         except Exception as exc:
-            warnings.append(f"Skipping malformed lab session {session_dir.name}: {exc}")
+            warnings.append(f"Skipping malformed lab session {session_id}: {exc}")
             continue
 
         claims_by_id = {claim.claim_id: claim for claim in bundle.claims}

@@ -4,23 +4,24 @@ Mystic v3 reinjects the trained Raven adapter into the live JSONL research loop,
 
 It keeps the design intentionally narrow:
 
-- local folders under `mystic_data/`
-- append-only JSONL storage
+- local folders under `mystic_data/` remain the default storage path
+- append-only JSONL storage remains the default research/training loop
 - resumable processing through `mystic_data/state/processed_ids.jsonl`
+- optional Supabase-backed cloud-native phase-1 lab mode is available for public MCP
 - no separate JS frontend bundle
-- no PostgreSQL
 - no vector DB
 - no standalone web dashboard service outside the FastAPI app
-- no cloud orchestration dependency
+- no paid VPS requirement for phase-1 public MCP
 
 ## Virtual Research Lab
 
 Mystic also includes a local-first Virtual Research Lab backend. It is a computational research orchestration layer, not a wet-lab control system and not a game.
 
-- lab sessions are stored under `mystic_data/lab_sessions/`
+- lab sessions can be stored under `mystic_data/lab_sessions/` or in Supabase
 - each session persists structured `session.json`, `turns.json`, `claims.json`, `experiments.json`, `failures.json`, `memory_edges.json`, `notebook.md`, and `report.md`
 - the Research Table acts as the Model Arena and can import discoveries back into a lab session
 - MCP `lab_*` tools expose session create/get/advance, role execution, referee review, experiment create/run, memory search/write, model debate, and report generation
+- cloud-native phase-1 Worker mode directly serves `mystic_status`, `health_check`, `lab_session_create`, `lab_session_get`, and `lab_report_generate` from Supabase without a local Mac backend
 
 The core lab objects are:
 
@@ -39,7 +40,7 @@ Reality Anchor status rules are intentionally conservative:
 - incomplete proofs become `NEEDS_MORE_DETAIL`
 - only symbolic or strict manual validation should upgrade a claim to `PROVED`
 
-This backend is local JSON-backed first. Remote MCP OAuth, cloud databases, and the Lab Failure to Raven training pipeline are separate follow-on work.
+The default backend is still local JSON. When `MYSTIC_STORAGE_BACKEND=supabase`, the Cloudflare Worker can serve the phase-1 lab tools directly from Supabase while the full local Python backend remains available for richer local workflows.
 
 ## Lab Failure to Raven Dataset
 
@@ -213,6 +214,83 @@ The fixed public endpoints are expected to be:
 - `https://mystic.dexproject.workers.dev/health`
 - `https://mystic.dexproject.workers.dev/mcp`
 
+## Free Cloud Deployment
+
+Mystic now supports a free-tier, cloud-native phase-1 MCP path that removes the dependency on a local Mac backend and quick tunnels for the core lab flow.
+
+Architecture:
+
+- ChatGPT
+- Cloudflare Worker MCP/OAuth server
+- Supabase Free Postgres for `lab_sessions`, `lab_turns`, `claims`, `failures`, `memory_edges`, and `reports`
+- optional object storage later for reports and larger artifacts
+
+Phase-1 cloud-native tools:
+
+- `mystic_status`
+- `health_check`
+- `lab_session_create`
+- `lab_session_get`
+- `lab_report_generate`
+
+### Supabase setup
+
+Apply the schema in [supabase/mystic_lab_v0_schema.sql](/Users/JYH/Documents/Mystic/supabase/mystic_lab_v0_schema.sql).
+
+Worker environment variables use placeholders only. Do not commit real values:
+
+```text
+MYSTIC_STORAGE_BACKEND=supabase
+MYSTIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+MYSTIC_SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
+MYSTIC_SUPABASE_SCHEMA=public
+MYSTIC_OAUTH_ENABLED=true
+MYSTIC_OAUTH_ISSUER=https://mystic.dexproject.workers.dev
+MYSTIC_OAUTH_ALLOWED_REDIRECT_URIS=https://chatgpt.com/connector/oauth/...
+MYSTIC_OAUTH_ACCESS_TOKEN_TTL_SECONDS=3600
+MYSTIC_OAUTH_SIGNING_SECRET=YOUR_SIGNING_SECRET
+MYSTIC_OAUTH_DEV_STATIC_TOKEN=YOUR_TEST_TOKEN
+```
+
+In this mode the Worker serves `/health` and `/mcp` directly. `MYSTIC_BACKEND_URL` is not required for the phase-1 tools.
+
+### Deploy and verify
+
+Deploy [cloudflare/mystic_public_gateway_worker.js](/Users/JYH/Documents/Mystic/cloudflare/mystic_public_gateway_worker.js) with the Supabase and OAuth variables above, then verify:
+
+```bash
+curl -i https://mystic.dexproject.workers.dev/health
+
+python scripts/run_remote_mcp_lab_smoke.py \
+  --endpoint https://mystic.dexproject.workers.dev/mcp \
+  --auth-mode bearer \
+  --bearer-token "$MYSTIC_TEST_BEARER_TOKEN"
+
+python scripts/check_chatgpt_remote_mcp_readiness.py \
+  --public-endpoint https://mystic.dexproject.workers.dev \
+  --expect-oauth \
+  --bearer-token "$MYSTIC_TEST_BEARER_TOKEN"
+```
+
+Expected phase-1 outcome:
+
+- `/health` returns `{"status":"ok"}`
+- `tools/list` includes the phase-1 cloud-native tools
+- `lab_session_create` writes to Supabase
+- `lab_session_get` reads from Supabase
+- `lab_report_generate` returns markdown and stores the current report in Supabase
+
+### Roll back to local mode
+
+To return to the existing local Python backend path:
+
+- set `MYSTIC_STORAGE_BACKEND=local` or remove it
+- keep the FastAPI backend running on `127.0.0.1:8765`
+- set `MYSTIC_BACKEND_URL` in the Worker to the local tunnel or stable backend origin you want to proxy
+- redeploy the Worker
+
+This restores the pre-cloud-native behavior, including the richer local-only lab tools.
+
 `/mcp` is a JSON-RPC endpoint. Plain browser `GET` requests are not the protocol and may be rejected. Verify the public ingress with MCP `POST` requests instead:
 
 ```bash
@@ -220,9 +298,10 @@ python scripts/test_mystic_mcp_client.py --base-url http://127.0.0.1:8765 --scen
 python scripts/test_mystic_mcp_client.py --base-url http://127.0.0.1:8765 --scenario public-tool-suite
 ```
 
-The first public MCP tool layer exposes:
+The full local/public proxy MCP layer exposes:
 
 - `mystic_status`
+- `health_check`
 - `mystic_verify_answer`
 - `mystic_call_model`
 - `mystic_compare_models`
@@ -244,9 +323,10 @@ This verifies external MCP client behavior end to end:
 - `initialize`
 - `tools/list`
 - `lab_session_create`
-- `lab_session_advance`
 - `lab_session_get`
-- persisted lab session files under `mystic_data/lab_sessions/`
+- `lab_report_generate`
+- optional `lab_session_advance` when the richer local backend is available
+- persisted lab session artifacts under local files or `supabase://...` paths depending on the storage backend
 
 The smoke summary is written to:
 
@@ -436,7 +516,7 @@ Then:
 
 1. Complete the OAuth flow.
 2. Confirm these tools are visible:
-   `lab_session_create`, `lab_session_advance`, `lab_session_get`, `lab_report_generate`
+   `health_check`, `lab_session_create`, `lab_session_get`, `lab_report_generate`
 3. Manually call those tools from ChatGPT if possible.
 4. Create the runtime verification artifact:
 

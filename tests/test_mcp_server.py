@@ -9,6 +9,9 @@ class _StubToolbox:
     def mystic_status(self) -> dict:
         return {"ok": True}
 
+    def health_check(self) -> dict:
+        return {"status": "ok"}
+
     def mystic_verify_answer(self, **_: object) -> dict:
         return {"verdict": "VALID", "saved_artifact_path": "mystic_data/runs/verify.json"}
 
@@ -75,6 +78,7 @@ class MCPServerTests(unittest.TestCase):
             names,
             [
                 "mystic_status",
+                "health_check",
                 "mystic_verify_answer",
                 "mystic_call_model",
                 "mystic_compare_models",

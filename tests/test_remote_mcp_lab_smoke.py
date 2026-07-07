@@ -33,7 +33,6 @@ class RemoteMCPLabSmokeTests(unittest.TestCase):
                     {"tools": [{"name": name} for name in sorted(smoke.EXISTING_TOOLS | smoke.LAB_TOOLS)]},
                 ),
                 3: _mcp_success(3, {"structuredContent": {"session_id": "lab-123", "paths": persisted}}),
-                4: _mcp_success(4, {"structuredContent": {"updated_session": {"session_id": "lab-123"}, "paths": persisted}}),
                 5: _mcp_success(
                     5,
                     {
@@ -59,7 +58,8 @@ class RemoteMCPLabSmokeTests(unittest.TestCase):
 
             self.assertEqual(summary["final_status"], smoke.READY_LOCAL)
             self.assertTrue(summary["session_created"])
-            self.assertTrue(summary["advance_ok"])
+            self.assertFalse(summary["advance_supported"])
+            self.assertIsNone(summary["advance_ok"])
             self.assertTrue(summary["get_ok"])
             self.assertTrue(summary["report_ok"])
             self.assertEqual(summary["session_id"], "lab-123")
@@ -70,7 +70,7 @@ class RemoteMCPLabSmokeTests(unittest.TestCase):
             output_path = smoke.Path(temp_dir) / "summary.json"
             responses = {
                 1: _mcp_success(1, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
-                2: _mcp_success(2, {"tools": [{"name": name} for name in sorted(smoke.EXISTING_TOOLS)]}),
+                2: _mcp_success(2, {"tools": [{"name": name} for name in sorted({"mystic_status"})]}),
             }
             with patch.object(smoke, "mcp_request", side_effect=lambda *args, **kwargs: responses[kwargs["request_id"]]):
                 summary = smoke.run_remote_mcp_lab_smoke(
@@ -130,7 +130,6 @@ class RemoteMCPLabSmokeTests(unittest.TestCase):
                 1: _mcp_success(1, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
                 2: _mcp_success(2, {"tools": [{"name": name} for name in sorted(smoke.EXISTING_TOOLS | smoke.LAB_TOOLS)]}),
                 3: _mcp_success(3, {"structuredContent": {"session_id": "lab-auth", "paths": persisted}}),
-                4: _mcp_success(4, {"structuredContent": {"updated_session": {"session_id": "lab-auth"}, "paths": persisted}}),
                 5: _mcp_success(
                     5,
                     {"structuredContent": {"session": {"session_id": "lab-auth"}, "report_path": persisted["report_path"]}},
@@ -156,6 +155,88 @@ class RemoteMCPLabSmokeTests(unittest.TestCase):
 
             self.assertEqual(summary["final_status"], smoke.READY_PUBLIC)
             self.assertTrue(all(headers == {"Authorization": "Bearer secret-token"} for headers in seen_headers))
+
+    def test_remote_smoke_uses_optional_advance_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = smoke.Path(temp_dir)
+            session_dir = temp_root / "mystic_data" / "lab_sessions" / "lab-advance"
+            session_dir.mkdir(parents=True, exist_ok=True)
+            persisted = {
+                "session_path": str(session_dir / "session.json"),
+                "notebook_path": str(session_dir / "notebook.md"),
+                "report_path": str(session_dir / "report.md"),
+            }
+            for path_text in persisted.values():
+                smoke.Path(path_text).write_text("ok", encoding="utf-8")
+            output_path = temp_root / "summary.json"
+            responses = {
+                1: _mcp_success(1, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
+                2: _mcp_success(
+                    2,
+                    {"tools": [{"name": name} for name in sorted(smoke.EXISTING_TOOLS | smoke.LAB_TOOLS | {"lab_session_advance"})]},
+                ),
+                3: _mcp_success(3, {"structuredContent": {"session_id": "lab-advance", "paths": persisted}}),
+                4: _mcp_success(4, {"structuredContent": {"updated_session": {"session_id": "lab-advance"}, "paths": persisted}}),
+                5: _mcp_success(
+                    5,
+                    {"structuredContent": {"session": {"session_id": "lab-advance"}, "report_path": persisted["report_path"]}},
+                ),
+                6: _mcp_success(6, {"structuredContent": {"report_path": persisted["report_path"]}}),
+            }
+            with patch.object(smoke, "mcp_request", side_effect=lambda *args, **kwargs: responses[kwargs["request_id"]]):
+                summary = smoke.run_remote_mcp_lab_smoke(
+                    endpoint="http://127.0.0.1:8765/mcp",
+                    session_problem="test problem",
+                    domain="math",
+                    mode="proof_critical",
+                    timeout_seconds=5,
+                    output_path=output_path,
+                )
+            self.assertTrue(summary["advance_supported"])
+            self.assertTrue(summary["advance_ok"])
+
+    def test_remote_smoke_accepts_supabase_artifact_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = smoke.Path(temp_dir) / "summary.json"
+            responses = {
+                1: _mcp_success(1, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
+                2: _mcp_success(2, {"tools": [{"name": name} for name in sorted(smoke.EXISTING_TOOLS | smoke.LAB_TOOLS)]}),
+                3: _mcp_success(
+                    3,
+                    {
+                        "structuredContent": {
+                            "session_id": "lab-cloud",
+                            "paths": {
+                                "session": "supabase://public/lab_sessions/lab-cloud",
+                                "report": "supabase://public/reports/lab-cloud",
+                            },
+                        }
+                    },
+                ),
+                5: _mcp_success(
+                    5,
+                    {
+                        "structuredContent": {
+                            "session": {"session_id": "lab-cloud"},
+                            "notebook_path": "supabase://public/lab_sessions/lab-cloud#notebook",
+                            "report_path": "supabase://public/reports/lab-cloud",
+                        }
+                    },
+                ),
+                6: _mcp_success(6, {"structuredContent": {"report_path": "supabase://public/reports/lab-cloud"}}),
+            }
+            with patch.object(smoke, "mcp_request", side_effect=lambda *args, **kwargs: responses[kwargs["request_id"]]):
+                summary = smoke.run_remote_mcp_lab_smoke(
+                    endpoint="https://mystic.dexproject.workers.dev/mcp",
+                    bearer_token="secret-token",
+                    auth_mode="bearer",
+                    session_problem="test problem",
+                    domain="math",
+                    mode="proof_critical",
+                    timeout_seconds=5,
+                    output_path=output_path,
+                )
+            self.assertEqual(summary["final_status"], smoke.READY_PUBLIC)
 
     def test_remote_smoke_stops_after_auth_required_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

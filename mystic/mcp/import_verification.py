@@ -6,8 +6,8 @@ from typing import Any
 
 
 REQUIRED_TOOLS = (
+    "health_check",
     "lab_session_create",
-    "lab_session_advance",
     "lab_session_get",
     "lab_report_generate",
 )
