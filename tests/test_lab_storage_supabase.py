@@ -49,6 +49,9 @@ class _FakeSupabaseAPI:
         "failures": "failure_id",
         "memory_edges": "edge_id",
         "reports": "session_id",
+        "lab_scenes": "scene_id",
+        "lab_scene_objects": "id",
+        "lab_simulations": "simulation_id",
     }
 
     def __init__(self) -> None:
@@ -163,6 +166,76 @@ class SupabaseLabStorageTests(unittest.TestCase):
         self.assertIn(created["session_id"], report["markdown"])
         self.assertEqual(len(fake_api.tables["lab_sessions"]), 1)
         self.assertEqual(len(fake_api.tables["reports"]), 1)
+
+    def test_supabase_backed_scene_round_trip_and_simulation_report(self):
+        fake_api = _FakeSupabaseAPI()
+        with patch.dict(
+            os.environ,
+            {
+                "MYSTIC_STORAGE_BACKEND": "supabase",
+                "MYSTIC_SUPABASE_URL": "https://example.supabase.co",
+                "MYSTIC_SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+            },
+            clear=False,
+        ), patch("mystic.lab.storage.requests.request", side_effect=fake_api.request):
+            router = ModelRouter(root_path=self.root, config_path=self.config_path)
+            toolbox = MysticToolbox(root_path=self.root, router=router)
+            created = toolbox.lab_session_create(
+                problem="Track a projectile in Supabase-backed scene storage.",
+                domain="physics",
+                goal="Persist a scene.",
+                mode="cheap",
+                participants=["local_prime", "local_raven"],
+            )
+            scene = toolbox.create_lab_scene(
+                session_id=created["session_id"],
+                title="Projectile baseline",
+                description="Supabase-backed scene.",
+                parameters={"gravity": 9.81},
+            )
+            added = toolbox.add_lab_object(
+                scene_id=scene["scene_id"],
+                object={
+                    "id": "ball-1",
+                    "type": "rigid_body",
+                    "label": "Projectile",
+                    "position": {"x": 0, "y": 1, "z": 0},
+                    "rotation": {"x": 0, "y": 0, "z": 0},
+                    "scale": {"x": 1, "y": 1, "z": 1},
+                    "geometry": {"kind": "sphere", "radius": 0.1},
+                    "material": {"color": "#ff7a59"},
+                    "data": {"mass": 0.2, "velocity": {"x": 4, "y": 6, "z": 0}},
+                    "metadata": {"source": "test"},
+                },
+            )
+            simulated = toolbox.run_lab_simulation(
+                scene_id=scene["scene_id"],
+                adapter_id="physics.simple_projectile",
+                inputs={"object_id": "ball-1", "duration": 1.2, "time_step": 0.2},
+            )
+            attached = toolbox.attach_simulation_to_scene(
+                scene_id=scene["scene_id"],
+                simulation_id=simulated["simulation_id"],
+                object_ids=["ball-1"],
+                apply_object_updates=True,
+            )
+            loaded = toolbox.get_lab_scene(scene_id=scene["scene_id"])
+            report = toolbox.generate_lab_report(
+                scene_id=scene["scene_id"],
+                format="markdown",
+                include_objects=True,
+                include_simulations=True,
+            )
+
+        self.assertEqual(added["object_id"], "ball-1")
+        self.assertEqual(simulated["status"], "completed")
+        self.assertEqual(attached["attached_object_ids"], ["ball-1"])
+        self.assertEqual(loaded["scene"]["scene_id"], scene["scene_id"])
+        self.assertTrue(report["report_path"].startswith("supabase://public/lab_scenes/"))
+        self.assertIn("Projectile baseline", report["markdown"])
+        self.assertEqual(len(fake_api.tables["lab_scenes"]), 1)
+        self.assertEqual(len(fake_api.tables["lab_scene_objects"]), 1)
+        self.assertEqual(len(fake_api.tables["lab_simulations"]), 1)
 
 
 if __name__ == "__main__":

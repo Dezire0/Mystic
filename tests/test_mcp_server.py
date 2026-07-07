@@ -57,6 +57,36 @@ class _StubToolbox:
     def lab_report_generate(self, **_: object) -> dict:
         return {"report_path": "mystic_data/lab_sessions/lab-test/report.md"}
 
+    def create_lab_scene(self, **_: object) -> dict:
+        return {"scene_id": "scene-1"}
+
+    def get_lab_scene(self, **_: object) -> dict:
+        return {"scene": {"scene_id": "scene-1"}}
+
+    def add_lab_object(self, **_: object) -> dict:
+        return {"object_id": "obj-1"}
+
+    def update_lab_object(self, **_: object) -> dict:
+        return {"object_id": "obj-1"}
+
+    def remove_lab_object(self, **_: object) -> dict:
+        return {"removed_object_id": "obj-1"}
+
+    def set_lab_parameters(self, **_: object) -> dict:
+        return {"scene_id": "scene-1"}
+
+    def run_lab_simulation(self, **_: object) -> dict:
+        return {"simulation_id": "sim-1", "status": "completed"}
+
+    def attach_simulation_to_scene(self, **_: object) -> dict:
+        return {"simulation_id": "sim-1"}
+
+    def export_lab_snapshot(self, **_: object) -> dict:
+        return {"status": "completed"}
+
+    def generate_lab_report(self, **_: object) -> dict:
+        return {"report_path": "mystic_data/lab_scenes/scene-1/report.md"}
+
 
 class MCPServerTests(unittest.TestCase):
     def test_initialize_returns_server_capabilities(self):
@@ -94,6 +124,16 @@ class MCPServerTests(unittest.TestCase):
                 "lab_memory_write",
                 "lab_models_debate",
                 "lab_report_generate",
+                "create_lab_scene",
+                "get_lab_scene",
+                "add_lab_object",
+                "update_lab_object",
+                "remove_lab_object",
+                "set_lab_parameters",
+                "run_lab_simulation",
+                "attach_simulation_to_scene",
+                "export_lab_snapshot",
+                "generate_lab_report",
             ],
         )
 

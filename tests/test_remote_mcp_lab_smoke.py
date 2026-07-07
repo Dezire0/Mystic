@@ -11,6 +11,122 @@ def _mcp_success(request_id: int, result: dict[str, object]) -> dict[str, object
     return {"status": 200, "headers": {}, "body": {"jsonrpc": "2.0", "id": request_id, "result": result}}
 
 
+def _success_tool_names() -> list[str]:
+    return sorted(smoke.EXISTING_TOOLS | smoke.LAB_TOOLS)
+
+
+def _success_responses(persisted: dict[str, str], session_id: str) -> dict[int, dict[str, object]]:
+    scene_id = "scene-1"
+    return {
+        1: _mcp_success(1, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
+        2: _mcp_success(2, {"tools": [{"name": name} for name in _success_tool_names()]}),
+        3: _mcp_success(3, {"structuredContent": {"runtime_mode": "cloud_native_worker_lab_v0"}}),
+        4: _mcp_success(4, {"structuredContent": {"status": "ok"}}),
+        5: _mcp_success(5, {"structuredContent": {"session_id": session_id, "status": "created", "paths": persisted}}),
+        6: _mcp_success(
+            6,
+            {"structuredContent": {"updated_session": {"session_id": session_id, "status": "running"}, "paths": persisted}},
+        ),
+        7: _mcp_success(
+            7,
+            {
+                "structuredContent": {
+                    "turn_id": "turn-1",
+                    "status": "blocked",
+                    "provider_result": {"status": "deferred"},
+                }
+            },
+        ),
+        8: _mcp_success(8, {"structuredContent": {"verdict": "DEFERRED", "deferred": {"status": "deferred"}}}),
+        9: _mcp_success(9, {"structuredContent": {"written_object_id": "claim-1", "status": "written"}}),
+        10: _mcp_success(
+            10,
+            {
+                "structuredContent": {
+                    "matching_sessions": [],
+                    "claims": [{"claim_id": "claim-1"}],
+                    "failures": [],
+                    "experiments": [],
+                    "memory_edges": [],
+                }
+            },
+        ),
+        11: _mcp_success(11, {"structuredContent": {"experiment_id": "exp-1", "status": "inconclusive"}}),
+        12: _mcp_success(12, {"structuredContent": {"verdict": "inconclusive", "deferred": {"status": "deferred"}}}),
+        13: _mcp_success(13, {"structuredContent": {"summary": "Deferred debate", "deferred": {"status": "deferred"}}}),
+        14: _mcp_success(
+            14,
+            {
+                "structuredContent": {
+                    "session": {"session_id": session_id},
+                    "notebook_path": persisted["notebook_path"],
+                    "report_path": persisted["report_path"],
+                }
+            },
+        ),
+        15: _mcp_success(15, {"structuredContent": {"report_path": persisted["report_path"], "status": "completed"}}),
+        16: _mcp_success(
+            16,
+            {
+                "structuredContent": {
+                    "scene_id": scene_id,
+                    "session_id": session_id,
+                    "paths": {
+                        "scene": persisted["scene_path"],
+                        "objects": persisted["scene_objects_path"],
+                        "simulations": persisted["scene_simulations_path"],
+                        "report": persisted["scene_report_path"],
+                        "snapshot": persisted["scene_snapshot_path"],
+                    },
+                }
+            },
+        ),
+        17: _mcp_success(17, {"structuredContent": {"object_id": "ball-1"}}),
+        18: _mcp_success(18, {"structuredContent": {"object": {"label": "Projectile A"}}}),
+        19: _mcp_success(19, {"structuredContent": {"parameters": {"gravity": 9.5}}}),
+        20: _mcp_success(
+            20,
+            {
+                "structuredContent": {
+                    "simulation_id": "sim-1",
+                    "status": "completed",
+                    "result": {"status": "completed"},
+                }
+            },
+        ),
+        21: _mcp_success(21, {"structuredContent": {"attached_object_ids": ["ball-1"], "attached_simulations": ["sim-1"]}}),
+        22: _mcp_success(
+            22,
+            {
+                "structuredContent": {
+                    "status": "completed",
+                    "snapshot": {"scene": {"name": "Smoke Scene"}},
+                }
+            },
+        ),
+        23: _mcp_success(
+            23,
+            {
+                "structuredContent": {
+                    "scene": {"scene_id": scene_id},
+                    "report_path": persisted["scene_report_path"],
+                    "snapshot_path": persisted["scene_snapshot_path"],
+                }
+            },
+        ),
+        24: _mcp_success(
+            24,
+            {
+                "structuredContent": {
+                    "report_path": persisted["scene_report_path"],
+                    "markdown": "# Scene report",
+                }
+            },
+        ),
+        25: _mcp_success(25, {"structuredContent": {"removed_object_id": "ball-1"}}),
+    }
+
+
 class RemoteMCPLabSmokeTests(unittest.TestCase):
     def test_remote_smoke_success_creates_summary(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -21,30 +137,17 @@ class RemoteMCPLabSmokeTests(unittest.TestCase):
                 "session_path": str(session_dir / "session.json"),
                 "notebook_path": str(session_dir / "notebook.md"),
                 "report_path": str(session_dir / "report.md"),
+                "scene_path": str(session_dir / "scene.json"),
+                "scene_objects_path": str(session_dir / "scene-objects.json"),
+                "scene_simulations_path": str(session_dir / "scene-simulations.json"),
+                "scene_report_path": str(session_dir / "scene-report.md"),
+                "scene_snapshot_path": str(session_dir / "scene-exports.json"),
             }
             for path_text in persisted.values():
                 smoke.Path(path_text).write_text("ok", encoding="utf-8")
             output_path = temp_root / "summary.json"
 
-            responses = {
-                1: _mcp_success(1, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
-                2: _mcp_success(
-                    2,
-                    {"tools": [{"name": name} for name in sorted(smoke.EXISTING_TOOLS | smoke.LAB_TOOLS)]},
-                ),
-                3: _mcp_success(3, {"structuredContent": {"session_id": "lab-123", "paths": persisted}}),
-                5: _mcp_success(
-                    5,
-                    {
-                        "structuredContent": {
-                            "session": {"session_id": "lab-123"},
-                            "notebook_path": persisted["notebook_path"],
-                            "report_path": persisted["report_path"],
-                        }
-                    },
-                ),
-                6: _mcp_success(6, {"structuredContent": {"report_path": persisted["report_path"]}}),
-            }
+            responses = _success_responses(persisted, "lab-123")
 
             with patch.object(smoke, "mcp_request", side_effect=lambda *args, **kwargs: responses[kwargs["request_id"]]):
                 summary = smoke.run_remote_mcp_lab_smoke(
@@ -58,11 +161,17 @@ class RemoteMCPLabSmokeTests(unittest.TestCase):
 
             self.assertEqual(summary["final_status"], smoke.READY_LOCAL)
             self.assertTrue(summary["session_created"])
-            self.assertFalse(summary["advance_supported"])
-            self.assertIsNone(summary["advance_ok"])
+            self.assertTrue(summary["advance_supported"])
+            self.assertTrue(summary["advance_ok"])
             self.assertTrue(summary["get_ok"])
             self.assertTrue(summary["report_ok"])
             self.assertEqual(summary["session_id"], "lab-123")
+            self.assertTrue(summary["tool_calls"]["lab_agent_run"]["ok"])
+            self.assertTrue(summary["tool_calls"]["lab_models_debate"]["ok"])
+            self.assertTrue(summary["scene_created"])
+            self.assertEqual(summary["scene_id"], "scene-1")
+            self.assertTrue(summary["tool_calls"]["run_lab_simulation"]["ok"])
+            self.assertTrue(summary["tool_calls"]["generate_lab_report"]["ok"])
             self.assertTrue(output_path.exists())
 
     def test_remote_smoke_reports_missing_lab_tools(self) -> None:
@@ -120,22 +229,18 @@ class RemoteMCPLabSmokeTests(unittest.TestCase):
                 "session_path": str(session_dir / "session.json"),
                 "notebook_path": str(session_dir / "notebook.md"),
                 "report_path": str(session_dir / "report.md"),
+                "scene_path": str(session_dir / "scene.json"),
+                "scene_objects_path": str(session_dir / "scene-objects.json"),
+                "scene_simulations_path": str(session_dir / "scene-simulations.json"),
+                "scene_report_path": str(session_dir / "scene-report.md"),
+                "scene_snapshot_path": str(session_dir / "scene-exports.json"),
             }
             for path_text in persisted.values():
                 smoke.Path(path_text).write_text("ok", encoding="utf-8")
             output_path = temp_root / "summary.json"
             seen_headers: list[dict[str, str] | None] = []
 
-            responses = {
-                1: _mcp_success(1, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
-                2: _mcp_success(2, {"tools": [{"name": name} for name in sorted(smoke.EXISTING_TOOLS | smoke.LAB_TOOLS)]}),
-                3: _mcp_success(3, {"structuredContent": {"session_id": "lab-auth", "paths": persisted}}),
-                5: _mcp_success(
-                    5,
-                    {"structuredContent": {"session": {"session_id": "lab-auth"}, "report_path": persisted["report_path"]}},
-                ),
-                6: _mcp_success(6, {"structuredContent": {"report_path": persisted["report_path"]}}),
-            }
+            responses = _success_responses(persisted, "lab-auth")
 
             def fake_mcp_request(*args, **kwargs):  # type: ignore[no-untyped-def]
                 seen_headers.append(kwargs.get("headers"))
@@ -165,24 +270,16 @@ class RemoteMCPLabSmokeTests(unittest.TestCase):
                 "session_path": str(session_dir / "session.json"),
                 "notebook_path": str(session_dir / "notebook.md"),
                 "report_path": str(session_dir / "report.md"),
+                "scene_path": str(session_dir / "scene.json"),
+                "scene_objects_path": str(session_dir / "scene-objects.json"),
+                "scene_simulations_path": str(session_dir / "scene-simulations.json"),
+                "scene_report_path": str(session_dir / "scene-report.md"),
+                "scene_snapshot_path": str(session_dir / "scene-exports.json"),
             }
             for path_text in persisted.values():
                 smoke.Path(path_text).write_text("ok", encoding="utf-8")
             output_path = temp_root / "summary.json"
-            responses = {
-                1: _mcp_success(1, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
-                2: _mcp_success(
-                    2,
-                    {"tools": [{"name": name} for name in sorted(smoke.EXISTING_TOOLS | smoke.LAB_TOOLS | {"lab_session_advance"})]},
-                ),
-                3: _mcp_success(3, {"structuredContent": {"session_id": "lab-advance", "paths": persisted}}),
-                4: _mcp_success(4, {"structuredContent": {"updated_session": {"session_id": "lab-advance"}, "paths": persisted}}),
-                5: _mcp_success(
-                    5,
-                    {"structuredContent": {"session": {"session_id": "lab-advance"}, "report_path": persisted["report_path"]}},
-                ),
-                6: _mcp_success(6, {"structuredContent": {"report_path": persisted["report_path"]}}),
-            }
+            responses = _success_responses(persisted, "lab-advance")
             with patch.object(smoke, "mcp_request", side_effect=lambda *args, **kwargs: responses[kwargs["request_id"]]):
                 summary = smoke.run_remote_mcp_lab_smoke(
                     endpoint="http://127.0.0.1:8765/mcp",
@@ -198,33 +295,17 @@ class RemoteMCPLabSmokeTests(unittest.TestCase):
     def test_remote_smoke_accepts_supabase_artifact_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = smoke.Path(temp_dir) / "summary.json"
-            responses = {
-                1: _mcp_success(1, {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}),
-                2: _mcp_success(2, {"tools": [{"name": name} for name in sorted(smoke.EXISTING_TOOLS | smoke.LAB_TOOLS)]}),
-                3: _mcp_success(
-                    3,
-                    {
-                        "structuredContent": {
-                            "session_id": "lab-cloud",
-                            "paths": {
-                                "session": "supabase://public/lab_sessions/lab-cloud",
-                                "report": "supabase://public/reports/lab-cloud",
-                            },
-                        }
-                    },
-                ),
-                5: _mcp_success(
-                    5,
-                    {
-                        "structuredContent": {
-                            "session": {"session_id": "lab-cloud"},
-                            "notebook_path": "supabase://public/lab_sessions/lab-cloud#notebook",
-                            "report_path": "supabase://public/reports/lab-cloud",
-                        }
-                    },
-                ),
-                6: _mcp_success(6, {"structuredContent": {"report_path": "supabase://public/reports/lab-cloud"}}),
+            persisted = {
+                "session_path": "supabase://public/lab_sessions/lab-cloud",
+                "notebook_path": "supabase://public/lab_sessions/lab-cloud#notebook",
+                "report_path": "supabase://public/reports/lab-cloud",
+                "scene_path": "supabase://public/lab_scenes/scene-1",
+                "scene_objects_path": "supabase://public/lab_scene_objects?scene_id=scene-1",
+                "scene_simulations_path": "supabase://public/lab_simulations?scene_id=scene-1",
+                "scene_report_path": "supabase://public/lab_scenes/scene-1#report",
+                "scene_snapshot_path": "supabase://public/lab_scenes/scene-1#exports",
             }
+            responses = _success_responses(persisted, "lab-cloud")
             with patch.object(smoke, "mcp_request", side_effect=lambda *args, **kwargs: responses[kwargs["request_id"]]):
                 summary = smoke.run_remote_mcp_lab_smoke(
                     endpoint="https://mystic.dexproject.workers.dev/mcp",

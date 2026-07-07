@@ -100,6 +100,20 @@ LAB_EXPERIMENT_VERDICTS = {
     "error",
 }
 
+LAB_ENGINE_ADAPTERS = {
+    "math.sympy",
+    "physics.simple_projectile",
+    "physics.simple_collision",
+    "scene.three_json",
+}
+
+LAB_SIMULATION_STATUSES = {
+    "completed",
+    "engine_required",
+    "deferred",
+    "error",
+}
+
 LAB_FAILURE_TYPES = {
     "arithmetic",
     "logic_gap",
@@ -159,4 +173,3 @@ def validate_choice(field_name: str, value: str, allowed: set[str]) -> None:
     if value not in allowed:
         allowed_text = ", ".join(sorted(allowed))
         raise ValueError(f"{field_name} must be one of [{allowed_text}]")
-

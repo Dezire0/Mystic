@@ -22,13 +22,26 @@ EXISTING_TOOLS = {
 
 LAB_TOOLS = {
     "lab_session_create",
+    "lab_session_advance",
+    "lab_agent_run",
+    "lab_referee_review",
+    "lab_experiment_create",
+    "lab_experiment_run",
+    "lab_memory_search",
+    "lab_memory_write",
+    "lab_models_debate",
     "lab_session_get",
     "lab_report_generate",
-}
-
-OPTIONAL_LAB_TOOLS = {
-    "lab_session_advance",
-    "lab_referee_review",
+    "create_lab_scene",
+    "get_lab_scene",
+    "add_lab_object",
+    "update_lab_object",
+    "remove_lab_object",
+    "set_lab_parameters",
+    "run_lab_simulation",
+    "attach_simulation_to_scene",
+    "export_lab_snapshot",
+    "generate_lab_report",
 }
 
 READY_LOCAL = "READY_LOCAL_MCP_LAB"
@@ -160,6 +173,25 @@ def extract_tool_names(response: dict[str, Any]) -> set[str]:
     return names
 
 
+def extract_structured_content(response: dict[str, Any]) -> dict[str, Any]:
+    body = response.get("body")
+    if not isinstance(body, dict):
+        return {}
+    result = body.get("result")
+    if not isinstance(result, dict):
+        return {}
+    payload = result.get("structuredContent")
+    return payload if isinstance(payload, dict) else {}
+
+
+def tool_status(value: Any) -> str:
+    if isinstance(value, dict):
+        status = value.get("status")
+        if isinstance(status, str):
+            return status
+    return ""
+
+
 def validate_mcp_success(response: dict[str, Any], *, expected_id: int | None = None) -> list[str]:
     errors: list[str] = []
     body = response.get("body")
@@ -201,12 +233,15 @@ def run_remote_mcp_lab_smoke(
         "tools_list_ok": False,
         "existing_tools_present": False,
         "lab_tools_present": False,
-        "optional_lab_tools_present": False,
         "missing_tools": [],
+        "tool_names": [],
         "session_created": False,
         "session_id": "",
-        "advance_ok": None,
+        "scene_created": False,
+        "scene_id": "",
         "advance_supported": False,
+        "advance_ok": None,
+        "tool_calls": {},
         "get_ok": False,
         "report_ok": False,
         "persisted_paths": [],
@@ -264,26 +299,63 @@ def run_remote_mcp_lab_smoke(
         return write_summary(output_path, summary)
     summary["tools_list_ok"] = True
     tool_names = extract_tool_names(tools_list)
+    summary["tool_names"] = sorted(tool_names)
     missing_tools = sorted((EXISTING_TOOLS | LAB_TOOLS).difference(tool_names))
     summary["existing_tools_present"] = EXISTING_TOOLS.issubset(tool_names)
     summary["lab_tools_present"] = LAB_TOOLS.issubset(tool_names)
-    summary["optional_lab_tools_present"] = OPTIONAL_LAB_TOOLS.issubset(tool_names)
     summary["missing_tools"] = missing_tools
     if not summary["lab_tools_present"]:
         summary["errors"].append("required lab tools are missing from tools/list")
         summary["final_status"] = MISSING_LAB_TOOLS
         return write_summary(output_path, summary)
 
-    create_response = mcp_request(
+    mystic_status_response = mcp_request(
         endpoint,
         request_id=3,
+        method="tools/call",
+        params={"name": "mystic_status", "arguments": {}},
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(mystic_status_response, expected_id=3)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        payload = extract_structured_content(mystic_status_response)
+        summary["tool_calls"]["mystic_status"] = {
+            "ok": bool(payload.get("runtime_mode")),
+            "status": tool_status(payload),
+            "runtime_mode": payload.get("runtime_mode", ""),
+        }
+
+    health_response = mcp_request(
+        endpoint,
+        request_id=4,
+        method="tools/call",
+        params={"name": "health_check", "arguments": {}},
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(health_response, expected_id=4)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        payload = extract_structured_content(health_response)
+        summary["tool_calls"]["health_check"] = {
+            "ok": payload.get("status") == "ok",
+            "status": tool_status(payload),
+        }
+
+    create_response = mcp_request(
+        endpoint,
+        request_id=5,
         method="tools/call",
         params={
             "name": "lab_session_create",
             "arguments": {
                 "problem": session_problem,
                 "domain": domain,
-                "goal": "Prove external MCP clients can create and advance a real lab session.",
+                "goal": "Prove external MCP clients can create and operate a real cloud-native lab session.",
                 "mode": mode,
                 "participants": ["local_prime", "local_raven"],
             },
@@ -291,62 +363,265 @@ def run_remote_mcp_lab_smoke(
         timeout_seconds=timeout_seconds,
         headers=request_headers,
     )
-    errors = validate_mcp_success(create_response, expected_id=3)
+    errors = validate_mcp_success(create_response, expected_id=5)
     if errors:
         summary["errors"].extend(errors)
         summary["final_status"] = FAILED
         return write_summary(output_path, summary)
-    create_payload = create_response["body"]["result"]["structuredContent"]
+    create_payload = extract_structured_content(create_response)
     session_id = str(create_payload.get("session_id", "")).strip()
     if not session_id:
         summary["errors"].append("lab_session_create did not return session_id")
         return write_summary(output_path, summary)
     summary["session_created"] = True
     summary["session_id"] = session_id
+    summary["tool_calls"]["lab_session_create"] = {"ok": True, "status": str(create_payload.get("status", ""))}
     if isinstance(create_payload.get("paths"), dict):
         summary["persisted_paths"].extend(str(value) for value in create_payload["paths"].values())
 
-    if "lab_session_advance" in tool_names:
+    claim_id = ""
+    experiment_id = ""
+
+    advance_response = mcp_request(
+        endpoint,
+        request_id=6,
+        method="tools/call",
+        params={
+            "name": "lab_session_advance",
+            "arguments": {
+                "session_id": session_id,
+                "max_steps": 1,
+                "use_model_arena": False,
+                "use_verifier": True,
+            },
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(advance_response, expected_id=6)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        advance_payload = extract_structured_content(advance_response)
         summary["advance_supported"] = True
-        advance_response = mcp_request(
-            endpoint,
-            request_id=4,
-            method="tools/call",
-            params={
-                "name": "lab_session_advance",
-                "arguments": {
-                    "session_id": session_id,
-                    "max_steps": 1,
-                    "use_model_arena": False,
-                    "use_verifier": True,
+        summary["advance_ok"] = isinstance(advance_payload.get("updated_session"), dict)
+        summary["tool_calls"]["lab_session_advance"] = {
+            "ok": summary["advance_ok"],
+            "status": str(advance_payload.get("updated_session", {}).get("status", "")),
+        }
+        if isinstance(advance_payload.get("paths"), dict):
+            summary["persisted_paths"].extend(str(value) for value in advance_payload["paths"].values())
+
+    agent_response = mcp_request(
+        endpoint,
+        request_id=7,
+        method="tools/call",
+        params={
+            "name": "lab_agent_run",
+            "arguments": {
+                "session_id": session_id,
+                "agent_role": "Theorist",
+                "provider": "local_backend",
+                "task": "Propose one next research action.",
+                "context_ids": [],
+            },
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(agent_response, expected_id=7)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        agent_payload = extract_structured_content(agent_response)
+        provider_result = agent_payload.get("provider_result")
+        summary["tool_calls"]["lab_agent_run"] = {
+            "ok": bool(agent_payload.get("turn_id")) and tool_status(provider_result) in {"completed", "provider_required", "deferred"},
+            "status": str(agent_payload.get("status", "")),
+            "provider_status": tool_status(provider_result),
+        }
+
+    referee_response = mcp_request(
+        endpoint,
+        request_id=8,
+        method="tools/call",
+        params={
+            "name": "lab_referee_review",
+            "arguments": {
+                "session_id": session_id,
+                "text": "Check whether the current cloud-native session state is reviewable.",
+                "strictness": "hostile",
+            },
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(referee_response, expected_id=8)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        referee_payload = extract_structured_content(referee_response)
+        summary["tool_calls"]["lab_referee_review"] = {
+            "ok": tool_status(referee_payload.get("deferred")) == "deferred",
+            "status": str(referee_payload.get("verdict", "")),
+            "deferred_status": tool_status(referee_payload.get("deferred")),
+        }
+
+    memory_write_response = mcp_request(
+        endpoint,
+        request_id=9,
+        method="tools/call",
+        params={
+            "name": "lab_memory_write",
+            "arguments": {
+                "session_id": session_id,
+                "kind": "claim",
+                "payload": {
+                    "text": "Cloud smoke claim for memory search coverage.",
+                    "claim_type": "observation",
+                    "status": "HEURISTIC",
+                    "confidence": "low",
+                    "source_turn_id": "smoke",
                 },
             },
-            timeout_seconds=timeout_seconds,
-            headers=request_headers,
-        )
-        errors = validate_mcp_success(advance_response, expected_id=4)
-        if errors:
-            summary["errors"].extend(errors)
-        else:
-            advance_payload = advance_response["body"]["result"]["structuredContent"]
-            summary["advance_ok"] = isinstance(advance_payload, dict) and "updated_session" in advance_payload
-            if isinstance(advance_payload.get("paths"), dict):
-                summary["persisted_paths"].extend(str(value) for value in advance_payload["paths"].values())
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(memory_write_response, expected_id=9)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        memory_write_payload = extract_structured_content(memory_write_response)
+        claim_id = str(memory_write_payload.get("written_object_id", "")).strip()
+        summary["tool_calls"]["lab_memory_write"] = {
+            "ok": bool(claim_id),
+            "status": str(memory_write_payload.get("status", "")),
+            "written_object_id": claim_id,
+        }
+
+    memory_search_response = mcp_request(
+        endpoint,
+        request_id=10,
+        method="tools/call",
+        params={"name": "lab_memory_search", "arguments": {"query": "cloud smoke claim", "limit": 10}},
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(memory_search_response, expected_id=10)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        memory_search_payload = extract_structured_content(memory_search_response)
+        claims = memory_search_payload.get("claims")
+        claim_ids = {str(item.get("claim_id", "")) for item in claims if isinstance(item, dict)} if isinstance(claims, list) else set()
+        summary["tool_calls"]["lab_memory_search"] = {
+            "ok": bool(claim_id) and claim_id in claim_ids,
+            "claims_count": len(claims) if isinstance(claims, list) else 0,
+        }
+
+    experiment_create_response = mcp_request(
+        endpoint,
+        request_id=11,
+        method="tools/call",
+        params={
+            "name": "lab_experiment_create",
+            "arguments": {
+                "session_id": session_id,
+                "claim_id": claim_id or "smoke-claim",
+                "question": "Check whether the smoke claim can be tested later.",
+                "method": "python_bruteforce",
+                "inputs": {"candidate_answer": "smoke"},
+            },
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(experiment_create_response, expected_id=11)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        experiment_create_payload = extract_structured_content(experiment_create_response)
+        experiment_id = str(experiment_create_payload.get("experiment_id", "")).strip()
+        summary["tool_calls"]["lab_experiment_create"] = {
+            "ok": bool(experiment_id),
+            "status": str(experiment_create_payload.get("status", "")),
+            "experiment_id": experiment_id,
+        }
+
+    experiment_run_response = mcp_request(
+        endpoint,
+        request_id=12,
+        method="tools/call",
+        params={
+            "name": "lab_experiment_run",
+            "arguments": {
+                "session_id": session_id,
+                "experiment_id": experiment_id or "smoke-experiment",
+                "dry_run": False,
+            },
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(experiment_run_response, expected_id=12)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        experiment_run_payload = extract_structured_content(experiment_run_response)
+        summary["tool_calls"]["lab_experiment_run"] = {
+            "ok": tool_status(experiment_run_payload.get("deferred")) == "deferred",
+            "status": str(experiment_run_payload.get("verdict", "")),
+            "deferred_status": tool_status(experiment_run_payload.get("deferred")),
+        }
+
+    debate_response = mcp_request(
+        endpoint,
+        request_id=13,
+        method="tools/call",
+        params={
+            "name": "lab_models_debate",
+            "arguments": {
+                "session_id": session_id,
+                "question": "Debate whether the smoke claim merits a follow-up.",
+                "participants": ["openai_compatible"],
+                "rounds": ["independent_discovery"],
+                "use_existing_research_table": False,
+            },
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(debate_response, expected_id=13)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        debate_payload = extract_structured_content(debate_response)
+        provider_result = debate_payload.get("provider_result")
+        deferred = debate_payload.get("deferred")
+        summary["tool_calls"]["lab_models_debate"] = {
+            "ok": bool(debate_payload.get("summary")) and (
+                tool_status(provider_result) in {"completed", "provider_required", "deferred"} or tool_status(deferred) == "deferred"
+            ),
+            "provider_status": tool_status(provider_result),
+            "deferred_status": tool_status(deferred),
+        }
 
     get_response = mcp_request(
         endpoint,
-        request_id=5,
+        request_id=14,
         method="tools/call",
         params={"name": "lab_session_get", "arguments": {"session_id": session_id}},
         timeout_seconds=timeout_seconds,
         headers=request_headers,
     )
-    errors = validate_mcp_success(get_response, expected_id=5)
+    errors = validate_mcp_success(get_response, expected_id=14)
     if errors:
         summary["errors"].extend(errors)
     else:
-        get_payload = get_response["body"]["result"]["structuredContent"]
+        get_payload = extract_structured_content(get_response)
         summary["get_ok"] = isinstance(get_payload, dict) and get_payload.get("session", {}).get("session_id") == session_id
+        summary["tool_calls"]["lab_session_get"] = {"ok": summary["get_ok"]}
         for key in ("notebook_path", "report_path"):
             value = get_payload.get(key)
             if isinstance(value, str) and value:
@@ -354,7 +629,7 @@ def run_remote_mcp_lab_smoke(
 
     report_response = mcp_request(
         endpoint,
-        request_id=6,
+        request_id=15,
         method="tools/call",
         params={
             "name": "lab_report_generate",
@@ -368,14 +643,279 @@ def run_remote_mcp_lab_smoke(
         timeout_seconds=timeout_seconds,
         headers=request_headers,
     )
-    errors = validate_mcp_success(report_response, expected_id=6)
+    errors = validate_mcp_success(report_response, expected_id=15)
     if errors:
         summary["errors"].extend(errors)
     else:
-        report_payload = report_response["body"]["result"]["structuredContent"]
+        report_payload = extract_structured_content(report_response)
         summary["report_ok"] = isinstance(report_payload, dict) and bool(report_payload.get("report_path"))
+        summary["tool_calls"]["lab_report_generate"] = {
+            "ok": summary["report_ok"],
+            "status": str(report_payload.get("status", "")),
+        }
         if isinstance(report_payload.get("report_path"), str):
             summary["persisted_paths"].append(report_payload["report_path"])
+
+    scene_id = ""
+    simulation_id = ""
+
+    scene_create_response = mcp_request(
+        endpoint,
+        request_id=16,
+        method="tools/call",
+        params={
+            "name": "create_lab_scene",
+            "arguments": {
+                "session_id": session_id,
+                "title": "Smoke Scene",
+                "description": "Remote smoke scene",
+                "units": {"length": "m", "time": "s"},
+                "parameters": {"gravity": 9.81},
+                "metadata": {"source": "remote_smoke"},
+            },
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(scene_create_response, expected_id=16)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        scene_create_payload = extract_structured_content(scene_create_response)
+        scene_id = str(scene_create_payload.get("scene_id", "")).strip()
+        summary["scene_created"] = bool(scene_id)
+        summary["scene_id"] = scene_id
+        summary["tool_calls"]["create_lab_scene"] = {"ok": bool(scene_id)}
+        if isinstance(scene_create_payload.get("paths"), dict):
+            summary["persisted_paths"].extend(str(value) for value in scene_create_payload["paths"].values())
+
+    add_object_response = mcp_request(
+        endpoint,
+        request_id=17,
+        method="tools/call",
+        params={
+            "name": "add_lab_object",
+            "arguments": {
+                "scene_id": scene_id or "smoke-scene",
+                "object": {
+                    "id": "ball-1",
+                    "type": "rigid_body",
+                    "label": "Projectile",
+                    "position": {"x": 0, "y": 1, "z": 0},
+                    "rotation": {"x": 0, "y": 0, "z": 0},
+                    "scale": {"x": 1, "y": 1, "z": 1},
+                    "geometry": {"kind": "sphere"},
+                    "material": {"color": "#ff7a59"},
+                    "data": {"mass": 0.2, "velocity": {"x": 4, "y": 6, "z": 0}},
+                    "metadata": {"source": "remote_smoke"},
+                },
+            },
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(add_object_response, expected_id=17)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        add_object_payload = extract_structured_content(add_object_response)
+        summary["tool_calls"]["add_lab_object"] = {"ok": str(add_object_payload.get("object_id", "")) == "ball-1"}
+
+    update_object_response = mcp_request(
+        endpoint,
+        request_id=18,
+        method="tools/call",
+        params={
+            "name": "update_lab_object",
+            "arguments": {
+                "scene_id": scene_id or "smoke-scene",
+                "object_id": "ball-1",
+                "patch": {"label": "Projectile A"},
+            },
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(update_object_response, expected_id=18)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        update_object_payload = extract_structured_content(update_object_response)
+        updated_object = update_object_payload.get("object")
+        summary["tool_calls"]["update_lab_object"] = {
+            "ok": isinstance(updated_object, dict) and updated_object.get("label") == "Projectile A",
+        }
+
+    set_parameters_response = mcp_request(
+        endpoint,
+        request_id=19,
+        method="tools/call",
+        params={
+            "name": "set_lab_parameters",
+            "arguments": {
+                "scene_id": scene_id or "smoke-scene",
+                "parameters": {"gravity": 9.5, "air_resistance": False},
+                "metadata": {"updated_by": "remote_smoke"},
+            },
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(set_parameters_response, expected_id=19)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        set_parameters_payload = extract_structured_content(set_parameters_response)
+        summary["tool_calls"]["set_lab_parameters"] = {
+            "ok": isinstance(set_parameters_payload.get("parameters"), dict) and "gravity" in set_parameters_payload["parameters"],
+        }
+
+    simulation_response = mcp_request(
+        endpoint,
+        request_id=20,
+        method="tools/call",
+        params={
+            "name": "run_lab_simulation",
+            "arguments": {
+                "scene_id": scene_id or "smoke-scene",
+                "adapter_id": "physics.simple_projectile",
+                "inputs": {"object_id": "ball-1", "duration": 1.0, "time_step": 0.25},
+            },
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(simulation_response, expected_id=20)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        simulation_payload = extract_structured_content(simulation_response)
+        simulation_id = str(simulation_payload.get("simulation_id", "")).strip()
+        summary["tool_calls"]["run_lab_simulation"] = {
+            "ok": simulation_payload.get("status") == "completed" and bool(simulation_id),
+            "status": str(simulation_payload.get("status", "")),
+        }
+
+    attach_response = mcp_request(
+        endpoint,
+        request_id=21,
+        method="tools/call",
+        params={
+            "name": "attach_simulation_to_scene",
+            "arguments": {
+                "scene_id": scene_id or "smoke-scene",
+                "simulation_id": simulation_id or "smoke-sim",
+                "object_ids": ["ball-1"],
+                "evidence_refs": [],
+                "report_refs": [],
+                "apply_object_updates": True,
+            },
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(attach_response, expected_id=21)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        attach_payload = extract_structured_content(attach_response)
+        attached_object_ids = attach_payload.get("attached_object_ids")
+        summary["tool_calls"]["attach_simulation_to_scene"] = {
+            "ok": isinstance(attached_object_ids, list) and "ball-1" in attached_object_ids,
+        }
+
+    snapshot_response = mcp_request(
+        endpoint,
+        request_id=22,
+        method="tools/call",
+        params={
+            "name": "export_lab_snapshot",
+            "arguments": {
+                "scene_id": scene_id or "smoke-scene",
+                "adapter_id": "scene.three_json",
+                "include_simulations": True,
+            },
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(snapshot_response, expected_id=22)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        snapshot_payload = extract_structured_content(snapshot_response)
+        summary["tool_calls"]["export_lab_snapshot"] = {
+            "ok": snapshot_payload.get("status") == "completed" and isinstance(snapshot_payload.get("snapshot"), dict),
+            "status": str(snapshot_payload.get("status", "")),
+        }
+
+    scene_get_response = mcp_request(
+        endpoint,
+        request_id=23,
+        method="tools/call",
+        params={"name": "get_lab_scene", "arguments": {"scene_id": scene_id or "smoke-scene"}},
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(scene_get_response, expected_id=23)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        scene_get_payload = extract_structured_content(scene_get_response)
+        summary["tool_calls"]["get_lab_scene"] = {
+            "ok": isinstance(scene_get_payload.get("scene"), dict) and scene_get_payload["scene"].get("scene_id") == scene_id,
+        }
+        for key in ("report_path", "snapshot_path"):
+            value = scene_get_payload.get(key)
+            if isinstance(value, str) and value:
+                summary["persisted_paths"].append(value)
+
+    scene_report_response = mcp_request(
+        endpoint,
+        request_id=24,
+        method="tools/call",
+        params={
+            "name": "generate_lab_report",
+            "arguments": {
+                "scene_id": scene_id or "smoke-scene",
+                "format": "markdown",
+                "include_objects": True,
+                "include_simulations": True,
+            },
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(scene_report_response, expected_id=24)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        scene_report_payload = extract_structured_content(scene_report_response)
+        summary["tool_calls"]["generate_lab_report"] = {
+            "ok": bool(scene_report_payload.get("report_path")) and isinstance(scene_report_payload.get("markdown"), str),
+        }
+        if isinstance(scene_report_payload.get("report_path"), str):
+            summary["persisted_paths"].append(scene_report_payload["report_path"])
+
+    remove_object_response = mcp_request(
+        endpoint,
+        request_id=25,
+        method="tools/call",
+        params={
+            "name": "remove_lab_object",
+            "arguments": {"scene_id": scene_id or "smoke-scene", "object_id": "ball-1"},
+        },
+        timeout_seconds=timeout_seconds,
+        headers=request_headers,
+    )
+    errors = validate_mcp_success(remove_object_response, expected_id=25)
+    if errors:
+        summary["errors"].extend(errors)
+    else:
+        remove_object_payload = extract_structured_content(remove_object_response)
+        summary["tool_calls"]["remove_lab_object"] = {
+            "ok": str(remove_object_payload.get("removed_object_id", "")) == "ball-1",
+        }
 
     persisted_paths = []
     for item in dict.fromkeys(summary["persisted_paths"]):
@@ -389,6 +929,11 @@ def run_remote_mcp_lab_smoke(
             continue
         if not Path(path_text).exists():
             summary["errors"].append(f"persisted path missing on disk: {path_text}")
+
+    for tool_name in sorted(EXISTING_TOOLS | LAB_TOOLS):
+        call_summary = summary["tool_calls"].get(tool_name)
+        if not isinstance(call_summary, dict) or not call_summary.get("ok"):
+            summary["errors"].append(f"{tool_name} did not produce an acceptable smoke result")
 
     if summary["errors"]:
         summary["final_status"] = FAILED

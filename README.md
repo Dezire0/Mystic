@@ -1,27 +1,54 @@
-# Mystic v3
+# Mystic LAB
 
-Mystic v3 reinjects the trained Raven adapter into the live JSONL research loop, adds base-vs-adapter comparison plus promotion logic, and now exposes a local Research Table / debate UX through the FastAPI app and MCP server.
+Mystic LAB is an AI Research Lab OS. It combines the existing Raven training loop and research tooling with a lab-session orchestration layer, MCP access, cloud-native Worker deployment, and a staged roadmap toward engine-backed research execution and a 3D virtual lab.
+
+The current repository state includes:
+
+- the legacy/local JSONL Raven loop
+- the local-first LAB session backend
+- a public Cloudflare Worker + Supabase cloud-native LAB mode
+- ChatGPT remote MCP import support with `import_ready=true`
+- the original 13 LAB tools preserved in cloud-native mode, plus the 10 new Phase 1 scene/simulation tools
+
+Reference docs:
+
+- [docs/mystic_lab_os.md](/Users/JYH/Documents/Mystic/docs/mystic_lab_os.md)
+- [docs/mystic_lab_roadmap.md](/Users/JYH/Documents/Mystic/docs/mystic_lab_roadmap.md)
+- [docs/mystic_lab_3d_virtual_lab.md](/Users/JYH/Documents/Mystic/docs/mystic_lab_3d_virtual_lab.md)
+- [docs/mystic_lab_engine_adapter_layer.md](/Users/JYH/Documents/Mystic/docs/mystic_lab_engine_adapter_layer.md)
+- [docs/mystic_lab_domains.md](/Users/JYH/Documents/Mystic/docs/mystic_lab_domains.md)
+
+The current LAB status is intentionally conservative:
+
+- session orchestration is implemented
+- provider routing exists for explicit external model access
+- unsupported heavy paths return structured `deferred`
+- missing model providers return structured `provider_required`
+- Phase 1 scene tools, deterministic simple physics, and `scene.three_json` export are implemented
+- `math.sympy` is exposed through a deterministic local/native subset and returns structured `engine_required` in the Worker
+
+Mystic LAB also reinjects the trained Raven adapter into the live JSONL research loop, adds base-vs-adapter comparison plus promotion logic, and exposes a local Research Table / debate UX through the FastAPI app and MCP server.
 
 It keeps the design intentionally narrow:
 
 - local folders under `mystic_data/` remain the default storage path
 - append-only JSONL storage remains the default research/training loop
 - resumable processing through `mystic_data/state/processed_ids.jsonl`
-- optional Supabase-backed cloud-native phase-1 lab mode is available for public MCP
+- optional Supabase-backed cloud-native LAB mode is available for public MCP
 - no separate JS frontend bundle
 - no vector DB
 - no standalone web dashboard service outside the FastAPI app
-- no paid VPS requirement for phase-1 public MCP
+- no paid VPS requirement for cloud-native public MCP
 
-## Virtual Research Lab
+## Mystic LAB OS
 
-Mystic also includes a local-first Virtual Research Lab backend. It is a computational research orchestration layer, not a wet-lab control system and not a game.
+Mystic LAB includes a local-first AI Research Lab OS backend. It is a computational research orchestration layer, not a wet-lab control system and not a game.
 
 - lab sessions can be stored under `mystic_data/lab_sessions/` or in Supabase
 - each session persists structured `session.json`, `turns.json`, `claims.json`, `experiments.json`, `failures.json`, `memory_edges.json`, `notebook.md`, and `report.md`
 - the Research Table acts as the Model Arena and can import discoveries back into a lab session
 - MCP `lab_*` tools expose session create/get/advance, role execution, referee review, experiment create/run, memory search/write, model debate, and report generation
-- cloud-native phase-1 Worker mode directly serves `mystic_status`, `health_check`, `lab_session_create`, `lab_session_get`, and `lab_report_generate` from Supabase without a local Mac backend
+- cloud-native Worker mode directly serves the preserved 13-tool LAB baseline plus the 10 new Phase 1 scene/simulation tools from Supabase without a local Mac backend
 
 The core lab objects are:
 
@@ -40,7 +67,7 @@ Reality Anchor status rules are intentionally conservative:
 - incomplete proofs become `NEEDS_MORE_DETAIL`
 - only symbolic or strict manual validation should upgrade a claim to `PROVED`
 
-The default backend is still local JSON. When `MYSTIC_STORAGE_BACKEND=supabase`, the Cloudflare Worker can serve the phase-1 lab tools directly from Supabase while the full local Python backend remains available for richer local workflows.
+The default backend is still local JSON. When `MYSTIC_STORAGE_BACKEND=supabase`, the Cloudflare Worker can serve the current cloud-native LAB tools directly from Supabase while the full local Python backend remains available for richer local workflows.
 
 ## Lab Failure to Raven Dataset
 
@@ -216,7 +243,7 @@ The fixed public endpoints are expected to be:
 
 ## Free Cloud Deployment
 
-Mystic now supports a free-tier, cloud-native phase-1 MCP path that removes the dependency on a local Mac backend and quick tunnels for the core lab flow.
+Mystic LAB now supports a free-tier, cloud-native LAB MCP path that removes the dependency on a local Mac backend and quick tunnels for the core lab flow.
 
 Architecture:
 
@@ -225,13 +252,29 @@ Architecture:
 - Supabase Free Postgres for `lab_sessions`, `lab_turns`, `claims`, `failures`, `memory_edges`, and `reports`
 - optional object storage later for reports and larger artifacts
 
-Phase-1 cloud-native tools:
+Current cloud-native LAB tools exposed directly by the Worker:
 
 - `mystic_status`
 - `health_check`
 - `lab_session_create`
+- `lab_session_advance`
+- `lab_agent_run`
+- `lab_referee_review`
+- `lab_experiment_create`
+- `lab_experiment_run`
+- `lab_memory_search`
+- `lab_memory_write`
+- `lab_models_debate`
 - `lab_session_get`
 - `lab_report_generate`
+
+Cloud support levels:
+
+- fully cloud-backed via Supabase: `mystic_status`, `health_check`, `lab_session_create`, `lab_session_advance`, `lab_experiment_create`, `lab_memory_search`, `lab_memory_write`, `lab_session_get`, `lab_report_generate`
+- exposed with structured `deferred` responses until a worker-native executor exists: `lab_referee_review`, `lab_experiment_run`, `lab_models_debate` when `use_existing_research_table=false`
+- exposed with structured `provider_required` responses when an external model provider is not explicitly connected: `lab_agent_run`, `lab_models_debate`
+
+External model providers are never auto-logged-in by the Worker. Cloud-native model actions require explicit provider authorization through Cloudflare secrets or approved provider connection records.
 
 ### Supabase setup
 
@@ -252,7 +295,24 @@ MYSTIC_OAUTH_SIGNING_SECRET=YOUR_SIGNING_SECRET
 MYSTIC_OAUTH_DEV_STATIC_TOKEN=YOUR_TEST_TOKEN
 ```
 
-In this mode the Worker serves `/health` and `/mcp` directly. `MYSTIC_BACKEND_URL` is not required for the phase-1 tools.
+In this mode the Worker serves `/health` and `/mcp` directly. `MYSTIC_BACKEND_URL` is not required for the cloud-native LAB tools.
+
+Optional provider configuration uses placeholders only. Do not commit real values:
+
+```text
+MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL=https://YOUR_OPENAI_COMPAT_HOST
+MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL=gpt-4.1-mini
+MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY=YOUR_OPENAI_COMPAT_API_KEY
+MYSTIC_PROVIDER_GEMINI_MODEL=gemini-2.5-flash
+MYSTIC_PROVIDER_GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+MYSTIC_PROVIDER_ANTHROPIC_MODEL=claude-3-5-sonnet-latest
+MYSTIC_PROVIDER_ANTHROPIC_API_KEY=YOUR_ANTHROPIC_API_KEY
+```
+
+If these provider secrets are absent, the Worker still exposes the tool and returns a structured response with:
+
+- `provider_required=true` for missing external model providers
+- `status=deferred` for heavy cloud paths that are intentionally exposed but not yet executed in-worker
 
 ### Deploy and verify
 
@@ -272,13 +332,31 @@ python scripts/check_chatgpt_remote_mcp_readiness.py \
   --bearer-token "$MYSTIC_TEST_BEARER_TOKEN"
 ```
 
-Expected phase-1 outcome:
+Expected current cloud-native LAB outcome:
 
 - `/health` returns `{"status":"ok"}`
-- `tools/list` includes the phase-1 cloud-native tools
+- `tools/list` includes the full LAB cloud-native tool surface
 - `lab_session_create` writes to Supabase
+- `lab_session_advance` advances the session or returns a structured blocked/provider-required turn instead of crashing
+- `lab_memory_write` and `lab_memory_search` round-trip claims and memory objects through Supabase
 - `lab_session_get` reads from Supabase
 - `lab_report_generate` returns markdown and stores the current report in Supabase
+- model-dependent LAB tools return `provider_required` or `deferred` when explicit provider connectivity is unavailable
+
+## Phase 1 Status
+
+Implemented for [Issue #75](https://github.com/Dezire0/Mystic/issues/75) `Mystic LAB OS Phase 1: Math + Simple Physics + 3D Scene API`:
+
+- scene lifecycle MCP tools
+- `physics.simple_projectile`
+- `physics.simple_collision`
+- `scene.three_json`
+- scene-linked snapshot/report/archive storage in local JSON mode and Supabase mode
+
+Implemented with limits:
+
+- `math.sympy` executes through a deterministic local/native subset for basic evaluate and linear-solve flows
+- cloud-native `math.sympy` returns structured `engine_required` because the Worker runtime does not ship SymPy
 
 ### Roll back to local mode
 
@@ -289,7 +367,7 @@ To return to the existing local Python backend path:
 - set `MYSTIC_BACKEND_URL` in the Worker to the local tunnel or stable backend origin you want to proxy
 - redeploy the Worker
 
-This restores the pre-cloud-native behavior, including the richer local-only lab tools.
+This restores the pre-cloud-native behavior, including the richer local LAB execution paths and local provider integrations.
 
 `/mcp` is a JSON-RPC endpoint. Plain browser `GET` requests are not the protocol and may be rejected. Verify the public ingress with MCP `POST` requests instead:
 
@@ -307,7 +385,7 @@ The full local/public proxy MCP layer exposes:
 - `mystic_compare_models`
 - `mystic_run_research_table`
 
-For the Virtual Research Lab MCP flow, use protocol-level smoke checks instead of browser `GET` requests:
+For the Mystic LAB MCP flow, use protocol-level smoke checks instead of browser `GET` requests:
 
 ```bash
 python scripts/run_remote_mcp_lab_smoke.py \
@@ -414,7 +492,7 @@ If OAuth metadata is not implemented yet, the readiness report intentionally ret
 
 ### Remote MCP OAuth
 
-Mystic can expose a public MCP-powered Virtual Research Lab without OAuth, but ChatGPT remote MCP import readiness requires OAuth metadata and bearer-token validation.
+Mystic LAB can expose a public MCP-powered research lab without OAuth, but ChatGPT remote MCP import readiness requires OAuth metadata and bearer-token validation.
 
 - `READY_PUBLIC_MCP_LAB` means external MCP clients can reach the public `/mcp` endpoint and run lab tools.
 - `import_ready_candidate=true` means the public endpoint appears to have the minimum OAuth metadata and authenticated MCP behavior needed for a manual ChatGPT Developer Mode import attempt.
@@ -1130,7 +1208,7 @@ The workflow writes its summary to:
 
 - `mystic_data/workflows/<workflow_id>/summary.json`
 
-## Mystic v3 Reinjection
+## Mystic LAB Raven Reinjection
 
 Run the loop with the trained Raven adapter:
 

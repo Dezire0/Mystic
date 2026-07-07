@@ -96,3 +96,61 @@ create table if not exists public.reports (
   markdown text not null default '',
   created_at timestamptz not null default timezone('utc', now())
 );
+
+create table if not exists public.lab_scenes (
+  scene_id text primary key,
+  session_id text not null references public.lab_sessions(session_id) on delete cascade,
+  domain text not null,
+  title text not null,
+  description text not null default '',
+  units jsonb not null default '{}'::jsonb,
+  parameters jsonb not null default '{}'::jsonb,
+  attached_simulations jsonb not null default '[]'::jsonb,
+  evidence_refs jsonb not null default '[]'::jsonb,
+  report_refs jsonb not null default '[]'::jsonb,
+  metadata jsonb not null default '{}'::jsonb,
+  artifact_paths jsonb not null default '{}'::jsonb,
+  exports_json jsonb not null default '{}'::jsonb,
+  report_markdown text not null default '',
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists lab_scenes_session_id_idx on public.lab_scenes (session_id, updated_at);
+
+create table if not exists public.lab_scene_objects (
+  id text primary key,
+  scene_id text not null references public.lab_scenes(scene_id) on delete cascade,
+  type text not null,
+  label text not null,
+  position jsonb not null default '{"x":0,"y":0,"z":0}'::jsonb,
+  rotation jsonb not null default '{"x":0,"y":0,"z":0}'::jsonb,
+  scale jsonb not null default '{"x":1,"y":1,"z":1}'::jsonb,
+  geometry jsonb not null default '{}'::jsonb,
+  material jsonb not null default '{}'::jsonb,
+  data jsonb not null default '{}'::jsonb,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists lab_scene_objects_scene_id_idx on public.lab_scene_objects (scene_id, created_at);
+
+create table if not exists public.lab_simulations (
+  simulation_id text primary key,
+  scene_id text not null references public.lab_scenes(scene_id) on delete cascade,
+  session_id text not null references public.lab_sessions(session_id) on delete cascade,
+  adapter_id text not null,
+  status text not null,
+  inputs jsonb not null default '{}'::jsonb,
+  outputs jsonb not null default '{}'::jsonb,
+  evidence jsonb not null default '{}'::jsonb,
+  warnings jsonb not null default '[]'::jsonb,
+  errors jsonb not null default '[]'::jsonb,
+  attached_object_ids jsonb not null default '[]'::jsonb,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists lab_simulations_scene_id_idx on public.lab_simulations (scene_id, created_at);

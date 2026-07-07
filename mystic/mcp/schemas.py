@@ -1,6 +1,25 @@
 from __future__ import annotations
 
 
+SCENE_OBJECT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "type": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "position": {"type": "object"},
+        "rotation": {"type": "object"},
+        "scale": {"type": "object"},
+        "geometry": {"type": "object"},
+        "material": {"type": "object"},
+        "data": {"type": "object"},
+        "metadata": {"type": "object"},
+    },
+    "required": ["id", "type", "label", "position", "rotation", "scale", "geometry", "material", "data", "metadata"],
+    "additionalProperties": False,
+}
+
+
 TOOL_SCHEMAS = {
     "mystic_status": {
         "type": "object",
@@ -255,6 +274,113 @@ TOOL_SCHEMAS = {
         "required": ["session_id", "format", "include_failures", "include_next_actions"],
         "additionalProperties": False,
     },
+    "create_lab_scene": {
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "string", "minLength": 1},
+            "title": {"type": "string", "minLength": 1},
+            "description": {"type": "string"},
+            "units": {"type": "object"},
+            "parameters": {"type": "object"},
+            "metadata": {"type": "object"},
+        },
+        "required": ["session_id", "title"],
+        "additionalProperties": False,
+    },
+    "get_lab_scene": {
+        "type": "object",
+        "properties": {
+            "scene_id": {"type": "string", "minLength": 1},
+        },
+        "required": ["scene_id"],
+        "additionalProperties": False,
+    },
+    "add_lab_object": {
+        "type": "object",
+        "properties": {
+            "scene_id": {"type": "string", "minLength": 1},
+            "object": SCENE_OBJECT_SCHEMA,
+        },
+        "required": ["scene_id", "object"],
+        "additionalProperties": False,
+    },
+    "update_lab_object": {
+        "type": "object",
+        "properties": {
+            "scene_id": {"type": "string", "minLength": 1},
+            "object_id": {"type": "string", "minLength": 1},
+            "patch": {"type": "object"},
+        },
+        "required": ["scene_id", "object_id", "patch"],
+        "additionalProperties": False,
+    },
+    "remove_lab_object": {
+        "type": "object",
+        "properties": {
+            "scene_id": {"type": "string", "minLength": 1},
+            "object_id": {"type": "string", "minLength": 1},
+        },
+        "required": ["scene_id", "object_id"],
+        "additionalProperties": False,
+    },
+    "set_lab_parameters": {
+        "type": "object",
+        "properties": {
+            "scene_id": {"type": "string", "minLength": 1},
+            "parameters": {"type": "object"},
+            "units": {"type": "object"},
+            "metadata": {"type": "object"},
+        },
+        "required": ["scene_id", "parameters"],
+        "additionalProperties": False,
+    },
+    "run_lab_simulation": {
+        "type": "object",
+        "properties": {
+            "scene_id": {"type": "string", "minLength": 1},
+            "adapter_id": {
+                "type": "string",
+                "enum": ["math.sympy", "physics.simple_projectile", "physics.simple_collision"],
+            },
+            "inputs": {"type": "object"},
+        },
+        "required": ["scene_id", "adapter_id", "inputs"],
+        "additionalProperties": False,
+    },
+    "attach_simulation_to_scene": {
+        "type": "object",
+        "properties": {
+            "scene_id": {"type": "string", "minLength": 1},
+            "simulation_id": {"type": "string", "minLength": 1},
+            "object_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 32},
+            "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 32},
+            "report_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 32},
+            "apply_object_updates": {"type": "boolean"},
+        },
+        "required": ["scene_id", "simulation_id", "apply_object_updates"],
+        "additionalProperties": False,
+    },
+    "export_lab_snapshot": {
+        "type": "object",
+        "properties": {
+            "scene_id": {"type": "string", "minLength": 1},
+            "adapter_id": {"type": "string", "enum": ["scene.three_json"]},
+            "include_simulations": {"type": "boolean"},
+        },
+        "required": ["scene_id", "adapter_id", "include_simulations"],
+        "additionalProperties": False,
+    },
+    "generate_lab_report": {
+        "type": "object",
+        "properties": {
+            "scene_id": {"type": "string", "minLength": 1},
+            "format": {"type": "string", "enum": ["markdown"]},
+            "include_objects": {"type": "boolean"},
+            "include_simulations": {"type": "boolean"},
+        },
+        "required": ["scene_id", "format", "include_objects", "include_simulations"],
+        "additionalProperties": False,
+    },
     "mystic_export_teacher_packet": {
         "type": "object",
         "properties": {
@@ -419,6 +545,58 @@ TOOL_DEFINITIONS = [
         title="Generate Lab Report",
     ),
     _tool_definition(
+        "create_lab_scene",
+        "Create a persisted Mystic LAB scene linked to an existing session.",
+        title="Create Lab Scene",
+    ),
+    _tool_definition(
+        "get_lab_scene",
+        "Load a persisted Mystic LAB scene, including its objects and stored simulations.",
+        title="Get Lab Scene",
+        read_only=True,
+    ),
+    _tool_definition(
+        "add_lab_object",
+        "Add a structured object to a persisted Mystic LAB scene.",
+        title="Add Lab Object",
+    ),
+    _tool_definition(
+        "update_lab_object",
+        "Update a structured object inside a persisted Mystic LAB scene.",
+        title="Update Lab Object",
+    ),
+    _tool_definition(
+        "remove_lab_object",
+        "Remove a structured object from a persisted Mystic LAB scene.",
+        title="Remove Lab Object",
+    ),
+    _tool_definition(
+        "set_lab_parameters",
+        "Set or update scene-level parameters, units, and metadata for a persisted Mystic LAB scene.",
+        title="Set Lab Parameters",
+    ),
+    _tool_definition(
+        "run_lab_simulation",
+        "Run a deterministic Phase 1 scene simulation adapter or return a structured engine-required result.",
+        title="Run Lab Simulation",
+    ),
+    _tool_definition(
+        "attach_simulation_to_scene",
+        "Attach a stored simulation result to a scene and optionally apply its object updates.",
+        title="Attach Simulation To Scene",
+    ),
+    _tool_definition(
+        "export_lab_snapshot",
+        "Export a persisted scene through the scene.three_json Phase 1 adapter.",
+        title="Export Lab Snapshot",
+        read_only=True,
+    ),
+    _tool_definition(
+        "generate_lab_report",
+        "Generate a markdown scene report that links objects, simulations, and archive references.",
+        title="Generate Scene Report",
+    ),
+    _tool_definition(
         "mystic_export_teacher_packet",
         "Export recent uncertain or failing cases for teacher labeling.",
         title="Export Teacher Packet",
@@ -449,6 +627,16 @@ PUBLIC_TOOL_NAMES = [
     "lab_memory_write",
     "lab_models_debate",
     "lab_report_generate",
+    "create_lab_scene",
+    "get_lab_scene",
+    "add_lab_object",
+    "update_lab_object",
+    "remove_lab_object",
+    "set_lab_parameters",
+    "run_lab_simulation",
+    "attach_simulation_to_scene",
+    "export_lab_snapshot",
+    "generate_lab_report",
 ]
 
 

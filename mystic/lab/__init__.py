@@ -1,5 +1,6 @@
 from mystic.lab.reality_anchor import normalize_claim_status
 from mystic.lab.runner import LabRunner
+from mystic.lab.scene import LabScene, LabSceneBundle, LabSceneObject, LabSimulation
 from mystic.lab.session import (
     Claim,
     Experiment,
@@ -17,9 +18,13 @@ __all__ = [
     "Experiment",
     "Failure",
     "LabReport",
+    "LabScene",
+    "LabSceneBundle",
+    "LabSceneObject",
     "LabRunner",
     "LabSession",
     "LabSessionBundle",
+    "LabSimulation",
     "LabStorage",
     "LabTurn",
     "MemoryEdge",

@@ -89,6 +89,9 @@ class MysticMCPServer:
             "lab_session_advance": {"target_phase"},
             "lab_referee_review": {"claim_id"},
             "lab_memory_search": {"domain", "status_filter"},
+            "create_lab_scene": {"description", "units", "parameters", "metadata"},
+            "set_lab_parameters": {"units", "metadata"},
+            "attach_simulation_to_scene": {"object_ids", "evidence_refs", "report_refs"},
         }
         allowed = nullable_fields.get(name)
         if not allowed:

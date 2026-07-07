@@ -9,6 +9,7 @@ from typing import Any
 import requests
 
 from mystic.lab.reports import render_report
+from mystic.lab.scene import LabScene, LabSceneBundle, LabSceneObject, LabSimulation
 from mystic.lab.schema import PHASE_TO_ROOM
 from mystic.lab.session import Claim, Experiment, Failure, LabSession, LabSessionBundle, LabTurn, MemoryEdge
 
@@ -25,6 +26,14 @@ ARTIFACT_NAMES = (
     "report",
 )
 
+SCENE_ARTIFACT_NAMES = (
+    "scene",
+    "objects",
+    "simulations",
+    "report",
+    "snapshot",
+)
+
 
 def _session_field_names() -> set[str]:
     return {field.name for field in fields(LabSession)}
@@ -33,13 +42,22 @@ def _session_field_names() -> set[str]:
 LAB_SESSION_FIELD_NAMES = _session_field_names()
 
 
+def _scene_field_names() -> set[str]:
+    return {field.name for field in fields(LabScene)}
+
+
+LAB_SCENE_FIELD_NAMES = _scene_field_names()
+
+
 class LocalJSONLabStorage:
     backend_name = "local"
 
     def __init__(self, root_path: str | Path) -> None:
         self.root_path = Path(root_path)
         self.base_dir = self.root_path / "mystic_data" / "lab_sessions"
+        self.scenes_base_dir = self.root_path / "mystic_data" / "lab_scenes"
         self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.scenes_base_dir.mkdir(parents=True, exist_ok=True)
 
     def session_dir(self, session_id: str) -> Path:
         return self.base_dir / session_id
@@ -101,6 +119,61 @@ class LocalJSONLabStorage:
         if not self.base_dir.exists():
             return []
         return [path.name for path in sorted(self.base_dir.iterdir(), reverse=True) if path.is_dir()]
+
+    def scene_dir(self, scene_id: str) -> Path:
+        return self.scenes_base_dir / scene_id
+
+    def save_scene(self, scene_bundle: LabSceneBundle) -> dict[str, str]:
+        scene_dir = self.scene_dir(scene_bundle.scene.scene_id)
+        scene_dir.mkdir(parents=True, exist_ok=True)
+        paths = {
+            "scene": scene_dir / "scene.json",
+            "objects": scene_dir / "objects.json",
+            "simulations": scene_dir / "simulations.json",
+            "report": scene_dir / "report.md",
+            "snapshot": scene_dir / "exports.json",
+        }
+        scene_bundle.scene.artifact_paths = {name: str(path) for name, path in paths.items()}
+        paths["scene"].write_text(json.dumps(scene_bundle.scene.to_dict(), indent=2), encoding="utf-8")
+        paths["objects"].write_text(json.dumps([item.to_dict() for item in scene_bundle.objects], indent=2), encoding="utf-8")
+        paths["simulations"].write_text(
+            json.dumps([item.to_dict() for item in scene_bundle.simulations], indent=2), encoding="utf-8"
+        )
+        paths["report"].write_text(scene_bundle.scene.report_markdown or "", encoding="utf-8")
+        paths["snapshot"].write_text(json.dumps(scene_bundle.scene.exports_json, indent=2), encoding="utf-8")
+        return {name: str(path) for name, path in paths.items()}
+
+    def load_scene(self, scene_id: str) -> LabSceneBundle:
+        scene_dir = self.scene_dir(scene_id)
+        scene_payload = self._load_json(scene_dir / "scene.json")
+        if not isinstance(scene_payload, dict):
+            raise FileNotFoundError(scene_dir / "scene.json")
+        scene = LabScene(**scene_payload)
+        if (scene_dir / "report.md").exists():
+            scene.report_markdown = (scene_dir / "report.md").read_text(encoding="utf-8")
+        if (scene_dir / "exports.json").exists():
+            scene.exports_json = self._load_json(scene_dir / "exports.json", {})
+        return LabSceneBundle(
+            scene=scene,
+            objects=[LabSceneObject(**payload) for payload in self._load_json(scene_dir / "objects.json", [])],
+            simulations=[LabSimulation(**payload) for payload in self._load_json(scene_dir / "simulations.json", [])],
+        )
+
+    def list_scene_ids(self, session_id: str | None = None) -> list[str]:
+        if not self.scenes_base_dir.exists():
+            return []
+        scene_ids = [path.name for path in sorted(self.scenes_base_dir.iterdir(), reverse=True) if path.is_dir()]
+        if not session_id:
+            return scene_ids
+        matched: list[str] = []
+        for scene_id in scene_ids:
+            try:
+                scene = self.load_scene(scene_id).scene
+            except Exception:
+                continue
+            if scene.session_id == session_id:
+                matched.append(scene_id)
+        return matched
 
     def describe_status(self) -> dict[str, Any]:
         return {
@@ -208,6 +281,54 @@ class SupabaseLabStorage:
         rows = self._select_rows("lab_sessions", {}, order="updated_at.desc", columns="session_id")
         return [str(row.get("session_id", "")).strip() for row in rows if str(row.get("session_id", "")).strip()]
 
+    def save_scene(self, scene_bundle: LabSceneBundle) -> dict[str, str]:
+        self._ensure_configured()
+        scene_bundle.scene.artifact_paths = self._scene_artifact_paths(scene_bundle.scene.scene_id)
+        self._upsert_rows("lab_scenes", [scene_bundle.scene.to_dict()], on_conflict="scene_id")
+        self._replace_scene_rows(
+            "lab_scene_objects",
+            scene_bundle.scene.scene_id,
+            [item.to_dict() for item in scene_bundle.objects],
+            key_name="id",
+        )
+        self._replace_scene_rows(
+            "lab_simulations",
+            scene_bundle.scene.scene_id,
+            [item.to_dict() for item in scene_bundle.simulations],
+            key_name="simulation_id",
+        )
+        return scene_bundle.scene.artifact_paths
+
+    def load_scene(self, scene_id: str) -> LabSceneBundle:
+        self._ensure_configured()
+        scene_row = self._select_one("lab_scenes", {"scene_id": f"eq.{scene_id}"})
+        if scene_row is None:
+            raise FileNotFoundError(scene_id)
+        scene_payload = {
+            key: scene_row[key]
+            for key in LAB_SCENE_FIELD_NAMES
+            if key in scene_row
+        }
+        return LabSceneBundle(
+            scene=LabScene(**scene_payload),
+            objects=[
+                LabSceneObject(**payload)
+                for payload in self._select_rows("lab_scene_objects", {"scene_id": f"eq.{scene_id}"}, order="created_at.asc")
+            ],
+            simulations=[
+                LabSimulation(**payload)
+                for payload in self._select_rows("lab_simulations", {"scene_id": f"eq.{scene_id}"}, order="created_at.asc")
+            ],
+        )
+
+    def list_scene_ids(self, session_id: str | None = None) -> list[str]:
+        self._ensure_configured()
+        filters: dict[str, str] = {}
+        if session_id:
+            filters["session_id"] = f"eq.{session_id}"
+        rows = self._select_rows("lab_scenes", filters, order="updated_at.desc", columns="scene_id")
+        return [str(row.get("scene_id", "")).strip() for row in rows if str(row.get("scene_id", "")).strip()]
+
     def describe_status(self) -> dict[str, Any]:
         missing_env = []
         if not self.supabase_url:
@@ -244,6 +365,15 @@ class SupabaseLabStorage:
             "report": f"supabase://{self.schema}/reports/{session_id}",
         }
 
+    def _scene_artifact_paths(self, scene_id: str) -> dict[str, str]:
+        return {
+            "scene": f"supabase://{self.schema}/lab_scenes/{scene_id}",
+            "objects": f"supabase://{self.schema}/lab_scene_objects?scene_id={scene_id}",
+            "simulations": f"supabase://{self.schema}/lab_simulations?scene_id={scene_id}",
+            "report": f"supabase://{self.schema}/lab_scenes/{scene_id}#report",
+            "snapshot": f"supabase://{self.schema}/lab_scenes/{scene_id}#exports",
+        }
+
     def _replace_session_rows(
         self,
         table: str,
@@ -259,6 +389,26 @@ class SupabaseLabStorage:
         for row in rows:
             item = dict(row)
             item.setdefault("session_id", session_id)
+            if key_name not in item:
+                raise ValueError(f"{table} row missing key {key_name}")
+            payload.append(item)
+        self._insert_rows(table, payload)
+
+    def _replace_scene_rows(
+        self,
+        table: str,
+        scene_id: str,
+        rows: list[dict[str, Any]],
+        *,
+        key_name: str,
+    ) -> None:
+        self._delete_rows(table, {"scene_id": f"eq.{scene_id}"})
+        if not rows:
+            return
+        payload = []
+        for row in rows:
+            item = dict(row)
+            item.setdefault("scene_id", scene_id)
             if key_name not in item:
                 raise ValueError(f"{table} row missing key {key_name}")
             payload.append(item)
@@ -376,6 +526,15 @@ class LabStorage:
 
     def list_session_ids(self) -> list[str]:
         return self._backend.list_session_ids()
+
+    def save_scene(self, scene_bundle: LabSceneBundle) -> dict[str, str]:
+        return self._backend.save_scene(scene_bundle)
+
+    def load_scene(self, scene_id: str) -> LabSceneBundle:
+        return self._backend.load_scene(scene_id)
+
+    def list_scene_ids(self, session_id: str | None = None) -> list[str]:
+        return self._backend.list_scene_ids(session_id)
 
     def describe_status(self) -> dict[str, Any]:
         return self._backend.describe_status()

@@ -6,6 +6,7 @@ from typing import Any
 import json
 import uuid
 
+from mystic.lab.adapters import apply_simulation_to_scene, execute_adapter, export_scene, render_scene_report
 from mystic.lab.agents import build_role_task, model_role_for_agent, role_for_phase, room_for_phase
 from mystic.lab.claims import claims_from_turn
 from mystic.lab.experiments import summarize_experiment
@@ -14,6 +15,7 @@ from mystic.lab.memory_graph import make_edge
 from mystic.lab.reality_anchor import normalize_claim_status
 from mystic.lab.reports import render_report
 from mystic.lab.schema import LAB_PHASES, PHASE_TO_ROOM
+from mystic.lab.scene import LabScene, LabSceneBundle, LabSceneObject, LabSimulation, normalize_scene_object_payload
 from mystic.lab.session import Claim, Experiment, LabSession, LabSessionBundle, LabTurn, MemoryEdge
 from mystic.lab.storage import LabStorage
 
@@ -381,6 +383,251 @@ class LabRunner:
                 "surviving_claims": len(report.surviving_claims),
                 "failed_claims": len(report.failed_claims),
                 "next_actions": len(report.next_actions),
+            },
+        }
+
+    def create_scene(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        description: str = "",
+        units: dict[str, Any] | None = None,
+        parameters: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        session_bundle = self.storage.load_bundle(session_id)
+        scene_id = f"scene-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
+        scene = LabScene(
+            scene_id=scene_id,
+            session_id=session_id,
+            domain=session_bundle.session.domain,
+            title=title.strip(),
+            description=description,
+            units=dict(units or {}),
+            parameters=dict(parameters or {}),
+            metadata={"scene_adapter": "scene.three_json", **dict(metadata or {})},
+        )
+        scene_bundle = LabSceneBundle(scene=scene)
+        paths = self.storage.save_scene(scene_bundle)
+        return {
+            "scene_id": scene_id,
+            "session_id": session_id,
+            "paths": paths,
+            "scene": scene.to_dict(),
+        }
+
+    def get_scene(self, *, scene_id: str) -> dict[str, Any]:
+        scene_bundle = self.storage.load_scene(scene_id)
+        return self._scene_payload(scene_bundle)
+
+    def add_object(self, *, scene_id: str, object: dict[str, Any]) -> dict[str, Any]:
+        scene_bundle = self.storage.load_scene(scene_id)
+        normalized = normalize_scene_object_payload(object, scene_id=scene_id)
+        scene_object = LabSceneObject(**normalized)
+        scene_bundle.objects.append(scene_object)
+        scene_bundle.scene.touch()
+        paths = self.storage.save_scene(scene_bundle)
+        return {
+            "scene_id": scene_id,
+            "object_id": scene_object.id,
+            "object": scene_object.to_dict(),
+            "paths": paths,
+        }
+
+    def update_object(self, *, scene_id: str, object_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        scene_bundle = self.storage.load_scene(scene_id)
+        target = self._scene_object_by_id(scene_bundle, object_id)
+        updated_payload = target.to_dict()
+        updated_payload.update({key: value for key, value in patch.items() if key not in {"scene_id", "id", "created_at"}})
+        normalized = normalize_scene_object_payload(updated_payload, scene_id=scene_id)
+        target.type = normalized["type"]
+        target.label = normalized["label"]
+        target.position = normalized["position"]
+        target.rotation = normalized["rotation"]
+        target.scale = normalized["scale"]
+        target.geometry = normalized["geometry"]
+        target.material = normalized["material"]
+        target.data = normalized["data"]
+        target.metadata = normalized["metadata"]
+        target.touch()
+        scene_bundle.scene.touch()
+        paths = self.storage.save_scene(scene_bundle)
+        return {
+            "scene_id": scene_id,
+            "object_id": target.id,
+            "object": target.to_dict(),
+            "paths": paths,
+        }
+
+    def remove_object(self, *, scene_id: str, object_id: str) -> dict[str, Any]:
+        scene_bundle = self.storage.load_scene(scene_id)
+        removed = self._scene_object_by_id(scene_bundle, object_id)
+        scene_bundle.objects = [item for item in scene_bundle.objects if item.id != object_id]
+        for simulation in scene_bundle.simulations:
+            simulation.attached_object_ids = [item for item in simulation.attached_object_ids if item != object_id]
+            simulation.touch()
+        scene_bundle.scene.touch()
+        paths = self.storage.save_scene(scene_bundle)
+        return {
+            "scene_id": scene_id,
+            "removed_object_id": removed.id,
+            "paths": paths,
+        }
+
+    def set_scene_parameters(
+        self,
+        *,
+        scene_id: str,
+        parameters: dict[str, Any],
+        units: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        scene_bundle = self.storage.load_scene(scene_id)
+        scene_bundle.scene.parameters.update(dict(parameters))
+        if units:
+            scene_bundle.scene.units.update(dict(units))
+        if metadata:
+            scene_bundle.scene.metadata.update(dict(metadata))
+        scene_bundle.scene.touch()
+        paths = self.storage.save_scene(scene_bundle)
+        return {
+            "scene_id": scene_id,
+            "parameters": dict(scene_bundle.scene.parameters),
+            "units": dict(scene_bundle.scene.units),
+            "paths": paths,
+        }
+
+    def run_simulation(self, *, scene_id: str, adapter_id: str, inputs: dict[str, Any]) -> dict[str, Any]:
+        scene_bundle = self.storage.load_scene(scene_id)
+        result = execute_adapter(adapter_id, scene_bundle, dict(inputs))
+        simulation = LabSimulation(
+            simulation_id=f"sim-{uuid.uuid4().hex[:12]}",
+            scene_id=scene_bundle.scene.scene_id,
+            session_id=scene_bundle.scene.session_id,
+            adapter_id=adapter_id,
+            status=str(result["status"]),
+            inputs=dict(inputs),
+            outputs=dict(result.get("outputs", {})) if isinstance(result.get("outputs"), dict) else {},
+            evidence=dict(result.get("evidence", {})) if isinstance(result.get("evidence"), dict) else {},
+            warnings=[str(item) for item in result.get("warnings", []) if str(item)],
+            errors=[str(item) for item in result.get("errors", []) if str(item)],
+            attached_object_ids=[
+                str(item).strip()
+                for item in inputs.get("object_ids", [])
+                if str(item).strip()
+            ] or ([str(inputs.get("object_id")).strip()] if str(inputs.get("object_id", "")).strip() else []),
+            metadata={
+                "engine_status": result["status"],
+                "scene_adapter": scene_bundle.scene.metadata.get("scene_adapter", "scene.three_json"),
+            },
+        )
+        scene_bundle.simulations.append(simulation)
+        scene_bundle.scene.evidence_refs.append(f"simulation:{simulation.simulation_id}")
+        scene_bundle.scene.touch()
+        paths = self.storage.save_scene(scene_bundle)
+        return {
+            "scene_id": scene_id,
+            "simulation_id": simulation.simulation_id,
+            "status": simulation.status,
+            "result": result,
+            "paths": paths,
+        }
+
+    def attach_simulation_to_scene(
+        self,
+        *,
+        scene_id: str,
+        simulation_id: str,
+        object_ids: list[str] | None = None,
+        evidence_refs: list[str] | None = None,
+        report_refs: list[str] | None = None,
+        apply_object_updates: bool = True,
+    ) -> dict[str, Any]:
+        scene_bundle = self.storage.load_scene(scene_id)
+        simulation = self._scene_simulation_by_id(scene_bundle, simulation_id)
+        selected_object_ids = [str(item).strip() for item in (object_ids or []) if str(item).strip()]
+        if not selected_object_ids:
+            selected_object_ids = list(simulation.attached_object_ids)
+        simulation.attached_object_ids = selected_object_ids
+        if simulation_id not in scene_bundle.scene.attached_simulations:
+            scene_bundle.scene.attached_simulations.append(simulation_id)
+        for ref in evidence_refs or []:
+            ref_text = str(ref).strip()
+            if ref_text and ref_text not in scene_bundle.scene.evidence_refs:
+                scene_bundle.scene.evidence_refs.append(ref_text)
+        for ref in report_refs or []:
+            ref_text = str(ref).strip()
+            if ref_text and ref_text not in scene_bundle.scene.report_refs:
+                scene_bundle.scene.report_refs.append(ref_text)
+        if apply_object_updates and simulation.status == "completed":
+            apply_simulation_to_scene(scene_bundle, simulation, selected_object_ids)
+        simulation.touch()
+        scene_bundle.scene.touch()
+        paths = self.storage.save_scene(scene_bundle)
+        return {
+            "scene_id": scene_id,
+            "simulation_id": simulation_id,
+            "attached_object_ids": list(simulation.attached_object_ids),
+            "attached_simulations": list(scene_bundle.scene.attached_simulations),
+            "paths": paths,
+        }
+
+    def export_snapshot(
+        self,
+        *,
+        scene_id: str,
+        adapter_id: str,
+        include_simulations: bool,
+    ) -> dict[str, Any]:
+        scene_bundle = self.storage.load_scene(scene_id)
+        export_result = export_scene(adapter_id, scene_bundle, include_simulations=include_simulations)
+        if export_result["status"] == "completed":
+            scene_bundle.scene.exports_json[adapter_id] = export_result["outputs"]["snapshot"]
+            scene_bundle.scene.touch()
+            paths = self.storage.save_scene(scene_bundle)
+        else:
+            paths = scene_bundle.scene.artifact_paths
+        return {
+            "scene_id": scene_id,
+            "adapter_id": adapter_id,
+            "status": export_result["status"],
+            "snapshot": export_result.get("outputs", {}).get("snapshot"),
+            "paths": paths,
+        }
+
+    def generate_scene_report(
+        self,
+        *,
+        scene_id: str,
+        format: str,
+        include_objects: bool,
+        include_simulations: bool,
+    ) -> dict[str, Any]:
+        if format != "markdown":
+            raise ValueError("Only markdown report generation is supported.")
+        scene_bundle = self.storage.load_scene(scene_id)
+        scene_bundle.scene.report_markdown = render_scene_report(scene_bundle)
+        report_path = scene_bundle.scene.artifact_paths.get("report", "")
+        if report_path and report_path not in scene_bundle.scene.report_refs:
+            scene_bundle.scene.report_refs.append(report_path)
+        for simulation in scene_bundle.simulations:
+            refs = simulation.metadata.setdefault("report_refs", [])
+            if isinstance(refs, list) and report_path and report_path not in refs:
+                refs.append(report_path)
+            simulation.touch()
+        scene_bundle.scene.touch()
+        paths = self.storage.save_scene(scene_bundle)
+        object_count = len(scene_bundle.objects) if include_objects else 0
+        simulation_count = len(scene_bundle.simulations) if include_simulations else 0
+        return {
+            "scene_id": scene_id,
+            "report_path": paths["report"],
+            "markdown": scene_bundle.scene.report_markdown,
+            "summary": {
+                "objects": object_count,
+                "simulations": simulation_count,
+                "attached_simulations": len(scene_bundle.scene.attached_simulations),
             },
         }
 
@@ -891,6 +1138,35 @@ class LabRunner:
             bundle.experiments.append(experiment)
             imported_experiments += 1
         return imported_claims, imported_failures, imported_experiments
+
+    @staticmethod
+    def _scene_object_by_id(scene_bundle: LabSceneBundle, object_id: str) -> LabSceneObject:
+        for item in scene_bundle.objects:
+            if item.id == object_id:
+                return item
+        raise KeyError(f"Unknown scene object id: {object_id}")
+
+    @staticmethod
+    def _scene_simulation_by_id(scene_bundle: LabSceneBundle, simulation_id: str) -> LabSimulation:
+        for item in scene_bundle.simulations:
+            if item.simulation_id == simulation_id:
+                return item
+        raise KeyError(f"Unknown simulation_id: {simulation_id}")
+
+    @staticmethod
+    def _scene_payload(scene_bundle: LabSceneBundle) -> dict[str, Any]:
+        return {
+            "scene": scene_bundle.scene.to_dict(),
+            "scene_id": scene_bundle.scene.scene_id,
+            "session_id": scene_bundle.scene.session_id,
+            "objects": [item.to_dict() for item in scene_bundle.objects],
+            "simulations": [item.to_dict() for item in scene_bundle.simulations],
+            "attached_simulations": list(scene_bundle.scene.attached_simulations),
+            "report_path": scene_bundle.scene.artifact_paths.get("report", ""),
+            "snapshot_path": scene_bundle.scene.artifact_paths.get("snapshot", ""),
+            "report_markdown": scene_bundle.scene.report_markdown,
+            "exports": dict(scene_bundle.scene.exports_json),
+        }
 
 
 __all__ = ["LabRunner"]
