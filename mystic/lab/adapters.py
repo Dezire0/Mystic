@@ -23,6 +23,17 @@ def engine_required(adapter_id: str, message: str, **extra: Any) -> dict[str, An
     return payload
 
 
+def unsupported_expression(adapter_id: str, message: str, **extra: Any) -> dict[str, Any]:
+    payload = {
+        "status": "unsupported_expression",
+        "adapter_id": adapter_id,
+        "message": message,
+        "supported_in_worker": True,
+    }
+    payload.update(extra)
+    return payload
+
+
 def deferred(adapter_id: str, message: str, **extra: Any) -> dict[str, Any]:
     payload = {
         "status": "deferred",
@@ -185,46 +196,84 @@ def apply_simulation_to_scene(scene_bundle: LabSceneBundle, simulation: LabSimul
 
 def run_math_sympy(inputs: dict[str, Any]) -> dict[str, Any]:
     operation = str(inputs.get("operation", "evaluate")).strip() or "evaluate"
-    if _sympy is not None:
-        return _run_math_with_sympy(operation, inputs)
     warnings = ["sympy_not_installed_using_native_subset"]
-    if operation == "evaluate":
-        expression = str(inputs.get("expression", "")).strip()
-        if not expression:
-            return engine_required("math.sympy", "expression is required for math.sympy evaluate")
-        variables = _numeric_variables(inputs.get("variables"))
-        result = _evaluate_numeric_expression(expression, variables)
-        return completed(
+    try:
+        if _sympy is not None:
+            return _run_math_with_sympy(operation, inputs)
+        if operation == "evaluate":
+            expression = str(inputs.get("expression", "")).strip()
+            if not expression:
+                return engine_required("math.sympy", "expression is required for math.sympy evaluate")
+            variables = _numeric_variables(inputs.get("variables"))
+            result = _evaluate_numeric_expression(expression, variables)
+            return completed(
+                "math.sympy",
+                inputs=inputs,
+                outputs={"operation": operation, "result": result},
+                evidence={"implementation": "native_subset", "grammar": "arithmetic_v1"},
+                warnings=warnings,
+            )
+        if operation == "substitute":
+            expression = str(inputs.get("expression", "")).strip()
+            if not expression:
+                return engine_required("math.sympy", "expression is required for math.sympy substitute")
+            variables = _numeric_variables(inputs.get("variables"))
+            substituted = _substitute_math_expression(_parse_math_expression(expression), variables)
+            simplified = _simplify_math_expression(substituted)
+            remaining = sorted(_expression_symbols(simplified))
+            outputs: dict[str, Any] = {
+                "operation": operation,
+                "expression": _format_math_expression(simplified),
+                "remaining_variables": remaining,
+            }
+            if not remaining:
+                outputs["result"] = _evaluate_numeric_node(simplified)
+            return completed(
+                "math.sympy",
+                inputs=inputs,
+                outputs=outputs,
+                evidence={"implementation": "native_subset", "grammar": "arithmetic_v1"},
+                warnings=warnings,
+            )
+        if operation == "simplify":
+            expression = str(inputs.get("expression", "")).strip()
+            if not expression:
+                return engine_required("math.sympy", "expression is required for math.sympy simplify")
+            simplified = _simplify_math_expression(_parse_math_expression(expression))
+            return completed(
+                "math.sympy",
+                inputs=inputs,
+                outputs={"operation": operation, "result": _format_math_expression(simplified)},
+                evidence={"implementation": "native_subset", "grammar": "arithmetic_v1"},
+                warnings=warnings,
+            )
+        if operation == "solve_linear":
+            equation = str(inputs.get("equation", "")).strip()
+            variable = str(inputs.get("variable", "x")).strip() or "x"
+            if not equation or "=" not in equation:
+                return engine_required("math.sympy", "solve_linear requires an equation string containing '='")
+            solution = _solve_linear_equation(equation, variable, _numeric_variables(inputs.get("variables")))
+            return completed(
+                "math.sympy",
+                inputs=inputs,
+                outputs={"operation": operation, "variable": variable, "solution": solution},
+                evidence={"implementation": "native_subset", "grammar": "arithmetic_v1"},
+                warnings=warnings,
+            )
+        return engine_required(
             "math.sympy",
-            inputs=inputs,
-            outputs={"operation": operation, "result": result},
-            evidence={"implementation": "native_subset"},
-            warnings=warnings,
+            f"operation={operation} requires a fuller sympy installation than the current environment provides.",
         )
-    if operation == "solve_linear":
-        equation = str(inputs.get("equation", "")).strip()
-        variable = str(inputs.get("variable", "x")).strip() or "x"
-        if not equation or "=" not in equation:
-            return engine_required("math.sympy", "solve_linear requires an equation string containing '='")
-        solution = _solve_linear_equation(equation, variable, _numeric_variables(inputs.get("variables")))
-        return completed(
-            "math.sympy",
-            inputs=inputs,
-            outputs={"operation": operation, "variable": variable, "solution": solution},
-            evidence={"implementation": "native_subset"},
-            warnings=warnings,
-        )
-    return engine_required(
-        "math.sympy",
-        f"operation={operation} requires a fuller sympy installation than the current environment provides.",
-    )
+    except (SyntaxError, ValueError, ZeroDivisionError) as exc:
+        return unsupported_expression("math.sympy", str(exc), operation=operation)
 
 
 def _run_math_with_sympy(operation: str, inputs: dict[str, Any]) -> dict[str, Any]:
     expression = str(inputs.get("expression", "")).strip()
+    normalized_expression = _normalize_math_expression(expression)
     variables = _numeric_variables(inputs.get("variables"))
     if operation == "evaluate":
-        result = _sympy.sympify(expression).evalf(subs=variables)  # type: ignore[union-attr]
+        result = _sympy.sympify(normalized_expression).evalf(subs=variables)  # type: ignore[union-attr]
         return completed(
             "math.sympy",
             inputs=inputs,
@@ -234,7 +283,7 @@ def _run_math_with_sympy(operation: str, inputs: dict[str, Any]) -> dict[str, An
     if operation == "solve_linear":
         equation = str(inputs.get("equation", "")).strip()
         variable_name = str(inputs.get("variable", "x")).strip() or "x"
-        lhs, rhs = equation.split("=", 1)
+        lhs, rhs = [_normalize_math_expression(item.strip()) for item in equation.split("=", 1)]
         symbol = _sympy.Symbol(variable_name)  # type: ignore[union-attr]
         solved = _sympy.solve(_sympy.Eq(_sympy.sympify(lhs), _sympy.sympify(rhs)), symbol)  # type: ignore[union-attr]
         if not solved:
@@ -246,11 +295,22 @@ def _run_math_with_sympy(operation: str, inputs: dict[str, Any]) -> dict[str, An
             evidence={"implementation": "sympy"},
         )
     if operation == "simplify":
-        result = str(_sympy.simplify(expression))  # type: ignore[union-attr]
+        result = str(_sympy.simplify(normalized_expression))  # type: ignore[union-attr]
         return completed(
             "math.sympy",
             inputs=inputs,
             outputs={"operation": operation, "result": result},
+            evidence={"implementation": "sympy"},
+        )
+    if operation == "substitute":
+        result = _sympy.sympify(normalized_expression).subs(variables)  # type: ignore[union-attr]
+        outputs: dict[str, Any] = {"operation": operation, "expression": str(result)}
+        if not getattr(result, "free_symbols", set()):
+            outputs["result"] = float(result.evalf())
+        return completed(
+            "math.sympy",
+            inputs=inputs,
+            outputs=outputs,
             evidence={"implementation": "sympy"},
         )
     return engine_required("math.sympy", f"Unsupported math.sympy operation: {operation}")
@@ -272,8 +332,13 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
 
 
 def _evaluate_numeric_expression(expression: str, variables: dict[str, float]) -> float:
-    node = ast.parse(expression, mode="eval")
-    return float(_eval_expr_node(node.body, variables))
+    node = _substitute_math_expression(_parse_math_expression(expression), variables)
+    simplified = _simplify_math_expression(node)
+    remaining = sorted(_expression_symbols(simplified))
+    if remaining:
+        joined = ", ".join(remaining)
+        raise ValueError(f"evaluate requires numeric values for all variables; unresolved: {joined}")
+    return float(_evaluate_numeric_node(simplified))
 
 
 def _eval_expr_node(node: ast.AST, variables: dict[str, float]) -> float:
@@ -305,8 +370,8 @@ def _eval_expr_node(node: ast.AST, variables: dict[str, float]) -> float:
 
 def _solve_linear_equation(equation: str, variable: str, variables: dict[str, float]) -> float:
     lhs_text, rhs_text = [item.strip() for item in equation.split("=", 1)]
-    lhs_coef, lhs_const = _linear_form(ast.parse(lhs_text, mode="eval").body, variable, variables)
-    rhs_coef, rhs_const = _linear_form(ast.parse(rhs_text, mode="eval").body, variable, variables)
+    lhs_coef, lhs_const = _linear_form(_parse_math_expression(lhs_text), variable, variables)
+    rhs_coef, rhs_const = _linear_form(_parse_math_expression(rhs_text), variable, variables)
     coefficient = lhs_coef - rhs_coef
     constant = rhs_const - lhs_const
     if abs(coefficient) < 1e-12:
@@ -352,6 +417,175 @@ def _linear_form(node: ast.AST, variable: str, variables: dict[str, float]) -> t
                 raise ValueError("Symbolic powers are unsupported")
             return 0.0, left[1] ** right[1]
     raise ValueError("Unsupported expression for solve_linear native subset")
+
+
+def _normalize_math_expression(expression: str) -> str:
+    return str(expression).replace("^", "**")
+
+
+def _parse_math_expression(expression: str) -> ast.AST:
+    return ast.parse(_normalize_math_expression(expression), mode="eval").body
+
+
+def _number_node(value: float) -> ast.Constant:
+    if abs(value) <= 1e-12:
+        value = 0.0
+    if abs(value - round(value)) <= 1e-12:
+        value = float(round(value))
+    return ast.Constant(value=value)
+
+
+def _is_number_node(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, (int, float))
+
+
+def _number_value(node: ast.AST) -> float:
+    if not _is_number_node(node):
+        raise ValueError("Expected a numeric node")
+    return float(node.value)
+
+
+def _is_zero_node(node: ast.AST) -> bool:
+    return _is_number_node(node) and abs(_number_value(node)) <= 1e-12
+
+
+def _is_one_node(node: ast.AST) -> bool:
+    return _is_number_node(node) and abs(_number_value(node) - 1.0) <= 1e-12
+
+
+def _substitute_math_expression(node: ast.AST, variables: dict[str, float]) -> ast.AST:
+    if _is_number_node(node):
+        return _number_node(_number_value(node))
+    if isinstance(node, ast.Name):
+        if node.id in variables:
+            return _number_node(float(variables[node.id]))
+        return ast.Name(id=node.id, ctx=ast.Load())
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        return ast.UnaryOp(op=node.op, operand=_substitute_math_expression(node.operand, variables))
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow)):
+        return ast.BinOp(
+            left=_substitute_math_expression(node.left, variables),
+            op=node.op,
+            right=_substitute_math_expression(node.right, variables),
+        )
+    raise ValueError("Unsupported expression for math.sympy native subset")
+
+
+def _simplify_math_expression(node: ast.AST) -> ast.AST:
+    if _is_number_node(node):
+        return _number_node(_number_value(node))
+    if isinstance(node, ast.Name):
+        return ast.Name(id=node.id, ctx=ast.Load())
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd):
+        return _simplify_math_expression(node.operand)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        operand = _simplify_math_expression(node.operand)
+        if _is_number_node(operand):
+            return _number_node(-_number_value(operand))
+        return ast.UnaryOp(op=ast.USub(), operand=operand)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow)):
+        left = _simplify_math_expression(node.left)
+        right = _simplify_math_expression(node.right)
+        if _is_number_node(left) and _is_number_node(right):
+            return _number_node(_evaluate_numeric_node(ast.BinOp(left=left, op=node.op, right=right)))
+        if isinstance(node.op, ast.Add):
+            if _is_zero_node(left):
+                return right
+            if _is_zero_node(right):
+                return left
+        if isinstance(node.op, ast.Sub):
+            if _is_zero_node(right):
+                return left
+        if isinstance(node.op, ast.Mult):
+            if _is_zero_node(left) or _is_zero_node(right):
+                return _number_node(0.0)
+            if _is_one_node(left):
+                return right
+            if _is_one_node(right):
+                return left
+        if isinstance(node.op, ast.Div):
+            if _is_zero_node(left) and _is_number_node(right) and abs(_number_value(right)) > 1e-12:
+                return _number_node(0.0)
+            if _is_one_node(right):
+                return left
+        if isinstance(node.op, ast.Pow):
+            if _is_zero_node(right):
+                return _number_node(1.0)
+            if _is_one_node(right):
+                return left
+            if _is_one_node(left):
+                return _number_node(1.0)
+            if _is_zero_node(left) and _is_number_node(right) and _number_value(right) > 0.0:
+                return _number_node(0.0)
+        return ast.BinOp(left=left, op=node.op, right=right)
+    raise ValueError("Unsupported expression for math.sympy native subset")
+
+
+def _evaluate_numeric_node(node: ast.AST) -> float:
+    if _is_number_node(node):
+        return _number_value(node)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        return -_evaluate_numeric_node(node.operand)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd):
+        return _evaluate_numeric_node(node.operand)
+    if isinstance(node, ast.BinOp):
+        left = _evaluate_numeric_node(node.left)
+        right = _evaluate_numeric_node(node.right)
+        if isinstance(node.op, ast.Add):
+            return left + right
+        if isinstance(node.op, ast.Sub):
+            return left - right
+        if isinstance(node.op, ast.Mult):
+            return left * right
+        if isinstance(node.op, ast.Div):
+            return left / right
+        if isinstance(node.op, ast.Pow):
+            return left**right
+    raise ValueError("Unsupported expression for math.sympy native subset")
+
+
+def _expression_symbols(node: ast.AST) -> set[str]:
+    if _is_number_node(node):
+        return set()
+    if isinstance(node, ast.Name):
+        return {node.id}
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        return _expression_symbols(node.operand)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow)):
+        return _expression_symbols(node.left) | _expression_symbols(node.right)
+    raise ValueError("Unsupported expression for math.sympy native subset")
+
+
+def _format_math_expression(node: ast.AST, *, parent_precedence: int = -1, right_child: bool = False) -> str:
+    if _is_number_node(node):
+        value = _number_value(node)
+        if abs(value - round(value)) <= 1e-12:
+            return str(int(round(value)))
+        return format(value, ".12g")
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        operator = "+" if isinstance(node.op, ast.UAdd) else "-"
+        text = f"{operator}{_format_math_expression(node.operand, parent_precedence=3)}"
+        return f"({text})" if 3 < parent_precedence else text
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow)):
+        operator, precedence = _math_operator_text(node.op)
+        right_precedence = precedence if operator == "^" and right_child else precedence + (0 if operator == "^" else 1)
+        left_text = _format_math_expression(node.left, parent_precedence=precedence)
+        right_text = _format_math_expression(node.right, parent_precedence=right_precedence, right_child=True)
+        text = f"{left_text} {operator} {right_text}"
+        return f"({text})" if precedence < parent_precedence else text
+    raise ValueError("Unsupported expression for math.sympy native subset")
+
+
+def _math_operator_text(operator: ast.operator) -> tuple[str, int]:
+    if isinstance(operator, (ast.Add, ast.Sub)):
+        return ("+" if isinstance(operator, ast.Add) else "-"), 1
+    if isinstance(operator, (ast.Mult, ast.Div)):
+        return ("*" if isinstance(operator, ast.Mult) else "/"), 2
+    if isinstance(operator, ast.Pow):
+        return "^", 3
+    raise ValueError("Unsupported expression for math.sympy native subset")
 
 
 def run_simple_projectile(scene_bundle: LabSceneBundle, inputs: dict[str, Any]) -> dict[str, Any]:

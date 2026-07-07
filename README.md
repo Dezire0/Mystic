@@ -25,7 +25,7 @@ The current LAB status is intentionally conservative:
 - unsupported heavy paths return structured `deferred`
 - missing model providers return structured `provider_required`
 - Phase 1 scene tools, deterministic simple physics, and `scene.three_json` export are implemented
-- `math.sympy` is exposed through a deterministic local/native subset and returns structured `engine_required` in the Worker
+- `math.sympy` exposes a deterministic subset in both local mode and the Worker for arithmetic evaluate, numeric substitution, simplify, and simple linear solve
 
 Mystic LAB also reinjects the trained Raven adapter into the live JSONL research loop, adds base-vs-adapter comparison plus promotion logic, and exposes a local Research Table / debate UX through the FastAPI app and MCP server.
 
@@ -355,8 +355,8 @@ Implemented for [Issue #75](https://github.com/Dezire0/Mystic/issues/75) `Mystic
 
 Implemented with limits:
 
-- `math.sympy` executes through a deterministic local/native subset for basic evaluate and linear-solve flows
-- cloud-native `math.sympy` returns structured `engine_required` because the Worker runtime does not ship SymPy
+- `math.sympy` executes through a deterministic subset for arithmetic evaluation, numeric substitution, simple simplification, and one-variable linear solve
+- unsupported symbolic forms return structured `unsupported_expression` or `engine_required` instead of attempting arbitrary execution
 
 ### Roll back to local mode
 

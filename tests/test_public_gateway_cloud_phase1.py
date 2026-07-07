@@ -876,6 +876,16 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             "created_at": "2026-07-06T01:01:01Z",
             "updated_at": "2026-07-06T01:01:01Z",
         }
+        math_fetch_responses = [
+            {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
+            {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
+            {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": []},
+            {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
+            {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
+            {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
+            {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scene_objects", "status": 201, "body": [{}]},
+            {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_simulations", "status": 201, "body": [{}]},
+        ]
         math_result = run_worker_helper(
             "simulateRequest",
             {
@@ -888,19 +898,76 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                     "method": "tools/call",
                     "params": {
                         "name": "run_lab_simulation",
-                        "arguments": {"scene_id": scene_id, "adapter_id": "math.sympy", "inputs": {"operation": "evaluate", "expression": "2+2"}},
+                        "arguments": {"scene_id": scene_id, "adapter_id": "math.sympy", "inputs": {"operation": "evaluate", "expression": "2^3 + 1"}},
                     },
                 },
-                "fetchResponses": [
-                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
-                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
-                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": []},
-                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
-                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
-                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
-                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scene_objects", "status": 201, "body": [{}]},
-                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_simulations", "status": 201, "body": [{}]},
-                ],
+                "fetchResponses": math_fetch_responses,
+            },
+        )
+        substitute_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 29,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "run_lab_simulation",
+                        "arguments": {
+                            "scene_id": scene_id,
+                            "adapter_id": "math.sympy",
+                            "inputs": {"operation": "substitute", "expression": "2*x + y", "variables": {"x": 3, "y": 4}},
+                        },
+                    },
+                },
+                "fetchResponses": math_fetch_responses,
+            },
+        )
+        solve_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 30,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "run_lab_simulation",
+                        "arguments": {
+                            "scene_id": scene_id,
+                            "adapter_id": "math.sympy",
+                            "inputs": {"operation": "solve_linear", "equation": "2*x + 3 = 7", "variable": "x"},
+                        },
+                    },
+                },
+                "fetchResponses": math_fetch_responses,
+            },
+        )
+        unsupported_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 31,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "run_lab_simulation",
+                        "arguments": {
+                            "scene_id": scene_id,
+                            "adapter_id": "math.sympy",
+                            "inputs": {"operation": "evaluate", "expression": "sqrt(9)"},
+                        },
+                    },
+                },
+                "fetchResponses": math_fetch_responses,
             },
         )
         projectile_result = run_worker_helper(
@@ -1052,7 +1119,13 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(math_result["body"]["result"]["structuredContent"]["status"], "engine_required")
+        self.assertEqual(math_result["body"]["result"]["structuredContent"]["status"], "completed")
+        self.assertEqual(math_result["body"]["result"]["structuredContent"]["result"]["outputs"]["result"], 9)
+        self.assertEqual(substitute_result["body"]["result"]["structuredContent"]["status"], "completed")
+        self.assertEqual(substitute_result["body"]["result"]["structuredContent"]["result"]["outputs"]["result"], 10)
+        self.assertEqual(solve_result["body"]["result"]["structuredContent"]["status"], "completed")
+        self.assertEqual(solve_result["body"]["result"]["structuredContent"]["result"]["outputs"]["solution"], 2)
+        self.assertEqual(unsupported_result["body"]["result"]["structuredContent"]["status"], "unsupported_expression")
         self.assertEqual(projectile_result["body"]["result"]["structuredContent"]["status"], "completed")
         self.assertEqual(attach_result["body"]["result"]["structuredContent"]["attached_object_ids"], ["ball-1"])
         self.assertEqual(export_result["body"]["result"]["structuredContent"]["status"], "completed")

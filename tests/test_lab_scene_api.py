@@ -164,6 +164,26 @@ class LabSceneApiTests(unittest.TestCase):
             adapter_id="math.sympy",
             inputs={"operation": "solve_linear", "equation": "2*x + 4 = 10", "variable": "x"},
         )
+        evaluate_result = self.toolbox.run_lab_simulation(
+            scene_id=scene["scene_id"],
+            adapter_id="math.sympy",
+            inputs={"operation": "evaluate", "expression": "2^3 + 1"},
+        )
+        substitute_result = self.toolbox.run_lab_simulation(
+            scene_id=scene["scene_id"],
+            adapter_id="math.sympy",
+            inputs={"operation": "substitute", "expression": "2*x + y", "variables": {"x": 3, "y": 4}},
+        )
+        simplify_result = self.toolbox.run_lab_simulation(
+            scene_id=scene["scene_id"],
+            adapter_id="math.sympy",
+            inputs={"operation": "simplify", "expression": "x + 0"},
+        )
+        unsupported_result = self.toolbox.run_lab_simulation(
+            scene_id=scene["scene_id"],
+            adapter_id="math.sympy",
+            inputs={"operation": "evaluate", "expression": "sqrt(9)"},
+        )
         projectile = self.toolbox.run_lab_simulation(
             scene_id=scene["scene_id"],
             adapter_id="physics.simple_projectile",
@@ -190,11 +210,19 @@ class LabSceneApiTests(unittest.TestCase):
 
         self.assertEqual(math_result["status"], "completed")
         self.assertEqual(math_result["result"]["outputs"]["solution"], 3.0)
+        self.assertEqual(evaluate_result["status"], "completed")
+        self.assertEqual(evaluate_result["result"]["outputs"]["result"], 9.0)
+        self.assertEqual(substitute_result["status"], "completed")
+        self.assertEqual(substitute_result["result"]["outputs"]["result"], 10.0)
+        self.assertEqual(substitute_result["result"]["outputs"]["expression"], "10")
+        self.assertEqual(simplify_result["status"], "completed")
+        self.assertEqual(simplify_result["result"]["outputs"]["result"], "x")
+        self.assertEqual(unsupported_result["status"], "unsupported_expression")
         self.assertEqual(projectile["status"], "completed")
         self.assertEqual(projectile_attach["attached_object_ids"], ["ball-1"])
         self.assertEqual(collision["status"], "completed")
         self.assertEqual(sorted(collision_attach["attached_object_ids"]), ["block-1", "block-2"])
-        self.assertEqual(len(loaded["simulations"]), 3)
+        self.assertEqual(len(loaded["simulations"]), 7)
         self.assertEqual(len(loaded["attached_simulations"]), 2)
         projectile_object = next(item for item in loaded["objects"] if item["id"] == "ball-1")
         self.assertNotEqual(projectile_object["position"]["y"], 1.0)
