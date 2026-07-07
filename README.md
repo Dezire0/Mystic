@@ -9,6 +9,8 @@ The current repository state includes:
 - a public Cloudflare Worker + Supabase cloud-native LAB mode
 - ChatGPT remote MCP import support with `import_ready=true`
 - the original 13 LAB tools preserved in cloud-native mode, plus the 10 new Phase 1 scene/simulation tools
+- the 9 Provider Connect foundation tools for safe external provider setup metadata and verification
+- 32 public MCP tools visible in the current cloud-native Worker import surface
 
 Reference docs:
 
@@ -22,6 +24,7 @@ The current LAB status is intentionally conservative:
 
 - session orchestration is implemented
 - provider routing exists for explicit external model access
+- Provider Connect foundation is implemented for safe provider status, setup instructions, verification, disconnect, model listing, and deferred call testing
 - unsupported heavy paths return structured `deferred`
 - missing model providers return structured `provider_required`
 - Phase 1 scene tools, deterministic simple physics, and `scene.three_json` export are implemented
@@ -49,6 +52,7 @@ Mystic LAB includes a local-first AI Research Lab OS backend. It is a computatio
 - the Research Table acts as the Model Arena and can import discoveries back into a lab session
 - MCP `lab_*` tools expose session create/get/advance, role execution, referee review, experiment create/run, memory search/write, model debate, and report generation
 - cloud-native Worker mode directly serves the preserved 13-tool LAB baseline plus the 10 new Phase 1 scene/simulation tools from Supabase without a local Mac backend
+- Provider Connect foundation adds 9 cloud-native provider management tools without requiring a local backend or storing provider secrets in Supabase
 
 The core lab objects are:
 

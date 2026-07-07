@@ -12,7 +12,7 @@ def _mcp_success(request_id: int, result: dict[str, object]) -> dict[str, object
 
 
 def _success_tool_names() -> list[str]:
-    return sorted(smoke.EXISTING_TOOLS | smoke.LAB_TOOLS)
+    return sorted(smoke.EXISTING_TOOLS | smoke.LAB_TOOLS | smoke.PROVIDER_CONNECT_TOOLS)
 
 
 def _success_responses(persisted: dict[str, str], session_id: str) -> dict[int, dict[str, object]]:

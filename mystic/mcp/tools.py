@@ -10,6 +10,7 @@ from typing import Any
 
 from mystic.debate.runner import DebateRunner
 from mystic.final_answer_verifier import extract_candidate_tuples, verify_final_answer
+from mystic.lab.provider_connect import ProviderConnectManager
 from mystic.lab.runner import LabRunner
 from mystic.mcp.import_verification import (
     default_verification_artifact_path,
@@ -60,6 +61,15 @@ LAB_TOOL_NAMES = (
     "attach_simulation_to_scene",
     "export_lab_snapshot",
     "generate_lab_report",
+    "provider_list",
+    "provider_status",
+    "provider_connect_start",
+    "provider_connect_callback_status",
+    "provider_configure_secret_instructions",
+    "provider_verify",
+    "provider_disconnect",
+    "provider_model_list",
+    "provider_call_test",
 )
 
 PHASE_1_TOOL_NAMES = (
@@ -98,6 +108,7 @@ class MysticToolbox:
             verify_answer=self.mystic_verify_answer,
             research_table_runner=self.research_table_runner,
         )
+        self.provider_connect = ProviderConnectManager(storage=self.lab_runner.storage, runtime_mode="local_backend")
         self._ensure_data_dirs()
 
     def mystic_status(self) -> dict[str, Any]:
@@ -112,6 +123,7 @@ class MysticToolbox:
         import_ready_candidate = bool(remote_mcp_public_endpoint) and oauth_metadata_available
         verification_summary = self._manual_import_verification_summary()
         import_ready = import_ready_candidate and verification_summary["manual_import_verified"]
+        provider_registry = self.provider_connect.provider_list()["providers"]
         recent_errors: list[str] = []
         try:
             models = self._public_model_status_snapshot()
@@ -157,7 +169,17 @@ class MysticToolbox:
                 "attach_simulation_to_scene": "ready",
                 "export_lab_snapshot": "ready",
                 "generate_lab_report": "ready",
+                "provider_list": "ready",
+                "provider_status": "ready",
+                "provider_connect_start": "ready",
+                "provider_connect_callback_status": "ready",
+                "provider_configure_secret_instructions": "ready",
+                "provider_verify": "ready",
+                "provider_disconnect": "ready",
+                "provider_model_list": "ready",
+                "provider_call_test": "ready",
             },
+            "provider_registry": provider_registry,
             "lab_core_available": True,
             "lab_tools_count": len(LAB_TOOL_NAMES),
             "phase_1_tools_count": len(PHASE_1_TOOL_NAMES),
@@ -713,6 +735,33 @@ class MysticToolbox:
             include_objects=include_objects,
             include_simulations=include_simulations,
         )
+
+    def provider_list(self) -> dict[str, Any]:
+        return self.provider_connect.provider_list()
+
+    def provider_status(self, *, provider_id: str) -> dict[str, Any]:
+        return self.provider_connect.provider_status(provider_id=provider_id)
+
+    def provider_connect_start(self, *, provider_id: str, auth_method: str | None = None) -> dict[str, Any]:
+        return self.provider_connect.provider_connect_start(provider_id=provider_id, auth_method=auth_method)
+
+    def provider_connect_callback_status(self, *, provider_id: str, flow_id: str) -> dict[str, Any]:
+        return self.provider_connect.provider_connect_callback_status(provider_id=provider_id, flow_id=flow_id)
+
+    def provider_configure_secret_instructions(self, *, provider_id: str) -> dict[str, Any]:
+        return self.provider_connect.provider_configure_secret_instructions(provider_id=provider_id)
+
+    def provider_verify(self, *, provider_id: str) -> dict[str, Any]:
+        return self.provider_connect.provider_verify(provider_id=provider_id)
+
+    def provider_disconnect(self, *, provider_id: str) -> dict[str, Any]:
+        return self.provider_connect.provider_disconnect(provider_id=provider_id)
+
+    def provider_model_list(self, *, provider_id: str) -> dict[str, Any]:
+        return self.provider_connect.provider_model_list(provider_id=provider_id)
+
+    def provider_call_test(self, *, provider_id: str, prompt: str) -> dict[str, Any]:
+        return self.provider_connect.provider_call_test(provider_id=provider_id, prompt=prompt)
 
     def mystic_export_teacher_packet(
         self,

@@ -3,6 +3,7 @@ const DEFAULT_SCOPES = "tools:read tools:execute";
 const DEFAULT_TOKEN_TTL_SECONDS = 3600;
 const MANUAL_IMPORT_VERIFICATION_PATH = "/mystic_data/e2e/remote_mcp_lab_smoke/chatgpt_import_verified.json";
 const DEFAULT_SUPABASE_SCHEMA = "public";
+const PUBLIC_PROVIDER_IDS = ["openai_compatible", "gemini", "anthropic", "future_custom"];
 const CLOUD_REQUIRED_TOOL_NAMES = [
   "mystic_status",
   "health_check",
@@ -450,6 +451,124 @@ const CLOUD_TOOL_DEFINITIONS = [
         include_simulations: { type: "boolean" },
       },
       required: ["scene_id", "format", "include_objects", "include_simulations"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "provider_list",
+    title: "List Providers",
+    description: "List known external model providers and their current Provider Connect status without exposing secrets.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "provider_status",
+    title: "Provider Status",
+    description: "Inspect one Provider Connect record and its current safe configuration status.",
+    inputSchema: {
+      type: "object",
+      properties: { provider_id: { type: "string", minLength: 1 } },
+      required: ["provider_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "provider_connect_start",
+    title: "Start Provider Connect",
+    description: "Record provider setup intent and start the safe Provider Connect foundation flow for API key or OAuth metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider_id: { type: "string", minLength: 1 },
+        auth_method: { type: "string", enum: ["api_key", "oauth", "bearer_token", "none/mock"] },
+      },
+      required: ["provider_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "provider_connect_callback_status",
+    title: "Provider Callback Status",
+    description: "Check the stored status of a provider OAuth metadata flow without exposing tokens or callback codes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider_id: { type: "string", minLength: 1 },
+        flow_id: { type: "string", minLength: 1 },
+      },
+      required: ["provider_id", "flow_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "provider_configure_secret_instructions",
+    title: "Provider Secret Instructions",
+    description: "Return safe Cloudflare secret setup instructions for a provider without printing secret values.",
+    inputSchema: {
+      type: "object",
+      properties: { provider_id: { type: "string", minLength: 1 } },
+      required: ["provider_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "provider_verify",
+    title: "Verify Provider",
+    description: "Verify whether a provider appears configured while keeping secrets server-side.",
+    inputSchema: {
+      type: "object",
+      properties: { provider_id: { type: "string", minLength: 1 } },
+      required: ["provider_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "provider_disconnect",
+    title: "Disconnect Provider",
+    description: "Mark a provider disconnected without deleting any existing Cloudflare secrets.",
+    inputSchema: {
+      type: "object",
+      properties: { provider_id: { type: "string", minLength: 1 } },
+      required: ["provider_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "provider_model_list",
+    title: "Provider Model List",
+    description: "Return a provider model list when configuration is present, or a structured required-status response otherwise.",
+    inputSchema: {
+      type: "object",
+      properties: { provider_id: { type: "string", minLength: 1 } },
+      required: ["provider_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "provider_call_test",
+    title: "Provider Call Test",
+    description: "Run a Provider Connect foundation test. Real provider calls stay disabled here unless a mock provider is explicitly used in tests.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider_id: { type: "string", minLength: 1 },
+        prompt: { type: "string", minLength: 1 },
+      },
+      required: ["provider_id", "prompt"],
       additionalProperties: false,
     },
     securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
@@ -1001,6 +1120,37 @@ function validateCloudToolArguments(name, args) {
     }
     if (typeof args.include_simulations !== "boolean") {
       errors.push("include_simulations must be boolean");
+    }
+  }
+  if (
+    name === "provider_status" ||
+    name === "provider_connect_start" ||
+    name === "provider_configure_secret_instructions" ||
+    name === "provider_verify" ||
+    name === "provider_disconnect" ||
+    name === "provider_model_list" ||
+    name === "provider_call_test"
+  ) {
+    if (typeof args.provider_id !== "string" || !args.provider_id.trim()) {
+      errors.push("provider_id is required");
+    }
+  }
+  if (name === "provider_connect_start") {
+    if (args.auth_method !== undefined && !["api_key", "oauth", "bearer_token", "none/mock"].includes(String(args.auth_method))) {
+      errors.push("auth_method must be api_key, oauth, bearer_token, or none/mock");
+    }
+  }
+  if (name === "provider_connect_callback_status") {
+    if (typeof args.provider_id !== "string" || !args.provider_id.trim()) {
+      errors.push("provider_id is required");
+    }
+    if (typeof args.flow_id !== "string" || !args.flow_id.trim()) {
+      errors.push("flow_id is required");
+    }
+  }
+  if (name === "provider_call_test") {
+    if (typeof args.prompt !== "string" || !args.prompt.trim()) {
+      errors.push("prompt is required");
     }
   }
   return errors;
@@ -2346,75 +2496,198 @@ function providerSecret(env, names) {
   return "";
 }
 
-function defaultProviderRegistry(env) {
-  const openAiBaseUrl = normalizeBaseUrl(env.MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL || "");
-  const openAiSecret = providerSecret(env, [
-    "MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY",
-    "MYSTIC_PROVIDER_OPENAI_COMPAT_BEARER_TOKEN",
-  ]);
-  const geminiSecret = providerSecret(env, [
-    "MYSTIC_PROVIDER_GEMINI_API_KEY",
-    "MYSTIC_PROVIDER_GEMINI_BEARER_TOKEN",
-  ]);
-  const anthropicSecret = providerSecret(env, [
-    "MYSTIC_PROVIDER_ANTHROPIC_API_KEY",
-    "MYSTIC_PROVIDER_ANTHROPIC_BEARER_TOKEN",
-  ]);
-  return [
-    {
-      provider_id: "openai_compatible",
-      provider_type: "openai_compatible",
-      auth_method: String(env.MYSTIC_PROVIDER_OPENAI_COMPAT_BEARER_TOKEN || "").trim() ? "oauth_bearer_token" : "api_key",
-      status: openAiBaseUrl && openAiSecret ? "ready" : "provider_required",
-      scopes: ["model:generate"],
-      created_at: "",
-      setup_url: trimmed(env.MYSTIC_PROVIDER_OPENAI_COMPAT_SETUP_URL, "https://platform.openai.com/api-keys"),
-      setup_instructions:
-        "Store MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY as a Cloudflare secret and set MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL and MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL.",
-      model_name: trimmed(env.MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL, "openai-compatible"),
-      ready: Boolean(openAiBaseUrl && openAiSecret),
-    },
-    {
-      provider_id: "gemini",
-      provider_type: "gemini",
-      auth_method: String(env.MYSTIC_PROVIDER_GEMINI_BEARER_TOKEN || "").trim() ? "oauth_bearer_token" : "api_key",
-      status: geminiSecret ? "ready" : "provider_required",
-      scopes: ["model:generate"],
-      created_at: "",
-      setup_url: trimmed(env.MYSTIC_PROVIDER_GEMINI_SETUP_URL, "https://aistudio.google.com/app/apikey"),
-      setup_instructions:
-        "Store MYSTIC_PROVIDER_GEMINI_API_KEY as a Cloudflare secret or provide a Gemini OAuth bearer token via Cloudflare secret storage.",
-      model_name: trimmed(env.MYSTIC_PROVIDER_GEMINI_MODEL, "gemini-1.5-flash"),
-      ready: Boolean(geminiSecret),
-    },
-    {
-      provider_id: "anthropic",
-      provider_type: "anthropic",
-      auth_method: String(env.MYSTIC_PROVIDER_ANTHROPIC_BEARER_TOKEN || "").trim() ? "oauth_bearer_token" : "api_key",
-      status: anthropicSecret ? "ready" : "provider_required",
-      scopes: ["model:generate"],
-      created_at: "",
-      setup_url: trimmed(env.MYSTIC_PROVIDER_ANTHROPIC_SETUP_URL, "https://console.anthropic.com/settings/keys"),
-      setup_instructions:
-        "Store MYSTIC_PROVIDER_ANTHROPIC_API_KEY as a Cloudflare secret or provide an authorized bearer token via Cloudflare secret storage.",
-      model_name: trimmed(env.MYSTIC_PROVIDER_ANTHROPIC_MODEL, "claude-3-5-sonnet-latest"),
-      ready: Boolean(anthropicSecret),
-    },
-  ];
+function normalizeProviderId(value) {
+  const normalized = trimmed(value).toLowerCase();
+  if (normalized === "openai") {
+    return "openai_compatible";
+  }
+  if (normalized === "google") {
+    return "gemini";
+  }
+  if (normalized === "claude") {
+    return "anthropic";
+  }
+  if (normalized === "custom" || normalized === "future" || normalized === "future/custom") {
+    return "future_custom";
+  }
+  return normalized;
 }
 
-function normalizeProviderRecord(baseRecord, row = {}) {
-  const scopes = Array.isArray(row.scopes) ? row.scopes.map((item) => String(item)) : baseRecord.scopes;
+function providerCatalogEntry(env, providerId) {
+  const normalized = normalizeProviderId(providerId);
+  if (normalized === "openai_compatible") {
+    return {
+      provider_id: normalized,
+      provider_type: "openai_compatible",
+      default_auth_method: "api_key",
+      supported_auth_methods: ["api_key", "bearer_token"],
+      supports_oauth: false,
+      secret_names: [
+        "MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY",
+        "MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL",
+        "MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL",
+      ],
+      required_secret_names: ["MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY", "MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL"],
+      optional_secret_names: ["MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL"],
+      model_env_names: ["MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL"],
+      setup_url: trimmed(env.MYSTIC_PROVIDER_OPENAI_COMPAT_SETUP_URL, "https://platform.openai.com/api-keys"),
+      setup_instructions:
+        "Set Cloudflare secret MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY, set MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL, and optionally set MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL.",
+      scopes: ["model:generate"],
+      default_models: ["openai-compatible"],
+    };
+  }
+  if (normalized === "gemini") {
+    return {
+      provider_id: normalized,
+      provider_type: "gemini",
+      default_auth_method: "api_key",
+      supported_auth_methods: ["api_key", "bearer_token"],
+      supports_oauth: false,
+      secret_names: ["MYSTIC_PROVIDER_GEMINI_API_KEY", "MYSTIC_PROVIDER_GEMINI_MODEL"],
+      required_secret_names: ["MYSTIC_PROVIDER_GEMINI_API_KEY"],
+      optional_secret_names: ["MYSTIC_PROVIDER_GEMINI_MODEL"],
+      model_env_names: ["MYSTIC_PROVIDER_GEMINI_MODEL"],
+      setup_url: trimmed(env.MYSTIC_PROVIDER_GEMINI_SETUP_URL, "https://aistudio.google.com/app/apikey"),
+      setup_instructions:
+        "Set Cloudflare secret MYSTIC_PROVIDER_GEMINI_API_KEY and optionally set MYSTIC_PROVIDER_GEMINI_MODEL.",
+      scopes: ["model:generate"],
+      default_models: ["gemini-1.5-flash"],
+    };
+  }
+  if (normalized === "anthropic") {
+    return {
+      provider_id: normalized,
+      provider_type: "anthropic",
+      default_auth_method: "api_key",
+      supported_auth_methods: ["api_key", "bearer_token"],
+      supports_oauth: false,
+      secret_names: ["MYSTIC_PROVIDER_ANTHROPIC_API_KEY", "MYSTIC_PROVIDER_ANTHROPIC_MODEL"],
+      required_secret_names: ["MYSTIC_PROVIDER_ANTHROPIC_API_KEY"],
+      optional_secret_names: ["MYSTIC_PROVIDER_ANTHROPIC_MODEL"],
+      model_env_names: ["MYSTIC_PROVIDER_ANTHROPIC_MODEL"],
+      setup_url: trimmed(env.MYSTIC_PROVIDER_ANTHROPIC_SETUP_URL, "https://console.anthropic.com/settings/keys"),
+      setup_instructions:
+        "Set Cloudflare secret MYSTIC_PROVIDER_ANTHROPIC_API_KEY and optionally set MYSTIC_PROVIDER_ANTHROPIC_MODEL.",
+      scopes: ["model:generate"],
+      default_models: ["claude-3-5-sonnet-latest"],
+    };
+  }
+  if (normalized === "mock") {
+    return {
+      provider_id: "mock",
+      provider_type: "future/custom",
+      default_auth_method: "none/mock",
+      supported_auth_methods: ["none/mock"],
+      supports_oauth: false,
+      secret_names: [],
+      required_secret_names: [],
+      optional_secret_names: [],
+      model_env_names: [],
+      setup_url: "",
+      setup_instructions: "Mock provider is test-only and must not be used for production routing.",
+      scopes: ["model:generate"],
+      default_models: ["mock-model"],
+      test_only: true,
+    };
+  }
   return {
-    ...baseRecord,
-    provider_type: trimmed(row.provider_type, baseRecord.provider_type),
-    auth_method: trimmed(row.auth_method, baseRecord.auth_method),
-    status: trimmed(row.status, baseRecord.status),
-    scopes,
-    created_at: trimmed(row.created_at, baseRecord.created_at),
-    setup_url: trimmed(row.setup_url, baseRecord.setup_url),
-    setup_instructions: trimmed(row.setup_instructions, baseRecord.setup_instructions),
+    provider_id: "future_custom",
+    provider_type: "future/custom",
+    default_auth_method: "oauth",
+    supported_auth_methods: ["api_key", "oauth", "bearer_token"],
+    supports_oauth: true,
+    secret_names: [],
+    required_secret_names: [],
+    optional_secret_names: [],
+    model_env_names: [],
+    setup_url: "",
+    setup_instructions:
+      "Future custom providers are metadata-only in this foundation issue. Record connection intent here and finish provider-specific wiring later.",
+    scopes: ["model:generate"],
+    default_models: [],
   };
+}
+
+function providerSecretState(env, spec) {
+  const configuredSecretNames = spec.secret_names.filter((name) => trimmed(env[name]));
+  const missingSecretNames = spec.secret_names.filter((name) => !configuredSecretNames.includes(name));
+  const missingRequiredSecretNames = spec.required_secret_names.filter((name) => !configuredSecretNames.includes(name));
+  return {
+    configured_secret_names: configuredSecretNames,
+    missing_secret_names: missingSecretNames,
+    missing_required_secret_names: missingRequiredSecretNames,
+  };
+}
+
+function providerModelList(env, spec, row = {}) {
+  if (Array.isArray(row.model_list) && row.model_list.length) {
+    return row.model_list.map((item) => String(item)).filter(Boolean);
+  }
+  const envModels = spec.model_env_names.map((name) => trimmed(env[name])).filter(Boolean);
+  if (envModels.length) {
+    return envModels;
+  }
+  return [...spec.default_models];
+}
+
+function resolveProviderStatus(spec, row, secretState) {
+  const storedStatus = trimmed(row.status);
+  if (["disconnected", "auth_failed", "rate_limited", "provider_unavailable"].includes(storedStatus)) {
+    return storedStatus;
+  }
+  const authMethod = trimmed(row.auth_method, spec.default_auth_method);
+  if (spec.test_only) {
+    return "connected";
+  }
+  if (["oauth", "bearer_token"].includes(authMethod) && !spec.supports_oauth) {
+    return "api_key_required";
+  }
+  if (authMethod === "oauth") {
+    return "oauth_required";
+  }
+  if (spec.required_secret_names.length && secretState.missing_required_secret_names.length === 0) {
+    return "connected";
+  }
+  if (authMethod === "bearer_token") {
+    return "oauth_required";
+  }
+  if (!storedStatus && secretState.configured_secret_names.length === 0) {
+    return "not_configured";
+  }
+  return "api_key_required";
+}
+
+function buildProviderRecord(env, providerId, row = {}) {
+  const spec = providerCatalogEntry(env, providerId);
+  const secretState = providerSecretState(env, spec);
+  const modelList = providerModelList(env, spec, row);
+  const authMethod = trimmed(row.auth_method, spec.default_auth_method);
+  const status = resolveProviderStatus(spec, row, secretState);
+  return {
+    connection_id: trimmed(row.connection_id, `provider-${spec.provider_id}`),
+    provider_id: spec.provider_id,
+    provider_type: trimmed(row.provider_type, spec.provider_type),
+    auth_method: authMethod,
+    status,
+    scopes: Array.isArray(row.scopes) ? row.scopes.map((item) => String(item)) : [...spec.scopes],
+    model_list: modelList,
+    model_name: modelList[0] || spec.provider_id,
+    setup_url: trimmed(row.setup_url, spec.setup_url),
+    setup_instructions: trimmed(row.setup_instructions, spec.setup_instructions),
+    last_verified_at: trimmed(row.last_verified_at),
+    failure_reason: trimmed(row.failure_reason),
+    metadata: row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : {},
+    created_at: trimmed(row.created_at),
+    updated_at: trimmed(row.updated_at),
+    configured_secret_names: secretState.configured_secret_names,
+    missing_secret_names: secretState.missing_secret_names,
+    ready: status === "connected",
+  };
+}
+
+function defaultProviderRegistry(env) {
+  return PUBLIC_PROVIDER_IDS.map((providerId) => buildProviderRecord(env, providerId));
 }
 
 async function loadProviderRegistry(env) {
@@ -2427,25 +2700,11 @@ async function loadProviderRegistry(env) {
   try {
     const rows = await supabaseSelectRows(env, "provider_connections", {}, { order: "created_at.asc" });
     for (const row of rows) {
-      const providerId = trimmed(row.provider_id);
+      const providerId = normalizeProviderId(row.provider_id);
       if (!providerId) {
         continue;
       }
-      const baseRecord =
-        providerMap.get(providerId) ||
-        {
-          provider_id: providerId,
-          provider_type: "future",
-          auth_method: "manual",
-          status: "provider_required",
-          scopes: [],
-          created_at: "",
-          setup_url: "",
-          setup_instructions: "Connect this provider explicitly before cloud-native LAB tools can use it.",
-          model_name: providerId,
-          ready: false,
-        };
-      providerMap.set(providerId, normalizeProviderRecord(baseRecord, row));
+      providerMap.set(providerId, buildProviderRecord(env, providerId, row));
     }
   } catch (error) {
     warnings.push(`provider_registry_unavailable:${String(error.message || error).slice(0, 120)}`);
@@ -2453,21 +2712,58 @@ async function loadProviderRegistry(env) {
   return { providers: Array.from(providerMap.values()), warnings };
 }
 
+async function upsertProviderConnection(env, providerRecord, extra = {}) {
+  const row = {
+    connection_id: providerRecord.connection_id || `provider-${providerRecord.provider_id}`,
+    provider_id: providerRecord.provider_id,
+    provider_type: providerRecord.provider_type,
+    auth_method: providerRecord.auth_method,
+    status: providerRecord.status,
+    scopes: Array.isArray(providerRecord.scopes) ? providerRecord.scopes : [],
+    model_list: Array.isArray(providerRecord.model_list) ? providerRecord.model_list : [],
+    setup_url: providerRecord.setup_url || "",
+    setup_instructions: providerRecord.setup_instructions || "",
+    last_verified_at: providerRecord.last_verified_at || null,
+    failure_reason: providerRecord.failure_reason || "",
+    metadata: providerRecord.metadata && typeof providerRecord.metadata === "object" ? providerRecord.metadata : {},
+    created_at: providerRecord.created_at || nowIso(),
+    updated_at: nowIso(),
+    ...extra,
+  };
+  await supabaseUpsertRows(env, "provider_connections", [row], "connection_id");
+  return row;
+}
+
+async function upsertProviderAuthFlow(env, flow) {
+  const row = {
+    flow_id: flow.flow_id,
+    provider_id: flow.provider_id,
+    auth_method: flow.auth_method,
+    status: flow.status,
+    redirect_url: flow.redirect_url || "",
+    state: flow.state || "",
+    code_challenge: flow.code_challenge || "",
+    code_challenge_method: flow.code_challenge_method || "",
+    callback_received_at: flow.callback_received_at || null,
+    failure_reason: flow.failure_reason || "",
+    metadata: flow.metadata && typeof flow.metadata === "object" ? flow.metadata : {},
+    created_at: flow.created_at || nowIso(),
+    updated_at: nowIso(),
+  };
+  await supabaseUpsertRows(env, "provider_auth_flows", [row], "flow_id");
+  return row;
+}
+
+async function loadProviderAuthFlow(env, flowId) {
+  return supabaseSelectOne(env, "provider_auth_flows", { flow_id: `eq.${flowId}` });
+}
+
 function providerRegistryMap(registry) {
   return new Map(registry.providers.map((item) => [item.provider_id, item]));
 }
 
 function normalizeRequestedProvider(value) {
-  const normalized = trimmed(value, "auto").toLowerCase();
-  if (normalized === "openai") {
-    return "openai_compatible";
-  }
-  if (normalized === "google") {
-    return "gemini";
-  }
-  if (normalized === "claude") {
-    return "anthropic";
-  }
+  const normalized = normalizeProviderId(trimmed(value, "auto"));
   if (normalized === "local") {
     return "local_backend";
   }
@@ -2712,6 +3008,15 @@ async function cloudMysticStatus(state, supabase, env) {
     attach_simulation_to_scene: supabase.configured ? "ready" : "blocked",
     export_lab_snapshot: supabase.configured ? "ready" : "blocked",
     generate_lab_report: supabase.configured ? "ready" : "blocked",
+    provider_list: "ready",
+    provider_status: "ready",
+    provider_connect_start: supabase.configured ? "ready" : "blocked",
+    provider_connect_callback_status: supabase.configured ? "ready" : "blocked",
+    provider_configure_secret_instructions: "ready",
+    provider_verify: supabase.configured ? "ready" : "blocked",
+    provider_disconnect: supabase.configured ? "ready" : "blocked",
+    provider_model_list: "ready",
+    provider_call_test: "ready",
   };
   const blockers = [];
   if (!state.enabled) {
@@ -3596,6 +3901,187 @@ async function callCloudTool(name, args, env, state) {
         failed_claims: report.failed_claims.length,
         next_actions: report.next_actions.length,
       },
+    };
+  }
+  if (name === "provider_list") {
+    const registry = await loadProviderRegistry(env);
+    return { providers: registry.providers, warnings: registry.warnings };
+  }
+  if (name === "provider_status") {
+    const registry = await loadProviderRegistry(env);
+    const providerId = normalizeProviderId(args.provider_id);
+    return providerRegistryMap(registry).get(providerId) || buildProviderRecord(env, providerId);
+  }
+  if (name === "provider_connect_start") {
+    const providerId = normalizeProviderId(args.provider_id);
+    const spec = providerCatalogEntry(env, providerId);
+    const requestedAuthMethod = trimmed(args.auth_method, spec.default_auth_method);
+    if (providerId === "mock" && requestedAuthMethod === "none/mock") {
+      const record = buildProviderRecord(env, "mock", { auth_method: "none/mock", status: "connected", model_list: ["mock-model"] });
+      await upsertProviderConnection(env, record);
+      return { ...record, message: "Mock provider connected for tests." };
+    }
+    if (["oauth", "bearer_token"].includes(requestedAuthMethod) && !spec.supports_oauth) {
+      const record = buildProviderRecord(env, providerId, {
+        auth_method: "api_key",
+        status: "api_key_required",
+        failure_reason: "official_oauth_not_supported",
+      });
+      await upsertProviderConnection(env, record);
+      return {
+        ...record,
+        message: "This provider foundation does not expose official provider OAuth here. Use API key setup instructions.",
+      };
+    }
+    if (requestedAuthMethod === "oauth") {
+      const flow = {
+        flow_id: `flow-${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`,
+        provider_id: spec.provider_id,
+        auth_method: "oauth",
+        status: "oauth_required",
+        redirect_url: "",
+        state: crypto.randomUUID().replace(/-/g, ""),
+        code_challenge: "",
+        code_challenge_method: "",
+        callback_received_at: null,
+        failure_reason: "",
+        metadata: { runtime_mode: "cloud_native_worker_lab_v0" },
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      };
+      await upsertProviderAuthFlow(env, flow);
+      const record = buildProviderRecord(env, providerId, { auth_method: "oauth", status: "oauth_required" });
+      await upsertProviderConnection(env, record);
+      return { ...record, flow, message: "OAuth metadata flow recorded. Provider-specific callback completion is deferred." };
+    }
+    const record = buildProviderRecord(env, providerId, {
+      auth_method: requestedAuthMethod,
+      status: requestedAuthMethod === "api_key" ? "api_key_required" : "",
+    });
+    await upsertProviderConnection(env, record, {
+      status: requestedAuthMethod === "api_key" && record.status !== "connected" ? "api_key_required" : record.status,
+    });
+    return {
+      ...record,
+      status: requestedAuthMethod === "api_key" && record.status !== "connected" ? "api_key_required" : record.status,
+      message: "Provider connect foundation recorded setup intent.",
+    };
+  }
+  if (name === "provider_connect_callback_status") {
+    const providerId = normalizeProviderId(args.provider_id);
+    const flow = await loadProviderAuthFlow(env, args.flow_id.trim());
+    if (!flow || normalizeProviderId(flow.provider_id) !== providerId) {
+      throw new Error(`Unknown provider auth flow: ${args.flow_id}`);
+    }
+    const registry = await loadProviderRegistry(env);
+    return {
+      provider: providerRegistryMap(registry).get(providerId) || buildProviderRecord(env, providerId),
+      flow,
+      callback_received: Boolean(flow.callback_received_at),
+    };
+  }
+  if (name === "provider_configure_secret_instructions") {
+    const providerId = normalizeProviderId(args.provider_id);
+    const spec = providerCatalogEntry(env, providerId);
+    const record = buildProviderRecord(env, providerId);
+    return {
+      ...record,
+      secret_names: [...spec.secret_names],
+      required_secret_names: [...spec.required_secret_names],
+      optional_secret_names: [...spec.optional_secret_names],
+      instructions: [
+        "Do not store provider secrets in Supabase.",
+        "Store production provider secrets only in Cloudflare Worker secret storage or approved server-side secret storage.",
+        "Do not paste API keys into tool output or chat transcripts.",
+      ],
+      runtime_mode: "cloud_native_worker_lab_v0",
+    };
+  }
+  if (name === "provider_verify") {
+    const providerId = normalizeProviderId(args.provider_id);
+    const existing = await supabaseSelectOne(env, "provider_connections", { provider_id: `eq.${providerId}` });
+    if (existing && trimmed(existing.status) === "disconnected") {
+      return {
+        ...buildProviderRecord(env, providerId, existing),
+        verified_at: nowIso(),
+        message: "Provider remains disconnected until an explicit reconnect.",
+      };
+    }
+    const record = buildProviderRecord(env, providerId, existing || {});
+    const saved = await upsertProviderConnection(env, record, {
+      status: record.status,
+      auth_method: record.auth_method,
+      model_list: record.model_list,
+      last_verified_at: nowIso(),
+      failure_reason: "",
+    });
+    return {
+      ...buildProviderRecord(env, providerId, saved),
+      connection_id: saved.connection_id,
+      verified_at: saved.last_verified_at,
+      message: "Provider configuration was checked without exposing secrets.",
+    };
+  }
+  if (name === "provider_disconnect") {
+    const providerId = normalizeProviderId(args.provider_id);
+    const existing = (await supabaseSelectOne(env, "provider_connections", { provider_id: `eq.${providerId}` })) || {};
+    const metadata = existing.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata) ? existing.metadata : {};
+    const record = buildProviderRecord(env, providerId, { ...existing, status: "disconnected" });
+    const saved = await upsertProviderConnection(env, record, {
+      status: "disconnected",
+      metadata: { ...metadata, disconnected_at: nowIso() },
+    });
+    return {
+      ...buildProviderRecord(env, providerId, saved),
+      connection_id: saved.connection_id,
+      message: "Provider was marked disconnected. Existing secrets were not deleted.",
+    };
+  }
+  if (name === "provider_model_list") {
+    const registry = await loadProviderRegistry(env);
+    const providerId = normalizeProviderId(args.provider_id);
+    const record = providerRegistryMap(registry).get(providerId) || buildProviderRecord(env, providerId);
+    if (record.status !== "connected") {
+      return {
+        provider_id: record.provider_id,
+        provider_type: record.provider_type,
+        auth_method: record.auth_method,
+        status: record.status,
+        model_list: [],
+        setup_url: record.setup_url,
+        setup_instructions: record.setup_instructions,
+      };
+    }
+    return {
+      provider_id: record.provider_id,
+      provider_type: record.provider_type,
+      auth_method: record.auth_method,
+      status: record.status,
+      model_list: record.model_list,
+    };
+  }
+  if (name === "provider_call_test") {
+    const providerId = normalizeProviderId(args.provider_id);
+    if (providerId === "mock") {
+      return {
+        provider_id: "mock",
+        provider_type: "future/custom",
+        auth_method: "none/mock",
+        status: "completed",
+        output: `mock:${trimmed(args.prompt, "ping")}`,
+        test_only: true,
+      };
+    }
+    const registry = await loadProviderRegistry(env);
+    const record = providerRegistryMap(registry).get(providerId) || buildProviderRecord(env, providerId);
+    return {
+      provider_id: record.provider_id,
+      provider_type: record.provider_type,
+      auth_method: record.auth_method,
+      status: "provider_required",
+      message: "Provider Connect foundation does not expose direct real provider test calls yet.",
+      setup_url: record.setup_url,
+      setup_instructions: record.setup_instructions,
     };
   }
   if (name === "create_lab_scene") {

@@ -99,6 +99,26 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             "updated_at": "2026-07-06T01:01:01Z",
         }
 
+    @staticmethod
+    def _provider_connection_row(provider_id: str, *, status: str = "connected") -> dict[str, object]:
+        provider_type = "future/custom" if provider_id == "future_custom" else provider_id
+        return {
+            "connection_id": f"provider-{provider_id}",
+            "provider_id": provider_id,
+            "provider_type": provider_type,
+            "auth_method": "api_key" if provider_id != "future_custom" else "oauth",
+            "status": status,
+            "scopes": ["model:generate"],
+            "model_list": ["mock-model"] if provider_id == "mock" else [f"{provider_id}-model"],
+            "setup_url": "",
+            "setup_instructions": "setup",
+            "last_verified_at": "2026-07-06T01:01:01Z",
+            "failure_reason": "",
+            "metadata": {},
+            "created_at": "2026-07-06T01:01:01Z",
+            "updated_at": "2026-07-06T01:01:01Z",
+        }
+
     def test_cloud_phase1_health_returns_ok_without_backend_proxy(self) -> None:
         result = run_worker_helper(
             "simulateRequest",
@@ -179,6 +199,15 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "attach_simulation_to_scene",
                 "export_lab_snapshot",
                 "generate_lab_report",
+                "provider_list",
+                "provider_status",
+                "provider_connect_start",
+                "provider_connect_callback_status",
+                "provider_configure_secret_instructions",
+                "provider_verify",
+                "provider_disconnect",
+                "provider_model_list",
+                "provider_call_test",
             ],
         )
 
@@ -219,7 +248,219 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertTrue(payload["storage_status"]["configured"])
         self.assertEqual(payload["runtime_mode"], "cloud_native_worker_lab_v0")
         self.assertIn("health_check", payload["tools"])
+        self.assertIn("provider_list", payload["tools"])
         self.assertEqual(result["fetchCalls"], [])
+
+    def test_cloud_provider_list_and_status_return_safe_registry_data(self) -> None:
+        list_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {"jsonrpc": "2.0", "id": 101, "method": "tools/call", "params": {"name": "provider_list", "arguments": {}}},
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                ],
+            },
+        )
+        status_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 102,
+                    "method": "tools/call",
+                    "params": {"name": "provider_status", "arguments": {"provider_id": "openai_compatible"}},
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                ],
+            },
+        )
+        instructions_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 103,
+                    "method": "tools/call",
+                    "params": {"name": "provider_configure_secret_instructions", "arguments": {"provider_id": "openai_compatible"}},
+                },
+            },
+        )
+
+        listing = list_result["body"]["result"]["structuredContent"]
+        status = status_result["body"]["result"]["structuredContent"]
+        instructions = instructions_result["body"]["result"]["structuredContent"]
+        self.assertEqual(listing["providers"][0]["provider_id"], "openai_compatible")
+        self.assertIn(status["status"], {"not_configured", "api_key_required"})
+        self.assertIn("MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY", instructions["secret_names"])
+        self.assertNotIn("service-role-key", json.dumps(instructions))
+
+    def test_cloud_provider_connect_start_and_callback_status_record_oauth_metadata_flow(self) -> None:
+        connect_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 104,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "provider_connect_start",
+                        "arguments": {"provider_id": "future_custom", "auth_method": "oauth"},
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_auth_flows", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        flow_id = connect_result["body"]["result"]["structuredContent"]["flow"]["flow_id"]
+        callback_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 105,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "provider_connect_callback_status",
+                        "arguments": {"provider_id": "future_custom", "flow_id": flow_id},
+                    },
+                },
+                "fetchResponses": [
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_auth_flows",
+                        "status": 200,
+                        "body": [
+                            {
+                                "flow_id": flow_id,
+                                "provider_id": "future_custom",
+                                "auth_method": "oauth",
+                                "status": "oauth_required",
+                                "redirect_url": "",
+                                "state": "state-1",
+                                "code_challenge": "",
+                                "code_challenge_method": "",
+                                "callback_received_at": None,
+                                "failure_reason": "",
+                                "metadata": {},
+                                "created_at": "2026-07-06T01:01:01Z",
+                                "updated_at": "2026-07-06T01:01:01Z",
+                            }
+                        ],
+                    },
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections",
+                        "status": 200,
+                        "body": [self._provider_connection_row("future_custom", status="oauth_required")],
+                    },
+                ],
+            },
+        )
+        self.assertEqual(connect_result["body"]["result"]["structuredContent"]["status"], "oauth_required")
+        self.assertEqual(callback_result["body"]["result"]["structuredContent"]["flow"]["status"], "oauth_required")
+        self.assertFalse(callback_result["body"]["result"]["structuredContent"]["callback_received"])
+
+    def test_cloud_provider_verify_disconnect_model_list_and_call_test_follow_foundation_contract(self) -> None:
+        verify_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 106,
+                    "method": "tools/call",
+                    "params": {"name": "provider_verify", "arguments": {"provider_id": "openai_compatible"}},
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        disconnect_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 107,
+                    "method": "tools/call",
+                    "params": {"name": "provider_disconnect", "arguments": {"provider_id": "openai_compatible"}},
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        model_list_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 108,
+                    "method": "tools/call",
+                    "params": {"name": "provider_model_list", "arguments": {"provider_id": "openai_compatible"}},
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                ],
+            },
+        )
+        call_test_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 109,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "provider_call_test",
+                        "arguments": {"provider_id": "openai_compatible", "prompt": "ping"},
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                ],
+            },
+        )
+
+        self.assertIn(
+            verify_result["body"]["result"]["structuredContent"]["status"],
+            {"not_configured", "api_key_required"},
+        )
+        self.assertEqual(disconnect_result["body"]["result"]["structuredContent"]["status"], "disconnected")
+        self.assertIn(
+            model_list_result["body"]["result"]["structuredContent"]["status"],
+            {"not_configured", "api_key_required"},
+        )
+        self.assertEqual(call_test_result["body"]["result"]["structuredContent"]["status"], "provider_required")
 
     def test_cloud_phase1_lab_session_create_writes_supabase(self) -> None:
         result = run_worker_helper(

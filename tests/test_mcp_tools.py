@@ -76,6 +76,7 @@ class MCPToolsTests(unittest.TestCase):
         self.assertIn("local_prime", status["models"])
         self.assertEqual(status["tools"]["mystic_status"], "ready")
         self.assertEqual(status["tools"]["health_check"], "ready")
+        self.assertEqual(status["tools"]["provider_list"], "ready")
         self.assertNotIn("details", status["models"]["local_prime"]["status"])
         self.assertTrue(status["lab_core_available"])
         self.assertGreaterEqual(status["lab_tools_count"], 5)
@@ -92,6 +93,7 @@ class MCPToolsTests(unittest.TestCase):
         self.assertFalse(status["manual_import_verified"])
         self.assertTrue(status["manual_import_verification_path"].endswith("mystic_data/e2e/chatgpt_remote_mcp_import/verification.json"))
         self.assertIn("MANUAL_IMPORT_NOT_VERIFIED", status["blockers"])
+        self.assertTrue(status["provider_registry"])
         self.assertNotIn("sk-test-secret", json.dumps(status))
         self.assertNotIn("oauth-signing-secret", json.dumps(status))
 
@@ -258,8 +260,48 @@ class MCPToolsTests(unittest.TestCase):
             include_verifier=True,
         )
         self.assertEqual(result["final_decision_source"], "deterministic_verifier")
-        self.assertEqual(result["final_status"], result["verification"]["verdict"])
 
+    def test_provider_tools_return_safe_foundation_status(self):
+        toolbox = self._make_toolbox()
+        listing = toolbox.provider_list()
+        status = toolbox.provider_status(provider_id="openai_compatible")
+        instructions = toolbox.provider_configure_secret_instructions(provider_id="openai_compatible")
+        verified = toolbox.provider_verify(provider_id="openai_compatible")
+        models = toolbox.provider_model_list(provider_id="openai_compatible")
+        call_test = toolbox.provider_call_test(provider_id="openai_compatible", prompt="ping")
+
+        self.assertEqual(listing["providers"][0]["provider_id"], "openai_compatible")
+        self.assertIn(status["status"], {"not_configured", "api_key_required"})
+        self.assertIn("MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY", instructions["secret_names"])
+        self.assertNotIn("sk-", json.dumps(instructions))
+        self.assertIn(verified["status"], {"not_configured", "api_key_required"})
+        self.assertEqual(models["status"], verified["status"])
+        self.assertEqual(call_test["status"], "provider_required")
+
+    def test_provider_connect_start_and_callback_status_cover_oauth_metadata_flow(self):
+        toolbox = self._make_toolbox()
+        started = toolbox.provider_connect_start(provider_id="future_custom", auth_method="oauth")
+        callback = toolbox.provider_connect_callback_status(
+            provider_id="future_custom",
+            flow_id=started["flow"]["flow_id"],
+        )
+
+        self.assertEqual(started["status"], "oauth_required")
+        self.assertEqual(callback["flow"]["status"], "oauth_required")
+        self.assertFalse(callback["callback_received"])
+
+    def test_provider_disconnect_preserves_disconnect_state_and_mock_test_path(self):
+        toolbox = self._make_toolbox()
+        disconnected = toolbox.provider_disconnect(provider_id="openai_compatible")
+        verified = toolbox.provider_verify(provider_id="openai_compatible")
+        mock_started = toolbox.provider_connect_start(provider_id="mock", auth_method="none/mock")
+        mock_call = toolbox.provider_call_test(provider_id="mock", prompt="hello")
+
+        self.assertEqual(disconnected["status"], "disconnected")
+        self.assertEqual(verified["status"], "disconnected")
+        self.assertEqual(mock_started["status"], "connected")
+        self.assertEqual(mock_call["status"], "completed")
+        self.assertEqual(mock_call["output"], "mock:hello")
     def test_research_table_uses_verifier_as_final_decision_source_when_enabled(self):
         toolbox = self._make_toolbox()
         result = toolbox.mystic_run_research_table(

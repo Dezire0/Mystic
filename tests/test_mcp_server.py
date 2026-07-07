@@ -87,6 +87,33 @@ class _StubToolbox:
     def generate_lab_report(self, **_: object) -> dict:
         return {"report_path": "mystic_data/lab_scenes/scene-1/report.md"}
 
+    def provider_list(self, **_: object) -> dict:
+        return {"providers": []}
+
+    def provider_status(self, **_: object) -> dict:
+        return {"provider_id": "openai_compatible", "status": "not_configured"}
+
+    def provider_connect_start(self, **_: object) -> dict:
+        return {"provider_id": "openai_compatible", "status": "api_key_required"}
+
+    def provider_connect_callback_status(self, **_: object) -> dict:
+        return {"flow": {"flow_id": "flow-1", "status": "oauth_required"}}
+
+    def provider_configure_secret_instructions(self, **_: object) -> dict:
+        return {"provider_id": "openai_compatible", "secret_names": []}
+
+    def provider_verify(self, **_: object) -> dict:
+        return {"provider_id": "openai_compatible", "status": "not_configured"}
+
+    def provider_disconnect(self, **_: object) -> dict:
+        return {"provider_id": "openai_compatible", "status": "disconnected"}
+
+    def provider_model_list(self, **_: object) -> dict:
+        return {"provider_id": "openai_compatible", "model_list": []}
+
+    def provider_call_test(self, **_: object) -> dict:
+        return {"provider_id": "openai_compatible", "status": "provider_required"}
+
 
 class MCPServerTests(unittest.TestCase):
     def test_initialize_returns_server_capabilities(self):
@@ -134,6 +161,15 @@ class MCPServerTests(unittest.TestCase):
                 "attach_simulation_to_scene",
                 "export_lab_snapshot",
                 "generate_lab_report",
+                "provider_list",
+                "provider_status",
+                "provider_connect_start",
+                "provider_connect_callback_status",
+                "provider_configure_secret_instructions",
+                "provider_verify",
+                "provider_disconnect",
+                "provider_model_list",
+                "provider_call_test",
             ],
         )
 

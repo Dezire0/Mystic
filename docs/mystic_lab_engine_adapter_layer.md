@@ -131,7 +131,20 @@ Provider routing is for model generation:
 - `gemini`
 - `anthropic`
 
+Current Provider Connect foundation tools:
+
+- `provider_list`
+- `provider_status`
+- `provider_connect_start`
+- `provider_connect_callback_status`
+- `provider_configure_secret_instructions`
+- `provider_verify`
+- `provider_disconnect`
+- `provider_model_list`
+- `provider_call_test`
+
 These require explicit credentials and are used for planning, debate, critique, and interpretation.
+The foundation layer stores only status and metadata in Supabase. Real provider secrets stay in Cloudflare secrets or other approved server-side secret storage.
 
 ### Engine adapters
 

@@ -44,6 +44,18 @@ LAB_TOOLS = {
     "generate_lab_report",
 }
 
+PROVIDER_CONNECT_TOOLS = {
+    "provider_list",
+    "provider_status",
+    "provider_connect_start",
+    "provider_connect_callback_status",
+    "provider_configure_secret_instructions",
+    "provider_verify",
+    "provider_disconnect",
+    "provider_model_list",
+    "provider_call_test",
+}
+
 READY_LOCAL = "READY_LOCAL_MCP_LAB"
 READY_PUBLIC = "READY_PUBLIC_MCP_LAB"
 AUTH_REQUIRED = "AUTH_REQUIRED"
@@ -300,9 +312,10 @@ def run_remote_mcp_lab_smoke(
     summary["tools_list_ok"] = True
     tool_names = extract_tool_names(tools_list)
     summary["tool_names"] = sorted(tool_names)
-    missing_tools = sorted((EXISTING_TOOLS | LAB_TOOLS).difference(tool_names))
+    expected_tools = EXISTING_TOOLS | LAB_TOOLS | PROVIDER_CONNECT_TOOLS
+    missing_tools = sorted(expected_tools.difference(tool_names))
     summary["existing_tools_present"] = EXISTING_TOOLS.issubset(tool_names)
-    summary["lab_tools_present"] = LAB_TOOLS.issubset(tool_names)
+    summary["lab_tools_present"] = (LAB_TOOLS | PROVIDER_CONNECT_TOOLS).issubset(tool_names)
     summary["missing_tools"] = missing_tools
     if not summary["lab_tools_present"]:
         summary["errors"].append("required lab tools are missing from tools/list")
