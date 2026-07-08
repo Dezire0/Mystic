@@ -52,6 +52,8 @@ class _FakeSupabaseAPI:
         "lab_scenes": "scene_id",
         "lab_scene_objects": "id",
         "lab_simulations": "simulation_id",
+        "provider_connections": "connection_id",
+        "provider_auth_flows": "flow_id",
     }
 
     def __init__(self) -> None:
@@ -139,6 +141,11 @@ class SupabaseLabStorageTests(unittest.TestCase):
                 "MYSTIC_STORAGE_BACKEND": "supabase",
                 "MYSTIC_SUPABASE_URL": "https://example.supabase.co",
                 "MYSTIC_SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_OAUTH_ENABLED": "true",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_AUTHORIZATION_ENDPOINT": "https://provider.example.com/oauth/authorize",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_TOKEN_ENDPOINT": "https://provider.example.com/oauth/token",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_CLIENT_ID": "client-123",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_REDIRECT_URI": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=future_custom",
             },
             clear=False,
         ), patch("mystic.lab.storage.requests.request", side_effect=fake_api.request):
@@ -175,6 +182,11 @@ class SupabaseLabStorageTests(unittest.TestCase):
                 "MYSTIC_STORAGE_BACKEND": "supabase",
                 "MYSTIC_SUPABASE_URL": "https://example.supabase.co",
                 "MYSTIC_SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_OAUTH_ENABLED": "true",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_AUTHORIZATION_ENDPOINT": "https://provider.example.com/oauth/authorize",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_TOKEN_ENDPOINT": "https://provider.example.com/oauth/token",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_CLIENT_ID": "client-123",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_REDIRECT_URI": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=future_custom",
             },
             clear=False,
         ), patch("mystic.lab.storage.requests.request", side_effect=fake_api.request):
@@ -236,6 +248,40 @@ class SupabaseLabStorageTests(unittest.TestCase):
         self.assertEqual(len(fake_api.tables["lab_scenes"]), 1)
         self.assertEqual(len(fake_api.tables["lab_scene_objects"]), 1)
         self.assertEqual(len(fake_api.tables["lab_simulations"]), 1)
+
+    def test_supabase_backed_provider_connection_and_auth_flow_round_trip(self):
+        fake_api = _FakeSupabaseAPI()
+        with patch.dict(
+            os.environ,
+            {
+                "MYSTIC_STORAGE_BACKEND": "supabase",
+                "MYSTIC_SUPABASE_URL": "https://example.supabase.co",
+                "MYSTIC_SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_OAUTH_ENABLED": "true",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_AUTHORIZATION_ENDPOINT": "https://provider.example.com/oauth/authorize",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_TOKEN_ENDPOINT": "https://provider.example.com/oauth/token",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_CLIENT_ID": "client-123",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_REDIRECT_URI": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=future_custom",
+            },
+            clear=False,
+        ), patch("mystic.lab.storage.requests.request", side_effect=fake_api.request):
+            router = ModelRouter(root_path=self.root, config_path=self.config_path)
+            toolbox = MysticToolbox(root_path=self.root, router=router)
+            started = toolbox.provider_connect_start(provider_id="future_custom", auth_method="oauth")
+            callback = toolbox.provider_connect_callback_status(
+                provider_id="future_custom",
+                flow_id=started["flow"]["flow_id"],
+            )
+            verified = toolbox.provider_verify(provider_id="openai_compatible")
+            disconnected = toolbox.provider_disconnect(provider_id="openai_compatible")
+
+        self.assertEqual(started["status"], "oauth_required")
+        self.assertIn("authorization_url", started)
+        self.assertEqual(callback["flow"]["status"], "oauth_required")
+        self.assertIn(verified["status"], {"not_configured", "api_key_required"})
+        self.assertEqual(disconnected["status"], "disconnected")
+        self.assertEqual(len(fake_api.tables["provider_connections"]), 2)
+        self.assertEqual(len(fake_api.tables["provider_auth_flows"]), 1)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,9 @@ const CONFIG_URL = "https://gist.githubusercontent.com/Dezire0/778759ccca8f7d9a5
 const DEFAULT_SCOPES = "tools:read tools:execute";
 const DEFAULT_TOKEN_TTL_SECONDS = 3600;
 const MANUAL_IMPORT_VERIFICATION_PATH = "/mystic_data/e2e/remote_mcp_lab_smoke/chatgpt_import_verified.json";
+const MANUAL_IMPORT_VERIFICATION_ENV = "MYSTIC_CHATGPT_IMPORT_VERIFICATION_JSON";
 const DEFAULT_SUPABASE_SCHEMA = "public";
+const PUBLIC_PROVIDER_IDS = ["openai_compatible", "gemini", "anthropic", "future_custom"];
 const CLOUD_REQUIRED_TOOL_NAMES = [
   "mystic_status",
   "health_check",
@@ -10,6 +12,22 @@ const CLOUD_REQUIRED_TOOL_NAMES = [
   "lab_session_get",
   "lab_report_generate",
 ];
+const IMPORT_VERIFICATION_REQUIRED_TOOLS = [
+  "health_check",
+  "lab_session_create",
+  "lab_session_get",
+  "lab_report_generate",
+];
+const IMPORT_VERIFICATION_FORBIDDEN_FIELD_NAMES = new Set([
+  "token",
+  "bearer_token",
+  "access_token",
+  "refresh_token",
+  "client_secret",
+  "signing_secret",
+  "password",
+  "secret",
+]);
 const LAB_PHASES = [
   "problem_intake",
   "background_scan",
@@ -450,6 +468,124 @@ const CLOUD_TOOL_DEFINITIONS = [
         include_simulations: { type: "boolean" },
       },
       required: ["scene_id", "format", "include_objects", "include_simulations"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "provider_list",
+    title: "List Providers",
+    description: "List known external model providers and their current Provider Connect status without exposing secrets.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "provider_status",
+    title: "Provider Status",
+    description: "Inspect one Provider Connect record and its current safe configuration status.",
+    inputSchema: {
+      type: "object",
+      properties: { provider_id: { type: "string", minLength: 1 } },
+      required: ["provider_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "provider_connect_start",
+    title: "Start Provider Connect",
+    description: "Return a real provider authorization URL when OAuth is configured, or a secure Mystic LAB setup URL when API-key auth is required.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider_id: { type: "string", minLength: 1 },
+        auth_method: { type: "string", enum: ["api_key", "oauth", "bearer_token", "none/mock"] },
+      },
+      required: ["provider_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "provider_connect_callback_status",
+    title: "Provider Callback Status",
+    description: "Check the safe stored status of a provider OAuth flow without exposing raw codes, tokens, or secrets.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider_id: { type: "string", minLength: 1 },
+        flow_id: { type: "string", minLength: 1 },
+      },
+      required: ["provider_id", "flow_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "provider_configure_secret_instructions",
+    title: "Provider Secret Instructions",
+    description: "Return exact safe Cloudflare secret setup instructions for a provider without printing secret values.",
+    inputSchema: {
+      type: "object",
+      properties: { provider_id: { type: "string", minLength: 1 } },
+      required: ["provider_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "provider_verify",
+    title: "Verify Provider",
+    description: "Verify whether a provider appears configured while keeping secrets server-side.",
+    inputSchema: {
+      type: "object",
+      properties: { provider_id: { type: "string", minLength: 1 } },
+      required: ["provider_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "provider_disconnect",
+    title: "Disconnect Provider",
+    description: "Mark a provider disconnected without deleting any existing Cloudflare secrets.",
+    inputSchema: {
+      type: "object",
+      properties: { provider_id: { type: "string", minLength: 1 } },
+      required: ["provider_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "provider_model_list",
+    title: "Provider Model List",
+    description: "Return a provider model list when configuration is present, or a structured required-status response otherwise.",
+    inputSchema: {
+      type: "object",
+      properties: { provider_id: { type: "string", minLength: 1 } },
+      required: ["provider_id"],
+      additionalProperties: false,
+    },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "provider_call_test",
+    title: "Provider Call Test",
+    description: "Run a Provider Connect foundation test. Real provider calls stay disabled here unless a mock provider is explicitly used in tests.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider_id: { type: "string", minLength: 1 },
+        prompt: { type: "string", minLength: 1 },
+      },
+      required: ["provider_id", "prompt"],
       additionalProperties: false,
     },
     securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
@@ -1001,6 +1137,37 @@ function validateCloudToolArguments(name, args) {
     }
     if (typeof args.include_simulations !== "boolean") {
       errors.push("include_simulations must be boolean");
+    }
+  }
+  if (
+    name === "provider_status" ||
+    name === "provider_connect_start" ||
+    name === "provider_configure_secret_instructions" ||
+    name === "provider_verify" ||
+    name === "provider_disconnect" ||
+    name === "provider_model_list" ||
+    name === "provider_call_test"
+  ) {
+    if (typeof args.provider_id !== "string" || !args.provider_id.trim()) {
+      errors.push("provider_id is required");
+    }
+  }
+  if (name === "provider_connect_start") {
+    if (args.auth_method !== undefined && !["api_key", "oauth", "bearer_token", "none/mock"].includes(String(args.auth_method))) {
+      errors.push("auth_method must be api_key, oauth, bearer_token, or none/mock");
+    }
+  }
+  if (name === "provider_connect_callback_status") {
+    if (typeof args.provider_id !== "string" || !args.provider_id.trim()) {
+      errors.push("provider_id is required");
+    }
+    if (typeof args.flow_id !== "string" || !args.flow_id.trim()) {
+      errors.push("flow_id is required");
+    }
+  }
+  if (name === "provider_call_test") {
+    if (typeof args.prompt !== "string" || !args.prompt.trim()) {
+      errors.push("prompt is required");
     }
   }
   return errors;
@@ -2140,6 +2307,174 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function normalizeImportVerificationKey(key) {
+  return String(key || "").trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
+}
+
+function findSecretLikeImportPaths(data, prefix = "") {
+  const matches = [];
+  if (Array.isArray(data)) {
+    data.forEach((item, index) => {
+      matches.push(...findSecretLikeImportPaths(item, `${prefix}[${index}]`));
+    });
+    return matches;
+  }
+  if (!data || typeof data !== "object") {
+    return matches;
+  }
+  for (const [key, value] of Object.entries(data)) {
+    const currentPath = prefix ? `${prefix}.${key}` : String(key);
+    if (IMPORT_VERIFICATION_FORBIDDEN_FIELD_NAMES.has(normalizeImportVerificationKey(key))) {
+      matches.push(currentPath);
+    }
+    matches.push(...findSecretLikeImportPaths(value, currentPath));
+  }
+  return matches;
+}
+
+function summarizeImportVerificationPayload(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return {
+      artifact_version: null,
+      verified_at: "",
+      verified_by: "",
+      public_endpoint: "",
+      mcp_endpoint: "",
+      chatgpt_developer_mode_imported: false,
+      oauth_flow_completed: false,
+      tools_list_visible_in_chatgpt: false,
+      required_tools_visible: [],
+      manual_tool_call_results: {},
+    };
+  }
+  const requiredToolsVisible = Array.isArray(data.required_tools_visible)
+    ? data.required_tools_visible.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+  const manualToolCallResults = {};
+  if (data.manual_tool_call_results && typeof data.manual_tool_call_results === "object" && !Array.isArray(data.manual_tool_call_results)) {
+    for (const [key, value] of Object.entries(data.manual_tool_call_results)) {
+      manualToolCallResults[String(key)] = String(value);
+    }
+  }
+  return {
+    artifact_version: data.artifact_version ?? null,
+    verified_at: trimmed(data.verified_at),
+    verified_by: trimmed(data.verified_by),
+    public_endpoint: trimmed(data.public_endpoint),
+    mcp_endpoint: trimmed(data.mcp_endpoint),
+    chatgpt_developer_mode_imported: data.chatgpt_developer_mode_imported === true,
+    oauth_flow_completed: data.oauth_flow_completed === true,
+    tools_list_visible_in_chatgpt: data.tools_list_visible_in_chatgpt === true,
+    required_tools_visible: requiredToolsVisible,
+    manual_tool_call_results: manualToolCallResults,
+  };
+}
+
+function validateImportVerificationPayload(data, publicEndpoint) {
+  const errors = [];
+  const warnings = [];
+  const normalizedPublicEndpoint = String(publicEndpoint || "").replace(/\/+$/, "");
+  const normalizedMcpEndpoint = `${normalizedPublicEndpoint}/mcp`;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return {
+      valid: false,
+      verified: false,
+      errors: ["artifact must be a JSON object"],
+      warnings: [],
+    };
+  }
+  if (findSecretLikeImportPaths(data).length) {
+    errors.push("artifact contains forbidden secret-like field names");
+  }
+  if (data.artifact_version !== 1) {
+    errors.push("artifact_version must be 1");
+  }
+  if (!trimmed(data.verified_at)) {
+    errors.push("verified_at is required");
+  }
+  if (trimmed(data.verified_by) !== "manual") {
+    errors.push("verified_by must be manual");
+  }
+  if (trimmed(data.public_endpoint).replace(/\/+$/, "") !== normalizedPublicEndpoint) {
+    errors.push("public_endpoint does not match the checked public endpoint");
+  }
+  if (trimmed(data.mcp_endpoint).replace(/\/+$/, "") !== normalizedMcpEndpoint) {
+    errors.push("mcp_endpoint must match the checked public endpoint /mcp path");
+  }
+  for (const key of ["chatgpt_developer_mode_imported", "oauth_flow_completed", "tools_list_visible_in_chatgpt"]) {
+    if (data[key] !== true) {
+      errors.push(`${key} must be true`);
+    }
+  }
+  const visibleTools = Array.isArray(data.required_tools_visible)
+    ? data.required_tools_visible.map((item) => String(item).trim()).filter(Boolean)
+    : null;
+  const visibleToolNames = new Set(visibleTools || []);
+  if (!visibleTools) {
+    errors.push("required_tools_visible must be a list");
+  } else {
+    const missingVisibleTools = IMPORT_VERIFICATION_REQUIRED_TOOLS.filter((tool) => !visibleToolNames.has(tool));
+    if (missingVisibleTools.length) {
+      errors.push(`required_tools_visible is missing: ${missingVisibleTools.join(", ")}`);
+    }
+  }
+  const manualResults =
+    data.manual_tool_call_results && typeof data.manual_tool_call_results === "object" && !Array.isArray(data.manual_tool_call_results)
+      ? data.manual_tool_call_results
+      : null;
+  let manualToolCallsPassed = false;
+  if (!manualResults) {
+    errors.push("manual_tool_call_results must be an object");
+  } else {
+    const failedTools = IMPORT_VERIFICATION_REQUIRED_TOOLS.filter(
+      (tool) => trimmed(manualResults[tool]).toLowerCase() !== "passed",
+    );
+    manualToolCallsPassed = failedTools.length === 0;
+    if (failedTools.length) {
+      errors.push(`manual_tool_call_results must mark passed for: ${failedTools.join(", ")}`);
+    }
+  }
+  if (data.notes !== undefined && typeof data.notes !== "string") {
+    warnings.push("notes should be a string when present");
+  }
+  const requiredToolsVisible =
+    Array.isArray(visibleTools) && IMPORT_VERIFICATION_REQUIRED_TOOLS.every((tool) => visibleToolNames.has(tool));
+  const valid = errors.length === 0;
+  return {
+    valid,
+    verified: valid && requiredToolsVisible && manualToolCallsPassed,
+    errors,
+    warnings,
+  };
+}
+
+function workerManualImportVerification(env, publicEndpoint) {
+  const raw = trimmed(env[MANUAL_IMPORT_VERIFICATION_ENV]);
+  const summary = {
+    manual_import_verification_checked: false,
+    manual_import_verified: false,
+    manual_import_verification_path: MANUAL_IMPORT_VERIFICATION_PATH,
+    manual_import_verification_summary: {},
+  };
+  if (!raw) {
+    return summary;
+  }
+  summary.manual_import_verification_checked = true;
+  summary.manual_import_verification_path = `env://${MANUAL_IMPORT_VERIFICATION_ENV}`;
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return summary;
+  }
+  const validation = validateImportVerificationPayload(payload, publicEndpoint);
+  summary.manual_import_verified = validation.verified;
+  if (validation.valid) {
+    summary.manual_import_verification_summary = summarizeImportVerificationPayload(payload);
+  }
+  return summary;
+}
+
 function cloudId(prefix) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
@@ -2346,75 +2681,328 @@ function providerSecret(env, names) {
   return "";
 }
 
-function defaultProviderRegistry(env) {
-  const openAiBaseUrl = normalizeBaseUrl(env.MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL || "");
-  const openAiSecret = providerSecret(env, [
-    "MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY",
-    "MYSTIC_PROVIDER_OPENAI_COMPAT_BEARER_TOKEN",
-  ]);
-  const geminiSecret = providerSecret(env, [
-    "MYSTIC_PROVIDER_GEMINI_API_KEY",
-    "MYSTIC_PROVIDER_GEMINI_BEARER_TOKEN",
-  ]);
-  const anthropicSecret = providerSecret(env, [
-    "MYSTIC_PROVIDER_ANTHROPIC_API_KEY",
-    "MYSTIC_PROVIDER_ANTHROPIC_BEARER_TOKEN",
-  ]);
-  return [
-    {
-      provider_id: "openai_compatible",
-      provider_type: "openai_compatible",
-      auth_method: String(env.MYSTIC_PROVIDER_OPENAI_COMPAT_BEARER_TOKEN || "").trim() ? "oauth_bearer_token" : "api_key",
-      status: openAiBaseUrl && openAiSecret ? "ready" : "provider_required",
-      scopes: ["model:generate"],
-      created_at: "",
-      setup_url: trimmed(env.MYSTIC_PROVIDER_OPENAI_COMPAT_SETUP_URL, "https://platform.openai.com/api-keys"),
-      setup_instructions:
-        "Store MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY as a Cloudflare secret and set MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL and MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL.",
-      model_name: trimmed(env.MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL, "openai-compatible"),
-      ready: Boolean(openAiBaseUrl && openAiSecret),
-    },
-    {
-      provider_id: "gemini",
-      provider_type: "gemini",
-      auth_method: String(env.MYSTIC_PROVIDER_GEMINI_BEARER_TOKEN || "").trim() ? "oauth_bearer_token" : "api_key",
-      status: geminiSecret ? "ready" : "provider_required",
-      scopes: ["model:generate"],
-      created_at: "",
-      setup_url: trimmed(env.MYSTIC_PROVIDER_GEMINI_SETUP_URL, "https://aistudio.google.com/app/apikey"),
-      setup_instructions:
-        "Store MYSTIC_PROVIDER_GEMINI_API_KEY as a Cloudflare secret or provide a Gemini OAuth bearer token via Cloudflare secret storage.",
-      model_name: trimmed(env.MYSTIC_PROVIDER_GEMINI_MODEL, "gemini-1.5-flash"),
-      ready: Boolean(geminiSecret),
-    },
-    {
-      provider_id: "anthropic",
-      provider_type: "anthropic",
-      auth_method: String(env.MYSTIC_PROVIDER_ANTHROPIC_BEARER_TOKEN || "").trim() ? "oauth_bearer_token" : "api_key",
-      status: anthropicSecret ? "ready" : "provider_required",
-      scopes: ["model:generate"],
-      created_at: "",
-      setup_url: trimmed(env.MYSTIC_PROVIDER_ANTHROPIC_SETUP_URL, "https://console.anthropic.com/settings/keys"),
-      setup_instructions:
-        "Store MYSTIC_PROVIDER_ANTHROPIC_API_KEY as a Cloudflare secret or provide an authorized bearer token via Cloudflare secret storage.",
-      model_name: trimmed(env.MYSTIC_PROVIDER_ANTHROPIC_MODEL, "claude-3-5-sonnet-latest"),
-      ready: Boolean(anthropicSecret),
-    },
-  ];
+function normalizeProviderId(value) {
+  const normalized = trimmed(value).toLowerCase();
+  if (normalized === "openai") {
+    return "openai_compatible";
+  }
+  if (normalized === "google") {
+    return "gemini";
+  }
+  if (normalized === "claude") {
+    return "anthropic";
+  }
+  if (normalized === "custom" || normalized === "future" || normalized === "future/custom") {
+    return "future_custom";
+  }
+  return normalized;
 }
 
-function normalizeProviderRecord(baseRecord, row = {}) {
-  const scopes = Array.isArray(row.scopes) ? row.scopes.map((item) => String(item)) : baseRecord.scopes;
+function providerRouteBaseUrl(env) {
+  return trimmed(
+    env.MYSTIC_PROVIDER_CONNECT_BASE_URL || env.MYSTIC_PUBLIC_BASE_URL || env.MYSTIC_PUBLIC_MCP_BASE_URL || env.MYSTIC_OAUTH_ISSUER,
+    "https://mystic.dexproject.workers.dev",
+  ).replace(/\/+$/, "");
+}
+
+function providerRouteUrls(env, providerId) {
+  const baseUrl = providerRouteBaseUrl(env);
   return {
-    ...baseRecord,
-    provider_type: trimmed(row.provider_type, baseRecord.provider_type),
-    auth_method: trimmed(row.auth_method, baseRecord.auth_method),
-    status: trimmed(row.status, baseRecord.status),
-    scopes,
-    created_at: trimmed(row.created_at, baseRecord.created_at),
-    setup_url: trimmed(row.setup_url, baseRecord.setup_url),
-    setup_instructions: trimmed(row.setup_instructions, baseRecord.setup_instructions),
+    providers_url: `${baseUrl}/providers`,
+    connect_url: `${baseUrl}/providers/${providerId}/connect`,
+    setup_url: `${baseUrl}/providers/${providerId}/setup`,
+    status_url: `${baseUrl}/providers/${providerId}/status`,
+    callback_url: `${baseUrl}/providers/oauth/callback?provider_id=${providerId}`,
   };
+}
+
+function providerCatalogEntry(env, providerId) {
+  const normalized = normalizeProviderId(providerId);
+  if (normalized === "openai_compatible") {
+    return {
+      provider_id: normalized,
+      provider_type: "openai_compatible",
+      default_auth_method: "api_key",
+      supported_auth_methods: ["api_key", "oauth", "bearer_token"],
+      supports_api_key: true,
+      supports_oauth: true,
+      secret_names: [
+        "MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY",
+        "MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL",
+        "MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL",
+      ],
+      required_secret_names: ["MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY", "MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL"],
+      optional_secret_names: ["MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL"],
+      model_env_names: ["MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL"],
+      external_setup_url: trimmed(env.MYSTIC_PROVIDER_OPENAI_COMPAT_SETUP_URL, "https://platform.openai.com/api-keys"),
+      setup_instructions:
+        "Set Cloudflare secret MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY, set MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL, and optionally set MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL.",
+      scopes: ["model:generate"],
+      default_models: ["openai-compatible"],
+      oauth_env_prefix: "MYSTIC_PROVIDER_OPENAI_COMPAT",
+      oauth_default_scopes: [],
+    };
+  }
+  if (normalized === "gemini") {
+    return {
+      provider_id: normalized,
+      provider_type: "gemini",
+      default_auth_method: "api_key",
+      supported_auth_methods: ["api_key", "oauth", "bearer_token"],
+      supports_api_key: true,
+      supports_oauth: true,
+      secret_names: ["MYSTIC_PROVIDER_GEMINI_API_KEY", "MYSTIC_PROVIDER_GEMINI_MODEL"],
+      required_secret_names: ["MYSTIC_PROVIDER_GEMINI_API_KEY"],
+      optional_secret_names: ["MYSTIC_PROVIDER_GEMINI_MODEL"],
+      model_env_names: ["MYSTIC_PROVIDER_GEMINI_MODEL"],
+      external_setup_url: trimmed(env.MYSTIC_PROVIDER_GEMINI_SETUP_URL, "https://aistudio.google.com/app/apikey"),
+      setup_instructions:
+        "Set Cloudflare secret MYSTIC_PROVIDER_GEMINI_API_KEY and optionally set MYSTIC_PROVIDER_GEMINI_MODEL.",
+      scopes: ["model:generate"],
+      default_models: ["gemini-1.5-flash"],
+      oauth_env_prefix: "MYSTIC_PROVIDER_GEMINI",
+      oauth_default_scopes: ["openid", "email", "profile"],
+      oauth_default_authorization_endpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+      oauth_default_token_endpoint: "https://oauth2.googleapis.com/token",
+    };
+  }
+  if (normalized === "anthropic") {
+    return {
+      provider_id: normalized,
+      provider_type: "anthropic",
+      default_auth_method: "api_key",
+      supported_auth_methods: ["api_key", "oauth", "bearer_token"],
+      supports_api_key: true,
+      supports_oauth: true,
+      secret_names: ["MYSTIC_PROVIDER_ANTHROPIC_API_KEY", "MYSTIC_PROVIDER_ANTHROPIC_MODEL"],
+      required_secret_names: ["MYSTIC_PROVIDER_ANTHROPIC_API_KEY"],
+      optional_secret_names: ["MYSTIC_PROVIDER_ANTHROPIC_MODEL"],
+      model_env_names: ["MYSTIC_PROVIDER_ANTHROPIC_MODEL"],
+      external_setup_url: trimmed(env.MYSTIC_PROVIDER_ANTHROPIC_SETUP_URL, "https://console.anthropic.com/settings/keys"),
+      setup_instructions:
+        "Set Cloudflare secret MYSTIC_PROVIDER_ANTHROPIC_API_KEY and optionally set MYSTIC_PROVIDER_ANTHROPIC_MODEL.",
+      scopes: ["model:generate"],
+      default_models: ["claude-3-5-sonnet-latest"],
+      oauth_env_prefix: "MYSTIC_PROVIDER_ANTHROPIC",
+      oauth_default_scopes: [],
+    };
+  }
+  if (normalized === "mock") {
+    return {
+      provider_id: "mock",
+      provider_type: "future/custom",
+      default_auth_method: "none/mock",
+      supported_auth_methods: ["none/mock"],
+      supports_api_key: false,
+      supports_oauth: false,
+      secret_names: [],
+      required_secret_names: [],
+      optional_secret_names: [],
+      model_env_names: [],
+      external_setup_url: "",
+      setup_instructions: "Mock provider is test-only and must not be used for production routing.",
+      scopes: ["model:generate"],
+      default_models: ["mock-model"],
+      test_only: true,
+    };
+  }
+  return {
+    provider_id: "future_custom",
+    provider_type: "future/custom",
+    default_auth_method: "oauth",
+    supported_auth_methods: ["api_key", "oauth", "bearer_token"],
+    supports_api_key: false,
+    supports_oauth: true,
+    secret_names: [],
+    required_secret_names: [],
+    optional_secret_names: [],
+    model_env_names: [],
+    external_setup_url: "",
+    setup_instructions:
+      "Configure OAuth metadata for the future custom provider, then use provider_connect_start to generate a real authorization URL.",
+    scopes: ["model:generate"],
+    default_models: [],
+    oauth_env_prefix: "MYSTIC_PROVIDER_FUTURE_CUSTOM",
+    oauth_default_scopes: [],
+  };
+}
+
+function providerSecretState(env, spec) {
+  const configuredSecretNames = spec.secret_names.filter((name) => trimmed(env[name]));
+  const missingSecretNames = spec.secret_names.filter((name) => !configuredSecretNames.includes(name));
+  const missingRequiredSecretNames = spec.required_secret_names.filter((name) => !configuredSecretNames.includes(name));
+  return {
+    configured_secret_names: configuredSecretNames,
+    missing_secret_names: missingSecretNames,
+    missing_required_secret_names: missingRequiredSecretNames,
+  };
+}
+
+function providerManualSecretInstructions(spec) {
+  const instructions = [
+    "Do not store provider secrets in Supabase.",
+    "Store production provider secrets only in Cloudflare Worker secret storage or approved server-side secret storage.",
+    "Do not paste API keys into tool output or chat transcripts.",
+  ];
+  for (const name of spec.required_secret_names) {
+    instructions.push(`wrangler secret put ${name} --name mystic`);
+  }
+  for (const name of spec.optional_secret_names) {
+    instructions.push(`Set optional provider variable or secret ${name} if needed.`);
+  }
+  return instructions;
+}
+
+function providerOauthMetadata(env, spec) {
+  const prefix = spec.oauth_env_prefix || "";
+  if (!prefix) {
+    return {
+      available: false,
+      configured: false,
+      enabled: false,
+      authorization_endpoint: "",
+      token_endpoint: "",
+      client_id: "",
+      redirect_uri: "",
+      scopes: [],
+    };
+  }
+  const enabled = ["1", "true", "yes", "on"].includes(trimmed(env[`${prefix}_OAUTH_ENABLED`]).toLowerCase());
+  const authorizationEndpoint = trimmed(
+    env[`${prefix}_AUTHORIZATION_ENDPOINT`],
+    spec.oauth_default_authorization_endpoint || "",
+  );
+  const tokenEndpoint = trimmed(env[`${prefix}_TOKEN_ENDPOINT`], spec.oauth_default_token_endpoint || "");
+  const clientId = trimmed(env[`${prefix}_CLIENT_ID`]);
+  const redirectUri = trimmed(
+    env[`${prefix}_REDIRECT_URI`],
+    `${providerRouteBaseUrl(env)}/providers/oauth/callback?provider_id=${spec.provider_id}`,
+  );
+  const scopes = trimmed(env[`${prefix}_SCOPES`])
+    ? trimmed(env[`${prefix}_SCOPES`])
+        .split(/\s+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [...(spec.oauth_default_scopes || [])];
+  return {
+    available: Boolean(spec.supports_oauth),
+    configured: Boolean(enabled && authorizationEndpoint && clientId && redirectUri),
+    enabled,
+    authorization_endpoint: authorizationEndpoint,
+    token_endpoint: tokenEndpoint,
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    scopes,
+  };
+}
+
+function providerModelList(env, spec, row = {}) {
+  if (Array.isArray(row.model_list) && row.model_list.length) {
+    return row.model_list.map((item) => String(item)).filter(Boolean);
+  }
+  const envModels = spec.model_env_names.map((name) => trimmed(env[name])).filter(Boolean);
+  if (envModels.length) {
+    return envModels;
+  }
+  return [...spec.default_models];
+}
+
+function providerDefaultFailureReason(spec, status, oauthMetadata, secretState) {
+  if (status === "connected") {
+    return "";
+  }
+  if (status === "oauth_required" && !oauthMetadata.configured) {
+    return "oauth_metadata_missing";
+  }
+  if (status === "api_key_required" && secretState.missing_required_secret_names.length) {
+    return "missing_required_secrets";
+  }
+  if (status === "not_configured" && spec.supports_api_key) {
+    return "provider_not_configured";
+  }
+  return "";
+}
+
+function resolveProviderStatus(spec, row, secretState, oauthMetadata) {
+  const storedStatus = trimmed(row.status);
+  if (["disconnected", "auth_failed", "rate_limited", "provider_unavailable"].includes(storedStatus)) {
+    return storedStatus;
+  }
+  const authMethod = trimmed(row.auth_method, spec.default_auth_method);
+  if (spec.test_only) {
+    return "connected";
+  }
+  if (authMethod === "oauth") {
+    if (oauthMetadata.configured) {
+      return "oauth_required";
+    }
+    if (spec.supports_api_key) {
+      return "api_key_required";
+    }
+    return "not_configured";
+  }
+  if (spec.required_secret_names.length && secretState.missing_required_secret_names.length === 0) {
+    return "connected";
+  }
+  if (authMethod === "bearer_token") {
+    if (oauthMetadata.configured) {
+      return "oauth_required";
+    }
+    if (spec.supports_api_key) {
+      return "api_key_required";
+    }
+    return "not_configured";
+  }
+  if (!storedStatus && secretState.configured_secret_names.length === 0) {
+    return "not_configured";
+  }
+  return "api_key_required";
+}
+
+function buildProviderRecord(env, providerId, row = {}) {
+  const spec = providerCatalogEntry(env, providerId);
+  const secretState = providerSecretState(env, spec);
+  const oauthMetadata = providerOauthMetadata(env, spec);
+  const routeUrls = providerRouteUrls(env, spec.provider_id);
+  const modelList = providerModelList(env, spec, row);
+  const authMethod = trimmed(row.auth_method, spec.default_auth_method);
+  const status = resolveProviderStatus(spec, row, secretState, oauthMetadata);
+  const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : {};
+  return {
+    connection_id: trimmed(row.connection_id, `provider-${spec.provider_id}`),
+    provider_id: spec.provider_id,
+    provider_type: trimmed(row.provider_type, spec.provider_type),
+    auth_method: authMethod,
+    auth_mode: oauthMetadata.configured ? "oauth" : spec.supports_api_key ? "api_key" : authMethod,
+    status,
+    provider_status: status,
+    scopes: Array.isArray(row.scopes) ? row.scopes.map((item) => String(item)) : [...spec.scopes],
+    model_list: modelList,
+    model_name: modelList[0] || spec.provider_id,
+    setup_url: routeUrls.setup_url,
+    connect_url: routeUrls.connect_url,
+    status_url: routeUrls.status_url,
+    external_setup_url: trimmed(metadata.external_setup_url, spec.external_setup_url || ""),
+    setup_instructions: trimmed(row.setup_instructions, spec.setup_instructions),
+    last_verified_at: trimmed(row.last_verified_at),
+    failure_reason: trimmed(row.failure_reason, providerDefaultFailureReason(spec, status, oauthMetadata, secretState)),
+    metadata: metadata,
+    created_at: trimmed(row.created_at),
+    updated_at: trimmed(row.updated_at),
+    configured_secret_names: secretState.configured_secret_names,
+    missing_secret_names: secretState.missing_secret_names,
+    required_secret_names: [...spec.required_secret_names],
+    missing_required_secret_names: secretState.missing_required_secret_names,
+    configured: status === "connected",
+    oauth_supported: oauthMetadata.available,
+    oauth_configured: oauthMetadata.configured,
+    oauth_authorization_endpoint: oauthMetadata.authorization_endpoint,
+    ready: status === "connected",
+  };
+}
+
+function defaultProviderRegistry(env) {
+  return PUBLIC_PROVIDER_IDS.map((providerId) => buildProviderRecord(env, providerId));
 }
 
 async function loadProviderRegistry(env) {
@@ -2427,25 +3015,11 @@ async function loadProviderRegistry(env) {
   try {
     const rows = await supabaseSelectRows(env, "provider_connections", {}, { order: "created_at.asc" });
     for (const row of rows) {
-      const providerId = trimmed(row.provider_id);
+      const providerId = normalizeProviderId(row.provider_id);
       if (!providerId) {
         continue;
       }
-      const baseRecord =
-        providerMap.get(providerId) ||
-        {
-          provider_id: providerId,
-          provider_type: "future",
-          auth_method: "manual",
-          status: "provider_required",
-          scopes: [],
-          created_at: "",
-          setup_url: "",
-          setup_instructions: "Connect this provider explicitly before cloud-native LAB tools can use it.",
-          model_name: providerId,
-          ready: false,
-        };
-      providerMap.set(providerId, normalizeProviderRecord(baseRecord, row));
+      providerMap.set(providerId, buildProviderRecord(env, providerId, row));
     }
   } catch (error) {
     warnings.push(`provider_registry_unavailable:${String(error.message || error).slice(0, 120)}`);
@@ -2453,21 +3027,131 @@ async function loadProviderRegistry(env) {
   return { providers: Array.from(providerMap.values()), warnings };
 }
 
+async function upsertProviderConnection(env, providerRecord, extra = {}) {
+  const spec = providerCatalogEntry(env, providerRecord.provider_id);
+  const routeUrls = providerRouteUrls(env, providerRecord.provider_id);
+  const row = {
+    connection_id: providerRecord.connection_id || `provider-${providerRecord.provider_id}`,
+    provider_id: providerRecord.provider_id,
+    provider_type: providerRecord.provider_type,
+    auth_method: providerRecord.auth_method,
+    status: providerRecord.status,
+    scopes: Array.isArray(providerRecord.scopes) ? providerRecord.scopes : [],
+    model_list: Array.isArray(providerRecord.model_list) ? providerRecord.model_list : [],
+    setup_url: providerRecord.setup_url || routeUrls.setup_url,
+    setup_instructions: providerRecord.setup_instructions || spec.setup_instructions,
+    last_verified_at: providerRecord.last_verified_at || null,
+    failure_reason: providerRecord.failure_reason || "",
+    metadata: {
+      connect_url: routeUrls.connect_url,
+      status_url: routeUrls.status_url,
+      external_setup_url: spec.external_setup_url || "",
+      ...(providerRecord.metadata && typeof providerRecord.metadata === "object" ? providerRecord.metadata : {}),
+    },
+    created_at: providerRecord.created_at || nowIso(),
+    updated_at: nowIso(),
+    ...extra,
+  };
+  await supabaseUpsertRows(env, "provider_connections", [row], "connection_id");
+  return row;
+}
+
+async function upsertProviderAuthFlow(env, flow) {
+  const row = {
+    flow_id: flow.flow_id,
+    provider_id: flow.provider_id,
+    auth_method: flow.auth_method,
+    status: flow.status,
+    authorization_url: flow.authorization_url || "",
+    redirect_url: flow.redirect_url || "",
+    state: flow.state || "",
+    state_hash: flow.state_hash || "",
+    code_challenge: flow.code_challenge || "",
+    code_challenge_method: flow.code_challenge_method || "",
+    callback_received_at: flow.callback_received_at || null,
+    failure_reason: flow.failure_reason || "",
+    metadata: flow.metadata && typeof flow.metadata === "object" ? flow.metadata : {},
+    created_at: flow.created_at || nowIso(),
+    updated_at: nowIso(),
+  };
+  await supabaseUpsertRows(env, "provider_auth_flows", [row], "flow_id");
+  return row;
+}
+
+async function loadProviderAuthFlow(env, flowId) {
+  return supabaseSelectOne(env, "provider_auth_flows", { flow_id: `eq.${flowId}` });
+}
+
+function publicProviderFlow(flow = {}) {
+  return {
+    flow_id: trimmed(flow.flow_id),
+    provider_id: normalizeProviderId(flow.provider_id),
+    auth_method: trimmed(flow.auth_method),
+    status: trimmed(flow.status),
+    authorization_url: trimmed(flow.authorization_url),
+    redirect_url: trimmed(flow.redirect_url),
+    state_hash: trimmed(flow.state_hash),
+    code_challenge: trimmed(flow.code_challenge),
+    code_challenge_method: trimmed(flow.code_challenge_method),
+    callback_received_at: flow.callback_received_at || null,
+    failure_reason: trimmed(flow.failure_reason),
+    metadata: flow.metadata && typeof flow.metadata === "object" && !Array.isArray(flow.metadata) ? flow.metadata : {},
+    created_at: flow.created_at || "",
+    updated_at: flow.updated_at || "",
+  };
+}
+
+function base64UrlEncode(bytes) {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest("SHA-256", textEncoder.encode(String(value)));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function buildPkcePair() {
+  const verifierBytes = new Uint8Array(32);
+  crypto.getRandomValues(verifierBytes);
+  const verifier = base64UrlEncode(verifierBytes);
+  const challengeDigest = await crypto.subtle.digest("SHA-256", textEncoder.encode(verifier));
+  const challenge = base64UrlEncode(new Uint8Array(challengeDigest));
+  return { verifier, challenge };
+}
+
+function buildProviderAuthorizationUrl(env, spec, oauthMetadata, { flowId, stateValue, codeChallenge }) {
+  const params = new URLSearchParams();
+  params.set("response_type", "code");
+  params.set("client_id", oauthMetadata.client_id);
+  params.set("redirect_uri", oauthMetadata.redirect_uri);
+  params.set("state", stateValue);
+  params.set("flow_id", flowId);
+  if (oauthMetadata.scopes.length) {
+    params.set("scope", oauthMetadata.scopes.join(" "));
+  }
+  if (codeChallenge) {
+    params.set("code_challenge", codeChallenge);
+    params.set("code_challenge_method", "S256");
+  }
+  if (spec.provider_id === "gemini") {
+    params.set("access_type", "offline");
+    params.set("prompt", "consent");
+  }
+  return `${oauthMetadata.authorization_endpoint}?${params.toString()}`;
+}
+
 function providerRegistryMap(registry) {
   return new Map(registry.providers.map((item) => [item.provider_id, item]));
 }
 
 function normalizeRequestedProvider(value) {
-  const normalized = trimmed(value, "auto").toLowerCase();
-  if (normalized === "openai") {
-    return "openai_compatible";
-  }
-  if (normalized === "google") {
-    return "gemini";
-  }
-  if (normalized === "claude") {
-    return "anthropic";
-  }
+  const normalized = normalizeProviderId(trimmed(value, "auto"));
   if (normalized === "local") {
     return "local_backend";
   }
@@ -2688,6 +3372,9 @@ async function invokeCloudProvider(env, providerRecord, prompt) {
 
 async function cloudMysticStatus(state, supabase, env) {
   const registry = await loadProviderRegistry(env);
+  const verificationSummary = workerManualImportVerification(env, state.issuer);
+  const importReadyCandidate = state.metadataAvailable && supabase.configured;
+  const importReady = importReadyCandidate && verificationSummary.manual_import_verified;
   const toolStates = {
     mystic_status: "ready",
     health_check: "ready",
@@ -2712,12 +3399,23 @@ async function cloudMysticStatus(state, supabase, env) {
     attach_simulation_to_scene: supabase.configured ? "ready" : "blocked",
     export_lab_snapshot: supabase.configured ? "ready" : "blocked",
     generate_lab_report: supabase.configured ? "ready" : "blocked",
+    provider_list: "ready",
+    provider_status: "ready",
+    provider_connect_start: supabase.configured ? "ready" : "blocked",
+    provider_connect_callback_status: supabase.configured ? "ready" : "blocked",
+    provider_configure_secret_instructions: "ready",
+    provider_verify: supabase.configured ? "ready" : "blocked",
+    provider_disconnect: supabase.configured ? "ready" : "blocked",
+    provider_model_list: "ready",
+    provider_call_test: "ready",
   };
   const blockers = [];
   if (!state.enabled) {
     blockers.push("OAUTH_NOT_CONFIGURED");
   } else if (!state.configured) {
     blockers.push("OAUTH_METADATA_MISSING");
+  } else if (!importReady) {
+    blockers.push("MANUAL_IMPORT_NOT_VERIFIED");
   }
   if (!supabase.configured) {
     blockers.push("LAB_STORAGE_NOT_CONFIGURED");
@@ -2757,13 +3455,13 @@ async function cloudMysticStatus(state, supabase, env) {
     oauth_configured: state.configured,
     oauth_enabled: state.enabled,
     oauth_metadata_available: state.metadataAvailable,
-    chatgpt_remote_import_ready: false,
-    chatgpt_remote_import_ready_candidate: state.metadataAvailable && supabase.configured,
-    manual_import_verification_checked: false,
-    manual_import_verified: false,
-    manual_import_verification_path: MANUAL_IMPORT_VERIFICATION_PATH,
-    manual_import_verification_summary: {},
-    blockers: [...blockers, "MANUAL_IMPORT_NOT_VERIFIED"],
+    chatgpt_remote_import_ready: importReady,
+    chatgpt_remote_import_ready_candidate: importReadyCandidate,
+    manual_import_verification_checked: verificationSummary.manual_import_verification_checked,
+    manual_import_verified: verificationSummary.manual_import_verified,
+    manual_import_verification_path: verificationSummary.manual_import_verification_path,
+    manual_import_verification_summary: verificationSummary.manual_import_verification_summary,
+    blockers,
     datasets: {},
     adapter_status: {
       available: ["math.sympy", "physics.simple_projectile", "physics.simple_collision", "scene.three_json"],
@@ -3596,6 +4294,229 @@ async function callCloudTool(name, args, env, state) {
         failed_claims: report.failed_claims.length,
         next_actions: report.next_actions.length,
       },
+    };
+  }
+  if (name === "provider_list") {
+    const registry = await loadProviderRegistry(env);
+    return { providers: registry.providers, warnings: registry.warnings };
+  }
+  if (name === "provider_status") {
+    const registry = await loadProviderRegistry(env);
+    const providerId = normalizeProviderId(args.provider_id);
+    return providerRegistryMap(registry).get(providerId) || buildProviderRecord(env, providerId);
+  }
+  if (name === "provider_connect_start") {
+    const providerId = normalizeProviderId(args.provider_id);
+    const spec = providerCatalogEntry(env, providerId);
+    const requestedAuthMethod = trimmed(args.auth_method, spec.default_auth_method);
+    const oauthMetadata = providerOauthMetadata(env, spec);
+    if (providerId === "mock" && requestedAuthMethod === "none/mock") {
+      const record = buildProviderRecord(env, "mock", { auth_method: "none/mock", status: "connected", model_list: ["mock-model"] });
+      await upsertProviderConnection(env, record);
+      return { ...record, message: "Mock provider connected for tests." };
+    }
+    if (["oauth", "bearer_token"].includes(requestedAuthMethod) && oauthMetadata.configured) {
+      const { verifier, challenge } = await buildPkcePair();
+      const flowId = `flow-${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
+      const stateValue = `${flowId}.${base64UrlEncode(crypto.getRandomValues(new Uint8Array(18)))}`;
+      const authorizationUrl = buildProviderAuthorizationUrl(env, spec, oauthMetadata, {
+        flowId,
+        stateValue,
+        codeChallenge: challenge,
+      });
+      const flow = {
+        flow_id: flowId,
+        provider_id: spec.provider_id,
+        auth_method: "oauth",
+        status: "oauth_required",
+        authorization_url: authorizationUrl,
+        redirect_url: oauthMetadata.redirect_uri,
+        state: "",
+        state_hash: await sha256Hex(stateValue),
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        callback_received_at: null,
+        failure_reason: "",
+        metadata: {
+          runtime_mode: "cloud_native_worker_lab_v0",
+          authorization_endpoint: oauthMetadata.authorization_endpoint,
+          token_endpoint: oauthMetadata.token_endpoint,
+          client_id: oauthMetadata.client_id,
+          scopes: oauthMetadata.scopes,
+          pkce_enabled: true,
+          code_verifier_present: Boolean(verifier),
+        },
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      };
+      await upsertProviderAuthFlow(env, flow);
+      const record = buildProviderRecord(env, providerId, { auth_method: "oauth", status: "oauth_required" });
+      const saved = await upsertProviderConnection(env, record, {
+        metadata: {
+          ...(record.metadata || {}),
+          oauth_enabled: true,
+          oauth_redirect_uri: oauthMetadata.redirect_uri,
+          oauth_client_id_configured: true,
+        },
+      });
+      return {
+        ...buildProviderRecord(env, providerId, saved),
+        authorization_url: authorizationUrl,
+        flow: publicProviderFlow(flow),
+        message: "Provider connect start produced a real OAuth authorization URL.",
+      };
+    }
+    if (["oauth", "bearer_token"].includes(requestedAuthMethod) && spec.supports_api_key) {
+      const record = buildProviderRecord(env, providerId, {
+        auth_method: "api_key",
+        status: "api_key_required",
+        failure_reason: "oauth_not_configured",
+      });
+      const saved = await upsertProviderConnection(env, record);
+      return {
+        ...buildProviderRecord(env, providerId, saved),
+        auth_method: "api_key",
+        status: "api_key_required",
+        provider_status: "api_key_required",
+        message: "OAuth is not configured for this provider. Use the secure setup page and Cloudflare secret instructions.",
+      };
+    }
+    if (requestedAuthMethod === "oauth" || requestedAuthMethod === "bearer_token") {
+      const record = buildProviderRecord(env, providerId);
+      return {
+        ...record,
+        status: "provider_required",
+        failure_reason: "oauth_metadata_missing",
+        message: "OAuth metadata is incomplete for this provider.",
+      };
+    }
+    const record = buildProviderRecord(env, providerId, {
+      auth_method: requestedAuthMethod,
+      status: requestedAuthMethod === "api_key" && !buildProviderRecord(env, providerId).configured ? "api_key_required" : "",
+    });
+    const status = record.configured ? "connected" : "api_key_required";
+    const saved = await upsertProviderConnection(env, record, {
+      status,
+    });
+    return {
+      ...buildProviderRecord(env, providerId, saved),
+      status,
+      provider_status: status,
+      message: "Provider connect start returned the secure Mystic LAB setup page.",
+    };
+  }
+  if (name === "provider_connect_callback_status") {
+    const providerId = normalizeProviderId(args.provider_id);
+    const flow = await loadProviderAuthFlow(env, args.flow_id.trim());
+    if (!flow || normalizeProviderId(flow.provider_id) !== providerId) {
+      throw new Error(`Unknown provider auth flow: ${args.flow_id}`);
+    }
+    const registry = await loadProviderRegistry(env);
+    return {
+      provider: providerRegistryMap(registry).get(providerId) || buildProviderRecord(env, providerId),
+      flow: publicProviderFlow(flow),
+      callback_received: Boolean(flow.callback_received_at),
+    };
+  }
+  if (name === "provider_configure_secret_instructions") {
+    const providerId = normalizeProviderId(args.provider_id);
+    const spec = providerCatalogEntry(env, providerId);
+    const record = buildProviderRecord(env, providerId);
+    return {
+      ...record,
+      secret_names: [...spec.secret_names],
+      required_secret_names: [...spec.required_secret_names],
+      optional_secret_names: [...spec.optional_secret_names],
+      instructions: providerManualSecretInstructions(spec),
+      direct_secret_write_supported: false,
+      runtime_mode: "cloud_native_worker_lab_v0",
+    };
+  }
+  if (name === "provider_verify") {
+    const providerId = normalizeProviderId(args.provider_id);
+    const existing = await supabaseSelectOne(env, "provider_connections", { provider_id: `eq.${providerId}` });
+    if (existing && trimmed(existing.status) === "disconnected") {
+      return {
+        ...buildProviderRecord(env, providerId, existing),
+        verified_at: nowIso(),
+        message: "Provider remains disconnected until an explicit reconnect.",
+      };
+    }
+    const record = buildProviderRecord(env, providerId, existing || {});
+    const saved = await upsertProviderConnection(env, record, {
+      status: record.status,
+      auth_method: record.auth_method,
+      model_list: record.model_list,
+      last_verified_at: nowIso(),
+      failure_reason: "",
+    });
+    return {
+      ...buildProviderRecord(env, providerId, saved),
+      connection_id: saved.connection_id,
+      verified_at: saved.last_verified_at,
+      message: "Provider configuration was checked without exposing secrets.",
+    };
+  }
+  if (name === "provider_disconnect") {
+    const providerId = normalizeProviderId(args.provider_id);
+    const existing = (await supabaseSelectOne(env, "provider_connections", { provider_id: `eq.${providerId}` })) || {};
+    const metadata = existing.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata) ? existing.metadata : {};
+    const record = buildProviderRecord(env, providerId, { ...existing, status: "disconnected" });
+    const saved = await upsertProviderConnection(env, record, {
+      status: "disconnected",
+      metadata: { ...metadata, disconnected_at: nowIso() },
+    });
+    return {
+      ...buildProviderRecord(env, providerId, saved),
+      connection_id: saved.connection_id,
+      message: "Provider was marked disconnected. Existing secrets were not deleted.",
+    };
+  }
+  if (name === "provider_model_list") {
+    const registry = await loadProviderRegistry(env);
+    const providerId = normalizeProviderId(args.provider_id);
+    const record = providerRegistryMap(registry).get(providerId) || buildProviderRecord(env, providerId);
+    if (record.status !== "connected") {
+      return {
+        provider_id: record.provider_id,
+        provider_type: record.provider_type,
+        auth_method: record.auth_method,
+        status: record.status,
+        model_list: [],
+        setup_url: record.setup_url,
+        setup_instructions: record.setup_instructions,
+      };
+    }
+    return {
+      provider_id: record.provider_id,
+      provider_type: record.provider_type,
+      auth_method: record.auth_method,
+      status: record.status,
+      model_list: record.model_list,
+    };
+  }
+  if (name === "provider_call_test") {
+    const providerId = normalizeProviderId(args.provider_id);
+    if (providerId === "mock") {
+      return {
+        provider_id: "mock",
+        provider_type: "future/custom",
+        auth_method: "none/mock",
+        status: "completed",
+        output: `mock:${trimmed(args.prompt, "ping")}`,
+        test_only: true,
+      };
+    }
+    const registry = await loadProviderRegistry(env);
+    const record = providerRegistryMap(registry).get(providerId) || buildProviderRecord(env, providerId);
+    return {
+      provider_id: record.provider_id,
+      provider_type: record.provider_type,
+      auth_method: record.auth_method,
+      status: "provider_required",
+      message: "Provider Connect foundation does not expose direct real provider test calls yet.",
+      setup_url: record.setup_url,
+      setup_instructions: record.setup_instructions,
     };
   }
   if (name === "create_lab_scene") {
@@ -4480,6 +5401,266 @@ async function proxyRequest(request, env, sourceUrl, state) {
   });
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function providerPage(title, content) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>${escapeHtml(title)}</title>
+    <style>
+      body { background:#f3f4f6; color:#111827; font-family:ui-sans-serif,system-ui,sans-serif; margin:0; padding:32px 20px; }
+      main { max-width:900px; margin:0 auto; background:white; border:1px solid #d1d5db; border-radius:18px; padding:28px; box-shadow:0 18px 40px rgba(15,23,42,.08); }
+      h1, h2 { margin-top:0; }
+      a { color:#1d4ed8; }
+      code, pre { font-family:ui-monospace,SFMono-Regular,monospace; background:#f3f4f6; border-radius:8px; }
+      code { padding:2px 6px; }
+      pre { padding:14px; overflow:auto; }
+      ul { padding-left:20px; }
+      .card { border:1px solid #d1d5db; border-radius:14px; padding:18px; margin:14px 0; background:#fafafa; }
+      .status { display:inline-block; border-radius:999px; padding:4px 10px; background:#e5e7eb; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; }
+      .warn { color:#991b1b; }
+      .muted { color:#4b5563; }
+    </style>
+  </head>
+  <body>
+    <main>${content}</main>
+  </body>
+</html>`;
+}
+
+function renderProviderListPage(registry) {
+  const cards = registry.providers
+    .map(
+      (provider) => `<section class="card">
+        <h2>${escapeHtml(provider.provider_id)}</h2>
+        <p><span class="status">${escapeHtml(provider.status)}</span></p>
+        <p><strong>Auth mode:</strong> <code>${escapeHtml(provider.auth_mode || provider.auth_method)}</code></p>
+        <p class="muted">Configured: <strong>${provider.configured ? "true" : "false"}</strong></p>
+        <p>
+          <a href="${escapeHtml(provider.connect_url)}">Connect</a> ·
+          <a href="${escapeHtml(provider.setup_url)}">Setup</a> ·
+          <a href="${escapeHtml(provider.status_url)}">Status JSON</a>
+        </p>
+      </section>`,
+    )
+    .join("");
+  return providerPage(
+    "Mystic LAB Providers",
+    `<h1>Mystic LAB Provider Connect</h1>
+     <p class="muted">These pages show provider status, auth mode, and required secret names without exposing any stored secret values.</p>
+     ${cards}`,
+  );
+}
+
+function renderProviderSetupPage(provider, spec) {
+  const commands = provider.required_secret_names.map((name) => `wrangler secret put ${name} --name mystic`).join("\n");
+  return providerPage(
+    `Setup ${provider.provider_id}`,
+    `<h1>Setup ${escapeHtml(provider.provider_id)}</h1>
+     <p><span class="status">${escapeHtml(provider.provider_status)}</span></p>
+     <p><strong>Required auth method:</strong> <code>${escapeHtml(provider.auth_mode || provider.auth_method)}</code></p>
+     <p>${escapeHtml(provider.setup_instructions)}</p>
+     <div class="card">
+       <h2>Required Cloudflare secrets</h2>
+       <ul>${provider.required_secret_names.map((name) => `<li><code>${escapeHtml(name)}</code></li>`).join("") || "<li>None</li>"}</ul>
+       <p class="muted">Configured secret names: ${provider.configured_secret_names.map((name) => `<code>${escapeHtml(name)}</code>`).join(", ") || "none"}</p>
+       <p class="muted">Missing secret names: ${provider.missing_secret_names.map((name) => `<code>${escapeHtml(name)}</code>`).join(", ") || "none"}</p>
+     </div>
+     <div class="card">
+       <h2>Manual setup</h2>
+       <p>Mystic LAB does not write provider secrets from this page unless dedicated encrypted secret-write infrastructure is configured. Use the Cloudflare secret commands below.</p>
+       <pre>${escapeHtml(commands || "# No required secrets for this provider")}</pre>
+       ${
+         spec.external_setup_url
+           ? `<p><a href="${escapeHtml(spec.external_setup_url)}" target="_blank" rel="noreferrer">Open provider key setup page</a></p>`
+           : ""
+       }
+     </div>
+     <p><a href="/providers">Back to providers</a></p>`,
+  );
+}
+
+function renderProviderConnectPage(provider, spec, oauthMetadata, flow) {
+  const flowBlock = flow
+    ? `<div class="card">
+         <h2>Latest flow</h2>
+         <p><strong>Flow ID:</strong> <code>${escapeHtml(flow.flow_id)}</code></p>
+         <p><strong>Status:</strong> <code>${escapeHtml(flow.status)}</code></p>
+         <p><strong>Callback received:</strong> ${flow.callback_received_at ? "true" : "false"}</p>
+       </div>`
+    : "";
+  const oauthBlock = oauthMetadata.configured
+    ? `<div class="card">
+         <h2>OAuth ready</h2>
+         <p>OAuth metadata is configured for this provider. Start the real connection from <code>provider_connect_start</code> to generate a one-time authorization URL.</p>
+         <p><strong>Authorization endpoint:</strong> <code>${escapeHtml(oauthMetadata.authorization_endpoint)}</code></p>
+         <p><strong>Redirect URI:</strong> <code>${escapeHtml(oauthMetadata.redirect_uri)}</code></p>
+       </div>`
+    : `<div class="card">
+         <h2>OAuth not configured</h2>
+         <p class="warn">Mystic LAB will not pretend OAuth exists for this provider. Use the secure setup page if API-key auth is required.</p>
+         <p><a href="${escapeHtml(provider.setup_url)}">Open secure setup page</a></p>
+       </div>`;
+  return providerPage(
+    `Connect ${provider.provider_id}`,
+    `<h1>Connect ${escapeHtml(provider.provider_id)}</h1>
+     <p><span class="status">${escapeHtml(provider.provider_status)}</span></p>
+     <p><strong>Current auth mode:</strong> <code>${escapeHtml(provider.auth_mode || provider.auth_method)}</code></p>
+     ${oauthBlock}
+     ${flowBlock}
+     <p class="muted">This page never displays stored secret values.</p>
+     <p><a href="/providers">Back to providers</a></p>`,
+  );
+}
+
+function renderProviderCallbackPage(provider, flow, message) {
+  return providerPage(
+    `OAuth callback ${provider.provider_id}`,
+    `<h1>OAuth callback recorded</h1>
+     <p><span class="status">${escapeHtml(flow.status)}</span></p>
+     <p>${escapeHtml(message)}</p>
+     <div class="card">
+       <p><strong>Provider:</strong> <code>${escapeHtml(provider.provider_id)}</code></p>
+       <p><strong>Flow ID:</strong> <code>${escapeHtml(flow.flow_id)}</code></p>
+       <p><strong>Provider status:</strong> <code>${escapeHtml(provider.provider_status)}</code></p>
+     </div>
+     <p class="muted">No authorization code, token, or secret value is displayed on this page.</p>
+     <p><a href="${escapeHtml(provider.connect_url)}">Back to provider connect page</a></p>`,
+  );
+}
+
+async function handleProviderOauthCallback(request, env) {
+  const sourceUrl = new URL(request.url);
+  const flowId = trimmed(sourceUrl.searchParams.get("flow_id"));
+  const providerId = normalizeProviderId(trimmed(sourceUrl.searchParams.get("provider_id")));
+  const callbackState = trimmed(sourceUrl.searchParams.get("state"));
+  const callbackError = trimmed(sourceUrl.searchParams.get("error"));
+  const callbackCode = trimmed(sourceUrl.searchParams.get("code"));
+  if (!flowId) {
+    return htmlResponse(providerPage("Provider callback error", "<h1>Provider callback error</h1><p class=\"warn\">Missing flow_id.</p>"), 400);
+  }
+  const flow = await loadProviderAuthFlow(env, flowId);
+  if (!flow) {
+    return htmlResponse(providerPage("Provider callback error", "<h1>Provider callback error</h1><p class=\"warn\">Unknown provider auth flow.</p>"), 404);
+  }
+  const resolvedProviderId = normalizeProviderId(providerId || flow.provider_id);
+  if (resolvedProviderId !== normalizeProviderId(flow.provider_id)) {
+    return htmlResponse(providerPage("Provider callback error", "<h1>Provider callback error</h1><p class=\"warn\">Provider mismatch.</p>"), 400);
+  }
+  if (callbackState && trimmed(flow.state_hash)) {
+    const callbackStateHash = await sha256Hex(callbackState);
+    if (callbackStateHash !== trimmed(flow.state_hash)) {
+      const failedFlow = {
+        ...flow,
+        status: "failed",
+        failure_reason: "oauth_state_mismatch",
+        updated_at: nowIso(),
+      };
+      await upsertProviderAuthFlow(env, failedFlow);
+      return htmlResponse(providerPage("Provider callback error", "<h1>Provider callback error</h1><p class=\"warn\">OAuth state validation failed.</p>"), 400);
+    }
+  }
+  const nextStatus = callbackError ? "failed" : "callback_received";
+  const updatedFlow = {
+    ...flow,
+    status: nextStatus,
+    callback_received_at: nowIso(),
+    failure_reason: callbackError || "",
+    metadata: {
+      ...(flow.metadata && typeof flow.metadata === "object" ? flow.metadata : {}),
+      authorization_code_received: Boolean(callbackCode),
+      oauth_error: callbackError || "",
+    },
+    updated_at: nowIso(),
+  };
+  await upsertProviderAuthFlow(env, updatedFlow);
+  const existing = (await supabaseSelectOne(env, "provider_connections", { provider_id: `eq.${resolvedProviderId}` })) || {};
+  const record = buildProviderRecord(env, resolvedProviderId, existing);
+  const updatedConnection = await upsertProviderConnection(env, record, {
+    auth_method: "oauth",
+    status: callbackError ? "auth_failed" : "oauth_required",
+    failure_reason: callbackError || "oauth_callback_recorded_pending_token_exchange",
+    metadata: {
+      ...(record.metadata && typeof record.metadata === "object" ? record.metadata : {}),
+      oauth_callback_received_at: nowIso(),
+      oauth_authorization_code_received: Boolean(callbackCode),
+    },
+    last_verified_at: nowIso(),
+  });
+  const provider = buildProviderRecord(env, resolvedProviderId, updatedConnection);
+  const message = callbackError
+    ? `Provider returned OAuth error: ${callbackError}`
+    : "Mystic LAB recorded the OAuth callback. Token exchange is intentionally deferred until a later isolated provider-routing issue.";
+  return htmlResponse(renderProviderCallbackPage(provider, publicProviderFlow(updatedFlow), message), callbackError ? 400 : 200);
+}
+
+async function handleProviderRoute(request, env) {
+  const sourceUrl = new URL(request.url);
+  const pathname = sourceUrl.pathname;
+  if (pathname === "/providers") {
+    const registry = await loadProviderRegistry(env);
+    return htmlResponse(renderProviderListPage(registry));
+  }
+  if (pathname === "/providers/oauth/callback") {
+    return handleProviderOauthCallback(request, env);
+  }
+  const match = pathname.match(/^\/providers\/([^/]+)\/(connect|setup|secret|status)$/);
+  if (!match) {
+    return null;
+  }
+  const providerId = normalizeProviderId(decodeURIComponent(match[1]));
+  const action = match[2];
+  if (![...PUBLIC_PROVIDER_IDS, "mock"].includes(providerId)) {
+    return errorResponse("Unknown provider.", 404);
+  }
+  const spec = providerCatalogEntry(env, providerId);
+  const registry = await loadProviderRegistry(env);
+  const provider = providerRegistryMap(registry).get(providerId) || buildProviderRecord(env, providerId);
+  const oauthMetadata = providerOauthMetadata(env, spec);
+  if (action === "status") {
+    return jsonResponse(provider, 200, { "cache-control": "no-store" });
+  }
+  if (action === "setup") {
+    return htmlResponse(renderProviderSetupPage(provider, spec));
+  }
+  if (action === "connect") {
+    const flowId = trimmed(sourceUrl.searchParams.get("flow_id"));
+    const flow = flowId ? await loadProviderAuthFlow(env, flowId) : null;
+    return htmlResponse(renderProviderConnectPage(provider, spec, oauthMetadata, flow ? publicProviderFlow(flow) : null));
+  }
+  if (action === "secret") {
+    if (request.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+    await request.text();
+    return jsonResponse(
+      {
+        provider_id: provider.provider_id,
+        status: "direct_secret_write_unavailable",
+        direct_secret_write_supported: false,
+        required_secret_names: provider.required_secret_names,
+        missing_secret_names: provider.missing_secret_names,
+        setup_url: provider.setup_url,
+        instructions: providerManualSecretInstructions(spec),
+        message:
+          "Direct secret writing is not available in this deployment. Configure Cloudflare secrets manually with the listed names. Submitted values were not stored or echoed.",
+      },
+      501,
+      { "cache-control": "no-store" },
+    );
+  }
+  return null;
+}
+
 async function routeRequest(request, env) {
   const sourceUrl = new URL(request.url);
   const state = oauthState(env, request.url);
@@ -4513,6 +5694,13 @@ async function routeRequest(request, env) {
       return errorResponse("Dynamic client registration is not enabled.", 404);
     }
     return errorResponse("Dynamic client registration is not implemented.", 501);
+  }
+
+  if (phase1CloudMode && pathname.startsWith("/providers")) {
+    const providerResponse = await handleProviderRoute(request, env);
+    if (providerResponse) {
+      return providerResponse;
+    }
   }
 
   if (pathname === "/health" && phase1CloudMode) {

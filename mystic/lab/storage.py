@@ -9,6 +9,7 @@ from typing import Any
 import requests
 
 from mystic.lab.reports import render_report
+from mystic.lab.provider_connect import ProviderAuthFlow, ProviderConnection
 from mystic.lab.scene import LabScene, LabSceneBundle, LabSceneObject, LabSimulation
 from mystic.lab.schema import PHASE_TO_ROOM
 from mystic.lab.session import Claim, Experiment, Failure, LabSession, LabSessionBundle, LabTurn, MemoryEdge
@@ -56,8 +57,12 @@ class LocalJSONLabStorage:
         self.root_path = Path(root_path)
         self.base_dir = self.root_path / "mystic_data" / "lab_sessions"
         self.scenes_base_dir = self.root_path / "mystic_data" / "lab_scenes"
+        self.providers_base_dir = self.root_path / "mystic_data" / "provider_connections"
+        self.provider_flows_base_dir = self.root_path / "mystic_data" / "provider_auth_flows"
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.scenes_base_dir.mkdir(parents=True, exist_ok=True)
+        self.providers_base_dir.mkdir(parents=True, exist_ok=True)
+        self.provider_flows_base_dir.mkdir(parents=True, exist_ok=True)
 
     def session_dir(self, session_id: str) -> Path:
         return self.base_dir / session_id
@@ -186,6 +191,54 @@ class LocalJSONLabStorage:
             "project_url": "",
             "missing_env": [],
         }
+
+    def provider_connection_path(self, provider_id: str) -> Path:
+        return self.providers_base_dir / f"{provider_id}.json"
+
+    def save_provider_connection(self, connection: ProviderConnection) -> dict[str, str]:
+        path = self.provider_connection_path(connection.provider_id)
+        path.write_text(json.dumps(connection.to_dict(), indent=2), encoding="utf-8")
+        return {"connection": str(path)}
+
+    def load_provider_connection(self, provider_id: str) -> ProviderConnection | None:
+        payload = self._load_json(self.provider_connection_path(provider_id), None)
+        return ProviderConnection(**payload) if isinstance(payload, dict) else None
+
+    def list_provider_connections(self) -> list[ProviderConnection]:
+        if not self.providers_base_dir.exists():
+            return []
+        connections: list[ProviderConnection] = []
+        for path in sorted(self.providers_base_dir.glob("*.json")):
+            payload = self._load_json(path, None)
+            if isinstance(payload, dict):
+                connections.append(ProviderConnection(**payload))
+        return connections
+
+    def provider_auth_flow_path(self, flow_id: str) -> Path:
+        return self.provider_flows_base_dir / f"{flow_id}.json"
+
+    def save_provider_auth_flow(self, flow: ProviderAuthFlow) -> dict[str, str]:
+        path = self.provider_auth_flow_path(flow.flow_id)
+        path.write_text(json.dumps(flow.to_dict(), indent=2), encoding="utf-8")
+        return {"flow": str(path)}
+
+    def load_provider_auth_flow(self, flow_id: str) -> ProviderAuthFlow | None:
+        payload = self._load_json(self.provider_auth_flow_path(flow_id), None)
+        return ProviderAuthFlow(**payload) if isinstance(payload, dict) else None
+
+    def list_provider_auth_flows(self, provider_id: str | None = None) -> list[ProviderAuthFlow]:
+        if not self.provider_flows_base_dir.exists():
+            return []
+        flows: list[ProviderAuthFlow] = []
+        for path in sorted(self.provider_flows_base_dir.glob("*.json")):
+            payload = self._load_json(path, None)
+            if not isinstance(payload, dict):
+                continue
+            flow = ProviderAuthFlow(**payload)
+            if provider_id and flow.provider_id != provider_id:
+                continue
+            flows.append(flow)
+        return flows
 
     @staticmethod
     def _load_json(path: Path, default: Any | None = None) -> Any:
@@ -345,6 +398,39 @@ class SupabaseLabStorage:
             "project_url": self.supabase_url,
             "missing_env": missing_env,
         }
+
+    def save_provider_connection(self, connection: ProviderConnection) -> dict[str, str]:
+        self._ensure_configured()
+        self._upsert_rows("provider_connections", [connection.to_dict()], on_conflict="connection_id")
+        return {"connection": f"supabase://{self.schema}/provider_connections/{connection.connection_id}"}
+
+    def load_provider_connection(self, provider_id: str) -> ProviderConnection | None:
+        self._ensure_configured()
+        row = self._select_one("provider_connections", {"provider_id": f"eq.{provider_id}"})
+        return ProviderConnection(**row) if row is not None else None
+
+    def list_provider_connections(self) -> list[ProviderConnection]:
+        self._ensure_configured()
+        rows = self._select_rows("provider_connections", {}, order="created_at.asc")
+        return [ProviderConnection(**row) for row in rows]
+
+    def save_provider_auth_flow(self, flow: ProviderAuthFlow) -> dict[str, str]:
+        self._ensure_configured()
+        self._upsert_rows("provider_auth_flows", [flow.to_dict()], on_conflict="flow_id")
+        return {"flow": f"supabase://{self.schema}/provider_auth_flows/{flow.flow_id}"}
+
+    def load_provider_auth_flow(self, flow_id: str) -> ProviderAuthFlow | None:
+        self._ensure_configured()
+        row = self._select_one("provider_auth_flows", {"flow_id": f"eq.{flow_id}"})
+        return ProviderAuthFlow(**row) if row is not None else None
+
+    def list_provider_auth_flows(self, provider_id: str | None = None) -> list[ProviderAuthFlow]:
+        self._ensure_configured()
+        filters: dict[str, str] = {}
+        if provider_id:
+            filters["provider_id"] = f"eq.{provider_id}"
+        rows = self._select_rows("provider_auth_flows", filters, order="created_at.asc")
+        return [ProviderAuthFlow(**row) for row in rows]
 
     def _ensure_configured(self) -> None:
         status = self.describe_status()
@@ -538,3 +624,21 @@ class LabStorage:
 
     def describe_status(self) -> dict[str, Any]:
         return self._backend.describe_status()
+
+    def save_provider_connection(self, connection: ProviderConnection) -> dict[str, str]:
+        return self._backend.save_provider_connection(connection)
+
+    def load_provider_connection(self, provider_id: str) -> ProviderConnection | None:
+        return self._backend.load_provider_connection(provider_id)
+
+    def list_provider_connections(self) -> list[ProviderConnection]:
+        return self._backend.list_provider_connections()
+
+    def save_provider_auth_flow(self, flow: ProviderAuthFlow) -> dict[str, str]:
+        return self._backend.save_provider_auth_flow(flow)
+
+    def load_provider_auth_flow(self, flow_id: str) -> ProviderAuthFlow | None:
+        return self._backend.load_provider_auth_flow(flow_id)
+
+    def list_provider_auth_flows(self, provider_id: str | None = None) -> list[ProviderAuthFlow]:
+        return self._backend.list_provider_auth_flows(provider_id)

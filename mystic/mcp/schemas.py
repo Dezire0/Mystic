@@ -381,6 +381,68 @@ TOOL_SCHEMAS = {
         "required": ["scene_id", "format", "include_objects", "include_simulations"],
         "additionalProperties": False,
     },
+    "provider_list": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    },
+    "provider_status": {
+        "type": "object",
+        "properties": {"provider_id": {"type": "string", "minLength": 1}},
+        "required": ["provider_id"],
+        "additionalProperties": False,
+    },
+    "provider_connect_start": {
+        "type": "object",
+        "properties": {
+            "provider_id": {"type": "string", "minLength": 1},
+            "auth_method": {"type": "string", "enum": ["api_key", "oauth", "bearer_token", "none/mock"]},
+        },
+        "required": ["provider_id"],
+        "additionalProperties": False,
+    },
+    "provider_connect_callback_status": {
+        "type": "object",
+        "properties": {
+            "provider_id": {"type": "string", "minLength": 1},
+            "flow_id": {"type": "string", "minLength": 1},
+        },
+        "required": ["provider_id", "flow_id"],
+        "additionalProperties": False,
+    },
+    "provider_configure_secret_instructions": {
+        "type": "object",
+        "properties": {"provider_id": {"type": "string", "minLength": 1}},
+        "required": ["provider_id"],
+        "additionalProperties": False,
+    },
+    "provider_verify": {
+        "type": "object",
+        "properties": {"provider_id": {"type": "string", "minLength": 1}},
+        "required": ["provider_id"],
+        "additionalProperties": False,
+    },
+    "provider_disconnect": {
+        "type": "object",
+        "properties": {"provider_id": {"type": "string", "minLength": 1}},
+        "required": ["provider_id"],
+        "additionalProperties": False,
+    },
+    "provider_model_list": {
+        "type": "object",
+        "properties": {"provider_id": {"type": "string", "minLength": 1}},
+        "required": ["provider_id"],
+        "additionalProperties": False,
+    },
+    "provider_call_test": {
+        "type": "object",
+        "properties": {
+            "provider_id": {"type": "string", "minLength": 1},
+            "prompt": {"type": "string", "minLength": 1},
+        },
+        "required": ["provider_id", "prompt"],
+        "additionalProperties": False,
+    },
     "mystic_export_teacher_packet": {
         "type": "object",
         "properties": {
@@ -597,6 +659,57 @@ TOOL_DEFINITIONS = [
         title="Generate Scene Report",
     ),
     _tool_definition(
+        "provider_list",
+        "List known external model providers and their current Provider Connect status without exposing secrets.",
+        title="List Providers",
+        read_only=True,
+    ),
+    _tool_definition(
+        "provider_status",
+        "Inspect one Provider Connect record and its current safe configuration status.",
+        title="Provider Status",
+        read_only=True,
+    ),
+    _tool_definition(
+        "provider_connect_start",
+        "Return a real provider authorization URL when OAuth is configured, or a secure Mystic LAB setup URL when API-key auth is required.",
+        title="Start Provider Connect",
+    ),
+    _tool_definition(
+        "provider_connect_callback_status",
+        "Check the safe stored status of a provider OAuth flow without exposing raw codes, tokens, or secrets.",
+        title="Provider Callback Status",
+        read_only=True,
+    ),
+    _tool_definition(
+        "provider_configure_secret_instructions",
+        "Return exact safe Cloudflare secret setup instructions for a provider without printing secret values.",
+        title="Provider Secret Instructions",
+        read_only=True,
+    ),
+    _tool_definition(
+        "provider_verify",
+        "Verify whether a provider appears configured while keeping secrets server-side.",
+        title="Verify Provider",
+        read_only=True,
+    ),
+    _tool_definition(
+        "provider_disconnect",
+        "Mark a provider disconnected without deleting any existing Cloudflare secrets.",
+        title="Disconnect Provider",
+    ),
+    _tool_definition(
+        "provider_model_list",
+        "Return a provider model list when configuration is present, or a structured required-status response otherwise.",
+        title="Provider Model List",
+        read_only=True,
+    ),
+    _tool_definition(
+        "provider_call_test",
+        "Run a Provider Connect foundation test. Real provider calls stay disabled here unless a mock provider is explicitly used in tests.",
+        title="Provider Call Test",
+    ),
+    _tool_definition(
         "mystic_export_teacher_packet",
         "Export recent uncertain or failing cases for teacher labeling.",
         title="Export Teacher Packet",
@@ -637,6 +750,15 @@ PUBLIC_TOOL_NAMES = [
     "attach_simulation_to_scene",
     "export_lab_snapshot",
     "generate_lab_report",
+    "provider_list",
+    "provider_status",
+    "provider_connect_start",
+    "provider_connect_callback_status",
+    "provider_configure_secret_instructions",
+    "provider_verify",
+    "provider_disconnect",
+    "provider_model_list",
+    "provider_call_test",
 ]
 
 

@@ -107,6 +107,40 @@ LAB_ENGINE_ADAPTERS = {
     "scene.three_json",
 }
 
+LAB_PROVIDER_TYPES = {
+    "openai_compatible",
+    "gemini",
+    "anthropic",
+    "future/custom",
+}
+
+LAB_PROVIDER_AUTH_METHODS = {
+    "api_key",
+    "oauth",
+    "bearer_token",
+    "none/mock",
+}
+
+LAB_PROVIDER_STATUSES = {
+    "not_configured",
+    "api_key_required",
+    "oauth_required",
+    "connected",
+    "auth_failed",
+    "rate_limited",
+    "provider_unavailable",
+    "disconnected",
+}
+
+LAB_PROVIDER_AUTH_FLOW_STATUSES = {
+    "pending",
+    "oauth_required",
+    "callback_received",
+    "failed",
+    "completed",
+    "disconnected",
+}
+
 LAB_SIMULATION_STATUSES = {
     "completed",
     "engine_required",

@@ -106,6 +106,12 @@ Current state:
   - `openai_compatible`
   - `gemini`
   - `anthropic`
+- Provider Connect foundation is implemented for:
+  - provider listing and status inspection
+  - safe Cloudflare secret setup instructions
+  - verification and disconnect state
+  - deferred callback tracking for future OAuth-capable providers
+  - safe model listing and deferred provider call tests
 
 Important limit:
 
@@ -140,11 +146,11 @@ Current state:
 
 - Implemented for Phase 1.
 - Deterministic scene/simulation execution now exists for `physics.simple_projectile`, `physics.simple_collision`, and `scene.three_json`.
-- `math.sympy` is exposed through a deterministic local/native subset for basic evaluate and linear-solve flows.
+- `math.sympy` is exposed through a deterministic subset in both local mode and Cloudflare Worker mode for evaluate, simplify, substitution, and simple linear solve flows.
 
 Important limit:
 
-- The Cloudflare Worker does not ship a real SymPy runtime, so cloud-native `math.sympy` returns structured `engine_required`.
+- The Cloudflare Worker does not ship arbitrary SymPy execution, so richer symbolic requests still return structured `engine_required` or `unsupported_expression`.
 
 ### 3D Virtual Lab Interface
 
@@ -197,6 +203,7 @@ Reality Anchor rules remain conservative:
 | Experiment create | Implemented | Supabase-backed |
 | Agent run | Partial | Returns real provider output only when explicitly configured; otherwise `provider_required` or `deferred` |
 | Model debate | Partial | Cloud-native tool surface exists; provider- and execution-dependent |
+| Provider Connect foundation | Implemented | Safe provider metadata, status, verification, disconnect, and deferred callback flows are live |
 | Referee review | Partial | Exposed; currently `deferred` in cloud-native mode |
 | Experiment execution engines | Partial | Orchestration exists; formal engine adapter layer not complete |
 | 3D scene API | Implemented | Scene CRUD, storage, snapshot export, and report generation live |

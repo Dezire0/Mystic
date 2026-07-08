@@ -9,6 +9,8 @@ The current repository state includes:
 - a public Cloudflare Worker + Supabase cloud-native LAB mode
 - ChatGPT remote MCP import support with `import_ready=true`
 - the original 13 LAB tools preserved in cloud-native mode, plus the 10 new Phase 1 scene/simulation tools
+- the 9 Provider Connect foundation tools for safe external provider setup metadata and verification
+- 32 public MCP tools visible in the current cloud-native Worker import surface
 
 Reference docs:
 
@@ -17,11 +19,13 @@ Reference docs:
 - [docs/mystic_lab_3d_virtual_lab.md](/Users/JYH/Documents/Mystic/docs/mystic_lab_3d_virtual_lab.md)
 - [docs/mystic_lab_engine_adapter_layer.md](/Users/JYH/Documents/Mystic/docs/mystic_lab_engine_adapter_layer.md)
 - [docs/mystic_lab_domains.md](/Users/JYH/Documents/Mystic/docs/mystic_lab_domains.md)
+- [docs/mystic_lab_provider_connect.md](/Users/JYH/Documents/Mystic/docs/mystic_lab_provider_connect.md)
 
 The current LAB status is intentionally conservative:
 
 - session orchestration is implemented
 - provider routing exists for explicit external model access
+- Provider Connect now returns real setup/connect destinations: real OAuth authorization URLs where configured and secure Mystic LAB setup pages where API-key auth is required
 - unsupported heavy paths return structured `deferred`
 - missing model providers return structured `provider_required`
 - Phase 1 scene tools, deterministic simple physics, and `scene.three_json` export are implemented
@@ -49,6 +53,16 @@ Mystic LAB includes a local-first AI Research Lab OS backend. It is a computatio
 - the Research Table acts as the Model Arena and can import discoveries back into a lab session
 - MCP `lab_*` tools expose session create/get/advance, role execution, referee review, experiment create/run, memory search/write, model debate, and report generation
 - cloud-native Worker mode directly serves the preserved 13-tool LAB baseline plus the 10 new Phase 1 scene/simulation tools from Supabase without a local Mac backend
+- Provider Connect adds 9 cloud-native provider management tools plus public setup/connect/status pages without requiring a local backend or storing provider secrets in Supabase
+
+Provider Connect routes exposed by the Worker:
+
+- `GET /providers`
+- `GET /providers/:provider_id/connect`
+- `GET /providers/:provider_id/setup`
+- `POST /providers/:provider_id/secret`
+- `GET /providers/:provider_id/status`
+- `GET /providers/oauth/callback`
 
 The core lab objects are:
 
@@ -611,6 +625,8 @@ python scripts/create_chatgpt_import_verification_artifact.py \
 This writes a runtime-only artifact under:
 
 - `mystic_data/e2e/chatgpt_remote_mcp_import/verification.json`
+
+For the Cloudflare Worker runtime, the same sanitized artifact can be mirrored through `MYSTIC_CHATGPT_IMPORT_VERIFICATION_JSON` so `mystic_status` can report the verified `import_ready` state without reading from the local filesystem.
 
 An example committed template lives at:
 
