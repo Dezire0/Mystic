@@ -10,6 +10,7 @@ import requests
 
 from mystic.lab.reports import render_report
 from mystic.lab.provider_connect import ProviderAuthFlow, ProviderConnection
+from mystic.lab.provider_router import ModelCallRecord
 from mystic.lab.scene import LabScene, LabSceneBundle, LabSceneObject, LabSimulation
 from mystic.lab.schema import PHASE_TO_ROOM
 from mystic.lab.session import Claim, Experiment, Failure, LabSession, LabSessionBundle, LabTurn, MemoryEdge
@@ -35,6 +36,8 @@ SCENE_ARTIFACT_NAMES = (
     "snapshot",
 )
 
+MODEL_CALL_ARTIFACT_NAMES = ("model_call",)
+
 
 def _session_field_names() -> set[str]:
     return {field.name for field in fields(LabSession)}
@@ -59,10 +62,12 @@ class LocalJSONLabStorage:
         self.scenes_base_dir = self.root_path / "mystic_data" / "lab_scenes"
         self.providers_base_dir = self.root_path / "mystic_data" / "provider_connections"
         self.provider_flows_base_dir = self.root_path / "mystic_data" / "provider_auth_flows"
+        self.model_calls_base_dir = self.root_path / "mystic_data" / "model_calls"
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.scenes_base_dir.mkdir(parents=True, exist_ok=True)
         self.providers_base_dir.mkdir(parents=True, exist_ok=True)
         self.provider_flows_base_dir.mkdir(parents=True, exist_ok=True)
+        self.model_calls_base_dir.mkdir(parents=True, exist_ok=True)
 
     def session_dir(self, session_id: str) -> Path:
         return self.base_dir / session_id
@@ -239,6 +244,32 @@ class LocalJSONLabStorage:
                 continue
             flows.append(flow)
         return flows
+
+    def model_call_path(self, call_id: str) -> Path:
+        return self.model_calls_base_dir / f"{call_id}.json"
+
+    def save_model_call(self, record: ModelCallRecord) -> dict[str, str]:
+        path = self.model_call_path(record.call_id)
+        path.write_text(json.dumps(record.to_dict(), indent=2), encoding="utf-8")
+        return {"model_call": str(path)}
+
+    def load_model_call(self, call_id: str) -> ModelCallRecord | None:
+        payload = self._load_json(self.model_call_path(call_id), None)
+        return ModelCallRecord(**payload) if isinstance(payload, dict) else None
+
+    def list_model_calls(self, session_id: str | None = None) -> list[ModelCallRecord]:
+        if not self.model_calls_base_dir.exists():
+            return []
+        records: list[ModelCallRecord] = []
+        for path in sorted(self.model_calls_base_dir.glob("*.json")):
+            payload = self._load_json(path, None)
+            if not isinstance(payload, dict):
+                continue
+            record = ModelCallRecord(**payload)
+            if session_id and record.session_id != session_id:
+                continue
+            records.append(record)
+        return records
 
     @staticmethod
     def _load_json(path: Path, default: Any | None = None) -> Any:
@@ -431,6 +462,24 @@ class SupabaseLabStorage:
             filters["provider_id"] = f"eq.{provider_id}"
         rows = self._select_rows("provider_auth_flows", filters, order="created_at.asc")
         return [ProviderAuthFlow(**row) for row in rows]
+
+    def save_model_call(self, record: ModelCallRecord) -> dict[str, str]:
+        self._ensure_configured()
+        self._upsert_rows("model_calls", [record.to_dict()], on_conflict="call_id")
+        return {"model_call": f"supabase://{self.schema}/model_calls/{record.call_id}"}
+
+    def load_model_call(self, call_id: str) -> ModelCallRecord | None:
+        self._ensure_configured()
+        row = self._select_one("model_calls", {"call_id": f"eq.{call_id}"})
+        return ModelCallRecord(**row) if row is not None else None
+
+    def list_model_calls(self, session_id: str | None = None) -> list[ModelCallRecord]:
+        self._ensure_configured()
+        filters: dict[str, str] = {}
+        if session_id:
+            filters["session_id"] = f"eq.{session_id}"
+        rows = self._select_rows("model_calls", filters, order="created_at.asc")
+        return [ModelCallRecord(**row) for row in rows]
 
     def _ensure_configured(self) -> None:
         status = self.describe_status()
@@ -642,3 +691,12 @@ class LabStorage:
 
     def list_provider_auth_flows(self, provider_id: str | None = None) -> list[ProviderAuthFlow]:
         return self._backend.list_provider_auth_flows(provider_id)
+
+    def save_model_call(self, record: ModelCallRecord) -> dict[str, str]:
+        return self._backend.save_model_call(record)
+
+    def load_model_call(self, call_id: str) -> ModelCallRecord | None:
+        return self._backend.load_model_call(call_id)
+
+    def list_model_calls(self, session_id: str | None = None) -> list[ModelCallRecord]:
+        return self._backend.list_model_calls(session_id)

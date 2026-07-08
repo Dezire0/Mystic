@@ -1,4 +1,5 @@
 from mystic.lab.provider_connect import ProviderAuthFlow, ProviderConnection, ProviderConnectManager
+from mystic.lab.provider_router import ModelCallRecord, ProviderRouter
 from mystic.lab.reality_anchor import normalize_claim_status
 from mystic.lab.runner import LabRunner
 from mystic.lab.scene import LabScene, LabSceneBundle, LabSceneObject, LabSimulation
@@ -28,9 +29,11 @@ __all__ = [
     "LabSimulation",
     "LabStorage",
     "LabTurn",
+    "ModelCallRecord",
     "MemoryEdge",
     "ProviderAuthFlow",
     "ProviderConnection",
     "ProviderConnectManager",
+    "ProviderRouter",
     "normalize_claim_status",
 ]

@@ -187,7 +187,7 @@ TOOL_SCHEMAS = {
                     "CodeRunner",
                 ],
             },
-            "provider": {"type": "string", "enum": ["auto", "local", "gemini_cli", "claude_cli"]},
+            "provider": {"type": "string", "minLength": 1},
             "task": {"type": "string", "minLength": 1},
             "context_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 16},
         },
@@ -201,6 +201,7 @@ TOOL_SCHEMAS = {
             "claim_id": {"type": "string"},
             "text": {"type": "string"},
             "strictness": {"type": "string", "enum": ["normal", "hostile"]},
+            "provider": {"type": "string"},
         },
         "required": ["session_id", "text", "strictness"],
         "additionalProperties": False,
@@ -706,7 +707,7 @@ TOOL_DEFINITIONS = [
     ),
     _tool_definition(
         "provider_call_test",
-        "Run a Provider Connect foundation test. Real provider calls stay disabled here unless a mock provider is explicitly used in tests.",
+        "Run a real provider-backed test call when the provider is connected, or return a structured safe error state otherwise.",
         title="Provider Call Test",
     ),
     _tool_definition(

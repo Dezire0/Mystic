@@ -174,7 +174,7 @@ const CLOUD_TOOL_DEFINITIONS = [
             "CodeRunner",
           ],
         },
-        provider: { type: "string", enum: ["auto", "openai_compatible", "gemini", "anthropic", "local_backend"] },
+        provider: { type: "string", minLength: 1 },
         task: { type: "string", minLength: 1 },
         context_ids: { type: "array", items: { type: "string" }, maxItems: 16 },
       },
@@ -186,7 +186,7 @@ const CLOUD_TOOL_DEFINITIONS = [
   {
     name: "lab_referee_review",
     title: "Referee Review",
-    description: "Run a structured cloud-native referee review and return a deterministic or deferred verdict.",
+    description: "Run a structured cloud-native referee review and return a deterministic, provider-backed, or deferred verdict.",
     inputSchema: {
       type: "object",
       properties: {
@@ -194,6 +194,7 @@ const CLOUD_TOOL_DEFINITIONS = [
         claim_id: { type: "string" },
         text: { type: "string" },
         strictness: { type: "string", enum: ["normal", "hostile"] },
+        provider: { type: "string" },
       },
       required: ["session_id", "text", "strictness"],
       additionalProperties: false,
@@ -993,6 +994,9 @@ function validateCloudToolArguments(name, args) {
     }
     if (args.claim_id !== undefined && typeof args.claim_id !== "string") {
       errors.push("claim_id must be a string when provided");
+    }
+    if (args.provider !== undefined && typeof args.provider !== "string") {
+      errors.push("provider must be a string when provided");
     }
   }
   if (name === "lab_experiment_create") {
@@ -2484,6 +2488,16 @@ function trimmed(value, fallback = "") {
   return text || fallback;
 }
 
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const text = trimmed(value);
+    if (text) {
+      return text;
+    }
+  }
+  return "";
+}
+
 function requestTargetUrl(value) {
   if (typeof value === "string") {
     return value;
@@ -3158,6 +3172,15 @@ function normalizeRequestedProvider(value) {
   return normalized;
 }
 
+function parseProviderParticipantAlias(value) {
+  const raw = trimmed(value);
+  if (raw.includes(":")) {
+    const [providerId, model] = raw.split(":", 2);
+    return { provider_id: normalizeRequestedProvider(providerId), model: trimmed(model) };
+  }
+  return { provider_id: normalizeRequestedProvider(raw), model: "" };
+}
+
 function localBackendDeferredResult() {
   return {
     status: "deferred",
@@ -3200,14 +3223,127 @@ function deferredResult(message, extra = {}) {
   };
 }
 
-function selectCloudProvider(registry, requestedProvider) {
+function providerCallStatusFromRecord(providerRecord) {
+  if (providerRecord.ready) {
+    return "connected";
+  }
+  if (providerRecord.status === "api_key_required") {
+    return "api_key_required";
+  }
+  if (providerRecord.status === "auth_failed") {
+    return "provider_auth_failed";
+  }
+  if (providerRecord.status === "rate_limited") {
+    return "rate_limited";
+  }
+  if (providerRecord.status === "provider_unavailable") {
+    return "provider_unavailable";
+  }
+  return "provider_required";
+}
+
+function providerCallErrorMessage(providerRecord, status) {
+  if (status === "api_key_required") {
+    return "Provider credentials are not configured. Complete the secure setup flow and retry.";
+  }
+  if (status === "provider_auth_failed") {
+    return "Provider authentication failed. Verify credentials and retry.";
+  }
+  if (status === "rate_limited") {
+    return "Provider rate limit reached. Retry later.";
+  }
+  if (status === "provider_unavailable") {
+    return "Provider is temporarily unavailable. Retry later.";
+  }
+  return providerRecord.setup_instructions || "Provider must be connected before this call can run.";
+}
+
+function safeProviderMetadata(value) {
+  if (Array.isArray(value)) {
+    return value.slice(0, 12).map((item) => safeProviderMetadata(item));
+  }
+  if (value && typeof value === "object") {
+    const sanitized = {};
+    for (const [key, item] of Object.entries(value)) {
+      const lowered = String(key).toLowerCase();
+      if (IMPORT_VERIFICATION_FORBIDDEN_FIELD_NAMES.has(lowered) || lowered.includes("secret") || lowered.includes("token")) {
+        continue;
+      }
+      sanitized[key] = safeProviderMetadata(item);
+    }
+    return sanitized;
+  }
+  if (typeof value === "string") {
+    return value.slice(0, 500);
+  }
+  return value;
+}
+
+async function providerPromptHash(messages) {
+  return sha256Hex(JSON.stringify(messages || []));
+}
+
+function providerPromptExcerpt(messages, limit = 240) {
+  const raw = (Array.isArray(messages) ? messages : [])
+    .map((item) => `${trimmed(item.role)}:${trimmed(item.content)}`)
+    .filter(Boolean)
+    .join(" | ");
+  return raw.replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function providerMessageList({ prompt, systemPrompt, messages }) {
+  if (Array.isArray(messages) && messages.length) {
+    return messages
+      .map((item) => ({ role: trimmed(item.role), content: trimmed(item.content) }))
+      .filter((item) => item.role && item.content);
+  }
+  const normalized = [];
+  if (trimmed(systemPrompt)) {
+    normalized.push({ role: "system", content: trimmed(systemPrompt) });
+  }
+  normalized.push({ role: "user", content: trimmed(prompt, "ping") });
+  return normalized;
+}
+
+function providerUserPrompt(messages) {
+  const userParts = (Array.isArray(messages) ? messages : [])
+    .filter((item) => item && item.role === "user" && trimmed(item.content))
+    .map((item) => trimmed(item.content));
+  if (userParts.length) {
+    return userParts.join("\n\n");
+  }
+  return (Array.isArray(messages) ? messages : [])
+    .map((item) => trimmed(item?.content))
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function safeUsagePayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return {};
+  }
+  const safe = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (["string", "number", "boolean"].includes(typeof value) || value === null) {
+      safe[key] = value;
+    }
+  }
+  return safe;
+}
+
+async function saveCloudModelCall(env, record) {
+  await supabaseUpsertRows(env, "model_calls", [record], "call_id");
+  return `supabase://${supabaseState(env).schema}/model_calls/${record.call_id}`;
+}
+
+function selectCloudProvider(env, registry, requestedProvider) {
   const normalized = normalizeRequestedProvider(requestedProvider);
   if (normalized === "local_backend") {
     return { selection: null, deferred: localBackendDeferredResult() };
   }
   const providerMap = providerRegistryMap(registry);
   if (normalized && normalized !== "auto") {
-    const selected = providerMap.get(normalized);
+    const selected = providerMap.get(normalized) || (normalized === "mock" ? buildProviderRecord(env, "mock") : null);
     if (!selected) {
       return { selection: null, deferred: deferredResult(`Unknown provider: ${requestedProvider}`) };
     }
@@ -3243,7 +3379,15 @@ async function providerRequestJson(url, options) {
     payload = { raw: text };
   }
   if (!response.ok) {
-    throw new Error(`provider_http_${response.status}`);
+    let errorType = "provider_error";
+    if ([401, 403].includes(response.status)) {
+      errorType = "provider_auth_failed";
+    } else if (response.status === 429) {
+      errorType = "rate_limited";
+    } else if ([408, 500, 502, 503, 504].includes(response.status)) {
+      errorType = "provider_unavailable";
+    }
+    throw { error_type: errorType, safe_message: `Provider request failed with HTTP ${response.status}.`, status_code: response.status };
   }
   return payload;
 }
@@ -3279,14 +3423,32 @@ function extractAnthropicText(payload) {
   return normalizeTextOutput(Array.isArray(payload?.content) ? payload.content.map((item) => item?.text || "") : []);
 }
 
-async function invokeCloudProvider(env, providerRecord, prompt) {
-  const startedAt = Date.now();
+async function invokeCloudProvider(env, providerRecord, options = {}) {
+  const messages = providerMessageList({
+    prompt: options.prompt || "",
+    systemPrompt: options.systemPrompt || "",
+    messages: options.messages || [],
+  });
+  if (providerRecord.provider_id === "mock") {
+    return {
+      provider: "mock",
+      model_name: trimmed(options.model, "mock-model"),
+      output_text: `mock:${providerUserPrompt(messages) || "ping"}`,
+      raw_usage_safe: {
+        prompt_chars: providerPromptExcerpt(messages).length,
+        completion_chars: providerUserPrompt(messages).length + 5,
+      },
+    };
+  }
   if (providerRecord.provider_id === "openai_compatible") {
     const baseUrl = normalizeBaseUrl(env.MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL || "");
     const secret = providerSecret(env, [
       "MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY",
       "MYSTIC_PROVIDER_OPENAI_COMPAT_BEARER_TOKEN",
     ]);
+    if (!baseUrl || !secret) {
+      throw { error_type: "api_key_required", safe_message: "OpenAI-compatible provider is missing required configuration." };
+    }
     const payload = await providerRequestJson(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -3294,30 +3456,31 @@ async function invokeCloudProvider(env, providerRecord, prompt) {
         Authorization: `Bearer ${secret}`,
       },
       body: JSON.stringify({
-        model: trimmed(env.MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL, providerRecord.model_name),
-        messages: [
-          { role: "system", content: "You are a Mystic Virtual Research Lab agent operating in cloud-native mode." },
-          { role: "user", content: prompt },
-        ],
-        temperature: 0.2,
+        model: firstNonEmpty(options.model, env.MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL, providerRecord.model_name),
+        messages,
+        temperature: Number.isFinite(options.temperature) ? Number(options.temperature) : 0.2,
+        max_tokens: Number.isFinite(options.maxTokens) ? Math.max(1, Number(options.maxTokens)) : 1024,
       }),
     });
     return {
-      ok: true,
       provider: providerRecord.provider_id,
-      model_name: trimmed(env.MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL, providerRecord.model_name),
-      latency_sec: (Date.now() - startedAt) / 1000,
-      content: extractOpenAICompatibleText(payload),
+      model_name: firstNonEmpty(options.model, env.MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL, providerRecord.model_name),
+      output_text: extractOpenAICompatibleText(payload),
+      raw_usage_safe: safeUsagePayload(payload?.usage),
     };
   }
   if (providerRecord.provider_id === "gemini") {
     const apiKey = providerSecret(env, ["MYSTIC_PROVIDER_GEMINI_API_KEY"]);
     const bearerToken = providerSecret(env, ["MYSTIC_PROVIDER_GEMINI_BEARER_TOKEN"]);
-    const modelName = trimmed(env.MYSTIC_PROVIDER_GEMINI_MODEL, providerRecord.model_name);
-    const url = apiKey
-      ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(apiKey)}`
-      : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`;
+    if (!apiKey && !bearerToken) {
+      throw { error_type: "api_key_required", safe_message: "Gemini provider is missing required configuration." };
+    }
+    const modelName = firstNonEmpty(options.model, env.MYSTIC_PROVIDER_GEMINI_MODEL, providerRecord.model_name);
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`;
     const headers = { "content-type": "application/json" };
+    if (apiKey) {
+      headers["x-goog-api-key"] = apiKey;
+    }
     if (bearerToken) {
       headers.Authorization = `Bearer ${bearerToken}`;
     }
@@ -3325,20 +3488,22 @@ async function invokeCloudProvider(env, providerRecord, prompt) {
       method: "POST",
       headers,
       body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        contents: [{ role: "user", parts: [{ text: providerUserPrompt(messages) }] }],
       }),
     });
     return {
-      ok: true,
       provider: providerRecord.provider_id,
       model_name: modelName,
-      latency_sec: (Date.now() - startedAt) / 1000,
-      content: extractGeminiText(payload),
+      output_text: extractGeminiText(payload),
+      raw_usage_safe: safeUsagePayload(payload?.usageMetadata),
     };
   }
   if (providerRecord.provider_id === "anthropic") {
     const apiKey = providerSecret(env, ["MYSTIC_PROVIDER_ANTHROPIC_API_KEY"]);
     const bearerToken = providerSecret(env, ["MYSTIC_PROVIDER_ANTHROPIC_BEARER_TOKEN"]);
+    if (!apiKey && !bearerToken) {
+      throw { error_type: "api_key_required", safe_message: "Anthropic provider is missing required configuration." };
+    }
     const headers = {
       "content-type": "application/json",
       "anthropic-version": "2023-06-01",
@@ -3353,21 +3518,160 @@ async function invokeCloudProvider(env, providerRecord, prompt) {
       method: "POST",
       headers,
       body: JSON.stringify({
-        model: trimmed(env.MYSTIC_PROVIDER_ANTHROPIC_MODEL, providerRecord.model_name),
-        max_tokens: 1024,
-        system: "You are a Mystic Virtual Research Lab agent operating in cloud-native mode.",
-        messages: [{ role: "user", content: prompt }],
+        model: firstNonEmpty(options.model, env.MYSTIC_PROVIDER_ANTHROPIC_MODEL, providerRecord.model_name),
+        max_tokens: Number.isFinite(options.maxTokens) ? Math.max(1, Number(options.maxTokens)) : 1024,
+        system: messages.find((item) => item.role === "system")?.content || "",
+        messages: messages
+          .filter((item) => item.role !== "system")
+          .map((item) => ({ role: item.role === "user" ? "user" : "assistant", content: item.content })),
       }),
     });
     return {
-      ok: true,
       provider: providerRecord.provider_id,
-      model_name: trimmed(env.MYSTIC_PROVIDER_ANTHROPIC_MODEL, providerRecord.model_name),
-      latency_sec: (Date.now() - startedAt) / 1000,
-      content: extractAnthropicText(payload),
+      model_name: firstNonEmpty(options.model, env.MYSTIC_PROVIDER_ANTHROPIC_MODEL, providerRecord.model_name),
+      output_text: extractAnthropicText(payload),
+      raw_usage_safe: safeUsagePayload(payload?.usage),
     };
   }
-  throw new Error(`unsupported_provider_${providerRecord.provider_id}`);
+  throw { error_type: "unsupported_provider", safe_message: `Unsupported provider_id: ${providerRecord.provider_id}` };
+}
+
+async function runCloudProviderCall({
+  env,
+  providerRecord,
+  toolName,
+  sessionId = "",
+  agentRole = "",
+  prompt = "",
+  systemPrompt = "",
+  messages = [],
+  model = "",
+  temperature = 0.2,
+  maxTokens = 1024,
+  metadata = {},
+}) {
+  const messageList = providerMessageList({ prompt, systemPrompt, messages });
+  const promptHash = await providerPromptHash(messageList);
+  const promptExcerptSafe = providerPromptExcerpt(messageList);
+  const safeMetadata = safeProviderMetadata({
+    runtime_mode: "cloud_native_worker_lab_v0",
+    requested_model: model,
+    temperature,
+    max_tokens: maxTokens,
+    ...metadata,
+  });
+  const callId = `call-${(await sha256Hex(`${providerRecord.provider_id}:${toolName}:${promptHash}:${Date.now()}`)).slice(0, 16)}`;
+  const resolvedModel = firstNonEmpty(model, providerRecord.model_name, providerRecord.provider_id);
+  const requiredStatus = providerCallStatusFromRecord(providerRecord);
+  if (requiredStatus !== "connected" && providerRecord.provider_id !== "mock") {
+    const record = {
+      call_id: callId,
+      session_id: trimmed(sessionId),
+      provider_id: providerRecord.provider_id,
+      model: resolvedModel,
+      tool_name: toolName,
+      agent_role: trimmed(agentRole),
+      prompt_hash: promptHash,
+      prompt_excerpt_safe: promptExcerptSafe,
+      output_text: "",
+      status: requiredStatus,
+      error_type: requiredStatus,
+      latency_ms: 0,
+      usage_json: {},
+      metadata: safeMetadata,
+      created_at: nowIso(),
+    };
+    const storageRef = await saveCloudModelCall(env, record);
+    return {
+      status: requiredStatus,
+      provider_id: providerRecord.provider_id,
+      model: resolvedModel,
+      output_text: "",
+      raw_usage_safe: {},
+      latency_ms: 0,
+      error_type: requiredStatus,
+      error_message_safe: providerCallErrorMessage(providerRecord, requiredStatus),
+      call_id: callId,
+      storage_ref: storageRef,
+    };
+  }
+
+  const startedAt = Date.now();
+  try {
+    const response = await invokeCloudProvider(env, providerRecord, {
+      prompt,
+      systemPrompt,
+      messages: messageList,
+      model: resolvedModel,
+      temperature,
+      maxTokens,
+    });
+    const latencyMs = Date.now() - startedAt;
+    const record = {
+      call_id: callId,
+      session_id: trimmed(sessionId),
+      provider_id: providerRecord.provider_id,
+      model: response.model_name || resolvedModel,
+      tool_name: toolName,
+      agent_role: trimmed(agentRole),
+      prompt_hash: promptHash,
+      prompt_excerpt_safe: promptExcerptSafe,
+      output_text: response.output_text || "",
+      status: "completed",
+      error_type: "",
+      latency_ms: latencyMs,
+      usage_json: response.raw_usage_safe || {},
+      metadata: safeMetadata,
+      created_at: nowIso(),
+    };
+    const storageRef = await saveCloudModelCall(env, record);
+    return {
+      status: "completed",
+      provider_id: providerRecord.provider_id,
+      model: response.model_name || resolvedModel,
+      output_text: response.output_text || "",
+      raw_usage_safe: response.raw_usage_safe || {},
+      latency_ms: latencyMs,
+      error_type: "",
+      error_message_safe: "",
+      call_id: callId,
+      storage_ref: storageRef,
+    };
+  } catch (error) {
+    const latencyMs = Date.now() - startedAt;
+    const errorType = trimmed(error?.error_type, "provider_error");
+    const safeMessage = trimmed(error?.safe_message, "Provider request failed.");
+    const record = {
+      call_id: callId,
+      session_id: trimmed(sessionId),
+      provider_id: providerRecord.provider_id,
+      model: resolvedModel,
+      tool_name: toolName,
+      agent_role: trimmed(agentRole),
+      prompt_hash: promptHash,
+      prompt_excerpt_safe: promptExcerptSafe,
+      output_text: "",
+      status: errorType,
+      error_type: errorType,
+      latency_ms: latencyMs,
+      usage_json: {},
+      metadata: safeMetadata,
+      created_at: nowIso(),
+    };
+    const storageRef = await saveCloudModelCall(env, record);
+    return {
+      status: errorType,
+      provider_id: providerRecord.provider_id,
+      model: resolvedModel,
+      output_text: "",
+      raw_usage_safe: {},
+      latency_ms: latencyMs,
+      error_type: errorType,
+      error_message_safe: safeMessage,
+      call_id: callId,
+      storage_ref: storageRef,
+    };
+  }
 }
 
 async function cloudMysticStatus(state, supabase, env) {
@@ -3382,7 +3686,7 @@ async function cloudMysticStatus(state, supabase, env) {
     lab_session_get: supabase.configured ? "ready" : "blocked",
     lab_session_advance: supabase.configured ? "ready" : "blocked",
     lab_agent_run: registry.providers.some((item) => item.ready) ? "ready" : "provider_required",
-    lab_referee_review: supabase.configured ? "deferred" : "blocked",
+    lab_referee_review: supabase.configured ? (registry.providers.some((item) => item.ready) ? "ready" : "deferred") : "blocked",
     lab_experiment_create: supabase.configured ? "ready" : "blocked",
     lab_experiment_run: supabase.configured ? "deferred" : "blocked",
     lab_memory_search: supabase.configured ? "ready" : "blocked",
@@ -3515,6 +3819,41 @@ function cloudExperimentSummary(experiment, claimStatus) {
   };
 }
 
+function parseProviderRefereeOutput(text) {
+  try {
+    const payload = JSON.parse(String(text || ""));
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("invalid");
+    }
+    const verdict = ["VALID", "INVALID", "UNKNOWN"].includes(String(payload.verdict || "").toUpperCase())
+      ? String(payload.verdict).toUpperCase()
+      : "UNKNOWN";
+    return {
+      verdict,
+      critique: trimmed(payload.critique),
+      first_fatal_error: trimmed(payload.first_fatal_error),
+      recommended_next_action: trimmed(payload.recommended_next_action, "Review referee verdict."),
+    };
+  } catch {
+    return {
+      verdict: "UNKNOWN",
+      critique: trimmed(text, "Provider referee did not return parseable JSON."),
+      first_fatal_error: "",
+      recommended_next_action: "Review provider-backed referee output manually.",
+    };
+  }
+}
+
+function providerVerdictToClaimStatus(verdict) {
+  if (verdict === "VALID") {
+    return "TESTED";
+  }
+  if (verdict === "INVALID") {
+    return "REFUTED";
+  }
+  return "UNKNOWN";
+}
+
 async function runCloudAgentTurn({
   env,
   bundle,
@@ -3526,7 +3865,7 @@ async function runCloudAgentTurn({
   replyTo = [],
 }) {
   const registry = await loadProviderRegistry(env);
-  const providerDecision = selectCloudProvider(registry, providerPreference);
+  const providerDecision = selectCloudProvider(env, registry, providerPreference);
   const context = contextFromIds(bundle, contextIds) || phaseContext(bundle, phase);
   const prompt = [
     `Agent role: ${agentRole}`,
@@ -3580,72 +3919,47 @@ async function runCloudAgentTurn({
     return { turn, claims: [], response: providerDecision.providerRequired };
   }
 
-  try {
-    const invocation = await invokeCloudProvider(env, providerDecision.selection, prompt);
-    const turn = makeCloudTurn({
-      sessionId: bundle.session.session_id,
-      phase,
-      agentRole,
-      provider: invocation.provider,
-      modelName: invocation.model_name,
-      inputSummary: task.slice(0, 200),
-      output: invocation.content || "Provider returned no text output.",
-      status: "completed",
-      requestedTools: [],
-      toolResults: [
-        {
-          provider: invocation.provider,
-          model_name: invocation.model_name,
-          latency_sec: invocation.latency_sec,
-        },
-      ],
-      replyTo,
-    });
-    const claims = claimsFromTurn(bundle.session.session_id, turn);
-    bundle.turns.push(turn);
-    if (claims.length) {
-      bundle.claims.push(...claims);
-    }
-    bundle.session.status = "running";
-    bundle.session.next_actions = ["Review the new agent turn.", "Decide whether to advance the session or run a referee review."];
-    return {
-      turn,
-      claims,
-      response: {
-        status: "completed",
-        provider_required: false,
-        provider: invocation.provider,
-        model_name: invocation.model_name,
-        latency_sec: invocation.latency_sec,
-      },
-    };
-  } catch (error) {
-    const failure = deferredResult(
-      `Provider execution failed for ${providerDecision.selection.provider_id}. Retry after checking provider credentials or API availability.`,
-      {
-        provider: providerDecision.selection.provider_id,
-        error_code: trimmed(error.message, "provider_error"),
-      },
-    );
-    const turn = makeCloudTurn({
-      sessionId: bundle.session.session_id,
-      phase,
-      agentRole,
-      provider: providerDecision.selection.provider_id,
-      modelName: providerDecision.selection.model_name,
-      inputSummary: task.slice(0, 200),
-      output: failure.message,
-      status: "ERROR",
-      requestedTools: [],
-      toolResults: [failure],
-      replyTo,
-      error: failure.error_code || "provider_error",
-    });
-    bundle.turns.push(turn);
-    bundle.session.status = "blocked";
-    bundle.session.next_actions = ["Inspect provider configuration.", "Retry the LAB action after resolving the provider error."];
-    return { turn, claims: [], response: failure };
+  const invocation = await runCloudProviderCall({
+    env,
+    providerRecord: providerDecision.selection,
+    toolName: "lab_agent_run",
+    sessionId: bundle.session.session_id,
+    agentRole,
+    systemPrompt: `You are Mystic LAB agent ${agentRole} operating in phase ${phase}.`,
+    prompt,
+    metadata: { phase },
+  });
+  const turnStatus =
+    invocation.status === "completed"
+      ? "completed"
+      : ["provider_required", "api_key_required", "provider_auth_failed"].includes(invocation.status)
+        ? "AUTH_REQUIRED"
+        : "ERROR";
+  const turn = makeCloudTurn({
+    sessionId: bundle.session.session_id,
+    phase,
+    agentRole,
+    provider: invocation.provider_id,
+    modelName: invocation.model || providerDecision.selection.model_name,
+    inputSummary: task.slice(0, 200),
+    output: invocation.output_text || invocation.error_message_safe || "Provider returned no text output.",
+    status: turnStatus,
+    requestedTools: [],
+    toolResults: [invocation],
+    replyTo,
+    error: turnStatus === "completed" ? "" : invocation.error_type || "provider_error",
+  });
+  const claims = turnStatus === "completed" ? claimsFromTurn(bundle.session.session_id, turn) : [];
+  bundle.turns.push(turn);
+  if (claims.length) {
+    bundle.claims.push(...claims);
   }
+  bundle.session.status = turnStatus === "completed" ? "running" : "waiting_for_user";
+  bundle.session.next_actions =
+    turnStatus === "completed"
+      ? ["Review the new agent turn.", "Decide whether to advance the session or run a referee review."]
+      : [invocation.error_message_safe || "Retry after resolving the provider requirement or error."];
+  return { turn, claims, response: invocation };
 }
 
 async function cloudMemorySearch(env, { query, domain, statusFilter, limit }) {
@@ -3960,6 +4274,83 @@ async function callCloudTool(name, args, env, state) {
     if (!bundle) {
       throw new Error(`Unknown session_id: ${args.session_id}`);
     }
+    const requestedProvider = normalizeRequestedProvider(args.provider || "");
+    if (requestedProvider && requestedProvider !== "auto" && requestedProvider !== "local_backend") {
+      const registry = await loadProviderRegistry(env);
+      const record = providerRegistryMap(registry).get(requestedProvider) || buildProviderRecord(env, requestedProvider);
+      const targetText = trimmed(args.text) || trimmed(findClaim(bundle, trimmed(args.claim_id))?.text);
+      const providerResult = await runCloudProviderCall({
+        env,
+        providerRecord: record,
+        toolName: "lab_referee_review",
+        sessionId: bundle.session.session_id,
+        agentRole: "Referee",
+        systemPrompt: "You are a strict Mystic LAB referee. Return JSON with keys verdict, critique, first_fatal_error, recommended_next_action.",
+        prompt: [
+          `Problem: ${bundle.session.problem}`,
+          `Strictness: ${trimmed(args.strictness, "hostile")}`,
+          `Claim text: ${targetText}`,
+          "If you cannot verify completely, return verdict UNKNOWN and explain the remaining gap.",
+        ].join("\n"),
+        metadata: { strictness: trimmed(args.strictness, "hostile"), claim_id: trimmed(args.claim_id) },
+      });
+      const parsed = parseProviderRefereeOutput(providerResult.output_text);
+      const turnStatus =
+        providerResult.status === "completed"
+          ? "completed"
+          : ["provider_required", "api_key_required", "provider_auth_failed"].includes(providerResult.status)
+            ? "AUTH_REQUIRED"
+            : "ERROR";
+      const claim = findClaim(bundle, trimmed(args.claim_id));
+      const failures = [];
+      const updatedClaims = [];
+      if (turnStatus === "completed" && claim) {
+        claim.status = providerVerdictToClaimStatus(parsed.verdict);
+        claim.updated_at = nowIso();
+        updatedClaims.push(claim);
+        if (parsed.first_fatal_error) {
+          const failure = makeFailure({
+            sessionId: bundle.session.session_id,
+            claimId: claim.claim_id,
+            sourceTurnId: "",
+            firstFatalError: parsed.first_fatal_error,
+            failureType: "logic_gap",
+            lesson: "Provider-backed referee identified a failure or proof gap.",
+          });
+          bundle.failures.push(failure);
+          failures.push(failure);
+        }
+      }
+      const turn = makeCloudTurn({
+        sessionId: bundle.session.session_id,
+        phase: "referee_review",
+        agentRole: "Referee",
+        provider: record.provider_id,
+        modelName: providerResult.model || record.model_name,
+        inputSummary: String(args.text || "").slice(0, 200),
+        output: providerResult.output_text || providerResult.error_message_safe,
+        status: turnStatus,
+        requestedTools: ["lab_referee_review"],
+        toolResults: [providerResult],
+        replyTo: args.claim_id ? [args.claim_id] : [],
+        error: turnStatus === "completed" ? "" : providerResult.error_type || "provider_error",
+      });
+      bundle.turns.push(turn);
+      bundle.session.status = turnStatus === "completed" ? "running" : "waiting_for_user";
+      bundle.session.next_actions = [parsed.recommended_next_action || providerResult.error_message_safe || "Review referee verdict."];
+      bundle.session.updated_at = nowIso();
+      await saveCloudBundle(env, bundle);
+      return {
+        verdict: turnStatus === "completed" ? parsed.verdict : providerResult.status.toUpperCase(),
+        first_fatal_error: parsed.first_fatal_error,
+        critique: parsed.critique || providerResult.error_message_safe,
+        recommended_next_action: parsed.recommended_next_action || providerResult.error_message_safe,
+        updated_claims: updatedClaims,
+        failures,
+        turn_id: turn.turn_id,
+        provider_result: providerResult,
+      };
+    }
     const deferred = deferredResult(
       "Cloud-native referee review is not yet backed by a worker-native deterministic verifier. Use an explicitly connected future verifier provider or local mode for strict proof review.",
       { required_capability: "referee_review" },
@@ -4163,17 +4554,39 @@ async function callCloudTool(name, args, env, state) {
     }
     const registry = await loadProviderRegistry(env);
     const selectedProviders = asStringArray(args.participants)
-      .map((item) => normalizeRequestedProvider(item))
-      .filter((item) => item && item !== "auto");
+      .map((item) => parseProviderParticipantAlias(item))
+      .filter((item) => item.provider_id && item.provider_id !== "auto");
+    if (selectedProviders.some((item) => item.provider_id === "local_backend")) {
+      const deferred = localBackendDeferredResult();
+      return {
+        debate_session_id: "",
+        research_table_session_id: "",
+        imported_claims: 0,
+        imported_failures: 0,
+        summary: deferred.message,
+        deferred,
+        transcript: [],
+        final_synthesis: "",
+      };
+    }
     const providerMap = providerRegistryMap(registry);
     const missing = selectedProviders
-      .map((providerId) => providerMap.get(providerId))
-      .find((record) => record && !record.ready);
+      .map((item) => providerMap.get(item.provider_id) || buildProviderRecord(env, item.provider_id))
+      .find((record) => record && providerCallStatusFromRecord(record) !== "connected");
     if (missing) {
-      const required = providerRequiredResult(
-        missing,
-        `${missing.provider_id} must be explicitly connected before cloud-native Model Arena can run.`,
-      );
+      const requiredStatus = providerCallStatusFromRecord(missing);
+      const required = {
+        status: requiredStatus,
+        provider_id: missing.provider_id,
+        model: missing.model_name,
+        output_text: "",
+        raw_usage_safe: {},
+        latency_ms: 0,
+        error_type: requiredStatus,
+        error_message_safe: providerCallErrorMessage(missing, requiredStatus),
+        call_id: "",
+        storage_ref: "",
+      };
       const turn = makeCloudTurn({
         sessionId: bundle.session.session_id,
         phase: "simulation_or_execution",
@@ -4181,13 +4594,13 @@ async function callCloudTool(name, args, env, state) {
         provider: missing.provider_id,
         modelName: missing.model_name,
         inputSummary: args.question.slice(0, 200),
-        output: required.message,
+        output: required.error_message_safe,
         status: "AUTH_REQUIRED",
         toolResults: [required],
       });
       bundle.turns.push(turn);
       bundle.session.status = "waiting_for_user";
-      bundle.session.next_actions = [required.setup_instructions];
+      bundle.session.next_actions = [required.error_message_safe];
       bundle.session.updated_at = nowIso();
       await saveCloudBundle(env, bundle);
       return {
@@ -4195,65 +4608,114 @@ async function callCloudTool(name, args, env, state) {
         research_table_session_id: "",
         imported_claims: 0,
         imported_failures: 0,
-        summary: required.message,
+        summary: required.error_message_safe,
         provider_result: required,
+        transcript: [],
+        final_synthesis: "",
       };
     }
     const readyProviders =
       selectedProviders.length > 0
-        ? selectedProviders.map((providerId) => providerMap.get(providerId)).filter(Boolean)
+        ? selectedProviders
+            .map((item) => ({
+              record: providerMap.get(item.provider_id) || buildProviderRecord(env, item.provider_id),
+              requested_model: item.model,
+            }))
+            .filter((item) => item.record)
         : registry.providers.filter((item) => item.ready).slice(0, 3);
     if (!readyProviders.length) {
-      const required = providerRequiredResult(
-        registry.providers[0],
-        "No cloud-native model provider is connected. Configure one before running Model Arena.",
-      );
+      const required = {
+        status: "provider_required",
+        provider_id: registry.providers[0].provider_id,
+        model: registry.providers[0].model_name,
+        output_text: "",
+        raw_usage_safe: {},
+        latency_ms: 0,
+        error_type: "provider_required",
+        error_message_safe: "No cloud-native model provider is connected. Configure one before running Model Arena.",
+        call_id: "",
+        storage_ref: "",
+      };
       return {
         debate_session_id: "",
         research_table_session_id: "",
         imported_claims: 0,
         imported_failures: 0,
-        summary: required.message,
+        summary: required.error_message_safe,
         provider_result: required,
+        transcript: [],
+        final_synthesis: "",
       };
     }
     const debateSessionId = cloudId("debate");
     let importedClaims = 0;
-    for (const providerRecord of readyProviders.slice(0, 3)) {
-      const invocation = await invokeCloudProvider(
+    const transcript = [];
+    for (const item of readyProviders.slice(0, 3)) {
+      const providerRecord = item.record || item;
+      const invocation = await runCloudProviderCall({
         env,
         providerRecord,
-        [
+        toolName: "lab_models_debate",
+        sessionId: bundle.session.session_id,
+        agentRole: "ModelArena",
+        model: item.requested_model || "",
+        systemPrompt: "You are one participant in a structured Mystic LAB research debate. Be explicit about assumptions and uncertainty.",
+        prompt: [
           `Cloud-native Model Arena debate for session ${bundle.session.session_id}.`,
           `Question: ${args.question}`,
           `Rounds requested: ${asStringArray(args.rounds).join(", ")}`,
           `Problem: ${bundle.session.problem}`,
+          `Transcript so far: ${JSON.stringify(transcript)}`,
         ].join("\n"),
-      );
+        metadata: { rounds: asStringArray(args.rounds), question: args.question },
+      });
       const turn = makeCloudTurn({
         sessionId: bundle.session.session_id,
         phase: "simulation_or_execution",
         agentRole: "ModelArena",
-        provider: invocation.provider,
-        modelName: invocation.model_name,
+        provider: invocation.provider_id,
+        modelName: invocation.model || providerRecord.model_name,
         inputSummary: args.question.slice(0, 200),
-        output: invocation.content || "Provider returned no text output.",
-        status: "completed",
+        output: invocation.output_text || invocation.error_message_safe || "Provider returned no text output.",
+        status: invocation.status === "completed" ? "completed" : "ERROR",
+        toolResults: [invocation],
       });
-      const claims = claimsFromTurn(bundle.session.session_id, turn);
+      const claims = invocation.status === "completed" ? claimsFromTurn(bundle.session.session_id, turn) : [];
       bundle.turns.push(turn);
       bundle.claims.push(...claims);
       importedClaims += claims.length;
+      transcript.push({
+        provider_id: invocation.provider_id,
+        model: invocation.model,
+        status: invocation.status,
+        output_text: invocation.output_text || invocation.error_message_safe,
+        call_id: invocation.call_id,
+      });
     }
+    const synthesisProvider = readyProviders[0].record || readyProviders[0];
+    const synthesisInvocation = await runCloudProviderCall({
+      env,
+      providerRecord: synthesisProvider,
+      toolName: "lab_models_debate",
+      sessionId: bundle.session.session_id,
+      agentRole: "Synthesizer",
+      model: readyProviders[0].requested_model || "",
+      systemPrompt: "You are the final synthesizer for a provider-backed Mystic LAB debate. Summarize agreement, disagreement, and next checks.",
+      prompt: [`Question: ${args.question}`, `Transcript: ${JSON.stringify(transcript)}`].join("\n"),
+      metadata: { synthesis: true, rounds: asStringArray(args.rounds) },
+    });
     const summaryTurn = makeCloudTurn({
       sessionId: bundle.session.session_id,
       phase: "simulation_or_execution",
-      agentRole: "ModelArena",
-      provider: "tool",
-      modelName: "cloud_model_arena",
+      agentRole: "Synthesizer",
+      provider: synthesisInvocation.provider_id,
+      modelName: synthesisInvocation.model || synthesisProvider.model_name,
       inputSummary: args.question.slice(0, 200),
-      output: `Cloud-native Model Arena completed with ${readyProviders.length} provider participants and imported ${importedClaims} claims.`,
-      status: "completed",
+      output:
+        synthesisInvocation.output_text ||
+        `Cloud-native Model Arena completed with ${readyProviders.length} provider participants and imported ${importedClaims} claims.`,
+      status: synthesisInvocation.status === "completed" ? "completed" : "ERROR",
+      toolResults: [synthesisInvocation],
     });
     bundle.turns.push(summaryTurn);
     bundle.session.status = "running";
@@ -4266,6 +4728,8 @@ async function callCloudTool(name, args, env, state) {
       imported_claims: importedClaims,
       imported_failures: 0,
       summary: summaryTurn.output,
+      transcript,
+      final_synthesis: summaryTurn.output,
     };
   }
   if (name === "lab_report_generate") {
@@ -4497,26 +4961,35 @@ async function callCloudTool(name, args, env, state) {
   }
   if (name === "provider_call_test") {
     const providerId = normalizeProviderId(args.provider_id);
-    if (providerId === "mock") {
-      return {
-        provider_id: "mock",
-        provider_type: "future/custom",
-        auth_method: "none/mock",
-        status: "completed",
-        output: `mock:${trimmed(args.prompt, "ping")}`,
-        test_only: true,
-      };
-    }
     const registry = await loadProviderRegistry(env);
     const record = providerRegistryMap(registry).get(providerId) || buildProviderRecord(env, providerId);
+    const result = await runCloudProviderCall({
+      env,
+      providerRecord: record,
+      toolName: "provider_call_test",
+      sessionId: "",
+      agentRole: "ProviderTest",
+      prompt: trimmed(args.prompt, "ping"),
+      metadata: { test_only: providerId === "mock" },
+    });
     return {
       provider_id: record.provider_id,
       provider_type: record.provider_type,
       auth_method: record.auth_method,
-      status: "provider_required",
-      message: "Provider Connect foundation does not expose direct real provider test calls yet.",
+      status: result.status,
+      model: result.model,
+      output: result.output_text,
+      output_text: result.output_text,
+      latency_ms: result.latency_ms,
+      usage: result.raw_usage_safe,
+      error_type: result.error_type,
+      message: result.error_message_safe,
+      error_message_safe: result.error_message_safe,
+      call_id: result.call_id,
+      storage_ref: result.storage_ref,
       setup_url: record.setup_url,
       setup_instructions: record.setup_instructions,
+      test_only: providerId === "mock",
     };
   }
   if (name === "create_lab_scene") {

@@ -10,6 +10,7 @@ It exists to let Mystic expose:
 - provider setup guidance
 - provider OAuth connect entry points where genuinely supported
 - secure setup pages for API-key providers
+- real provider-backed model calls once a provider is explicitly configured
 
 It does **not** exist to:
 
@@ -37,6 +38,31 @@ It does **not** exist to:
 - `provider_disconnect`
 - `provider_model_list`
 - `provider_call_test`
+
+## Current Routing Surface
+
+Provider Connect now backs real model-call routing for:
+
+- `provider_call_test`
+- explicit `lab_agent_run`
+- provider-backed `lab_models_debate`
+- optional provider-backed `lab_referee_review`
+
+When a provider call runs, Mystic stores only safe call metadata:
+
+- `provider_id`
+- `model`
+- `tool_name`
+- `agent_role`
+- `prompt_hash`
+- bounded `prompt_excerpt_safe`
+- `output_text`
+- `status`
+- `error_type`
+- `latency_ms`
+- safe usage metadata
+
+These records are stored in local `mystic_data/model_calls/` or in the Supabase `model_calls` table.
 
 ## Route Surface
 
@@ -162,7 +188,7 @@ It does not display or echo raw authorization codes or tokens.
 Current limit:
 
 - callback receipt is recorded
-- token exchange and real provider-call routing remain intentionally deferred to a later isolated issue
+- real OAuth token exchange for providers that require full delegated OAuth is still separate from the current API-key and configured-provider routing path
 
 ## Security Guardrail
 
@@ -170,6 +196,9 @@ Mystic LAB must fail closed:
 
 - unsupported OAuth configuration returns `provider_required` or `api_key_required`
 - missing API-key configuration returns `api_key_required`
+- invalid provider credentials return `provider_auth_failed`
+- provider rate limits return `rate_limited`
+- provider downtime returns `provider_unavailable`
 - direct secret writes remain unavailable unless explicitly configured through approved infrastructure
 
-Provider Connect must never invent credentials, fake OAuth support, or fake model execution.
+Provider Connect must never invent credentials, fake OAuth support, fake model execution, or store raw provider secrets in call records.

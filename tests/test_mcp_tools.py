@@ -279,7 +279,7 @@ class MCPToolsTests(unittest.TestCase):
         self.assertFalse(instructions["direct_secret_write_supported"])
         self.assertIn(verified["status"], {"not_configured", "api_key_required"})
         self.assertEqual(models["status"], verified["status"])
-        self.assertEqual(call_test["status"], "provider_required")
+        self.assertIn(call_test["status"], {"provider_required", "api_key_required"})
 
     def test_provider_connect_start_returns_setup_url_for_api_key_provider(self):
         toolbox = self._make_toolbox()
@@ -330,6 +330,111 @@ class MCPToolsTests(unittest.TestCase):
         self.assertEqual(mock_started["status"], "connected")
         self.assertEqual(mock_call["status"], "completed")
         self.assertEqual(mock_call["output"], "mock:hello")
+
+    def test_provider_call_test_maps_invalid_credentials_without_leaking_secret(self):
+        class _ProviderResponse:
+            def __init__(self, status_code: int, payload: dict[str, object]) -> None:
+                self.status_code = status_code
+                self._payload = payload
+                self.text = json.dumps(payload)
+
+            def json(self) -> dict[str, object]:
+                return self._payload
+
+        toolbox = self._make_toolbox()
+        with patch.dict(
+            os.environ,
+            {"MYSTIC_PROVIDER_GEMINI_API_KEY": "gem-secret", "MYSTIC_PROVIDER_GEMINI_MODEL": "gemini-1.5-flash"},
+            clear=False,
+        ), patch(
+            "mystic.lab.provider_router.requests.post",
+            return_value=_ProviderResponse(401, {"error": {"message": "bad key gem-secret"}}),
+        ):
+            result = toolbox.provider_call_test(provider_id="gemini", prompt="ping")
+        self.assertEqual(result["status"], "provider_auth_failed")
+        self.assertNotIn("gem-secret", json.dumps(result))
+        self.assertEqual(len(toolbox.lab_runner.storage.list_model_calls()), 1)
+
+    def test_provider_call_test_maps_rate_limit_and_provider_unavailable(self):
+        class _ProviderResponse:
+            def __init__(self, status_code: int) -> None:
+                self.status_code = status_code
+                self.text = json.dumps({"error": {"message": "transient"}})
+
+            def json(self) -> dict[str, object]:
+                return {"error": {"message": "transient"}}
+
+        toolbox = self._make_toolbox()
+        with patch.dict(
+            os.environ,
+            {
+                "MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY": "openai-secret",
+                "MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL": "https://provider.example.com",
+                "MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL": "oai-model",
+            },
+            clear=False,
+        ), patch(
+            "mystic.lab.provider_router.requests.post",
+            return_value=_ProviderResponse(429),
+        ):
+            rate_limited = toolbox.provider_call_test(provider_id="openai_compatible", prompt="ping")
+        self.assertEqual(rate_limited["status"], "rate_limited")
+        with patch.dict(
+            os.environ,
+            {
+                "MYSTIC_PROVIDER_ANTHROPIC_API_KEY": "anthropic-secret",
+                "MYSTIC_PROVIDER_ANTHROPIC_MODEL": "claude-test",
+            },
+            clear=False,
+        ), patch(
+            "mystic.lab.provider_router.requests.post",
+            return_value=_ProviderResponse(503),
+        ):
+            unavailable = toolbox.provider_call_test(provider_id="anthropic", prompt="ping")
+        self.assertEqual(unavailable["status"], "provider_unavailable")
+
+    def test_lab_agent_run_stores_model_backed_turn_for_mock_provider(self):
+        toolbox = self._make_toolbox()
+        created = toolbox.lab_session_create(
+            problem="Summarize x + y = 5.",
+            domain="math",
+            goal="Exercise provider-backed agent routing.",
+            mode="cheap",
+            participants=["mock"],
+        )
+        result = toolbox.lab_agent_run(
+            session_id=created["session_id"],
+            agent_role="Theorist",
+            provider="mock",
+            task="Describe one useful observation.",
+            context_ids=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["provider_result"]["status"], "completed")
+        self.assertEqual(len(toolbox.lab_runner.storage.list_model_calls(created["session_id"])), 1)
+        loaded = toolbox.lab_session_get(session_id=created["session_id"])
+        self.assertEqual(loaded["turns"][-1]["provider"], "mock")
+
+    def test_lab_models_debate_stores_mock_provider_transcript_and_synthesis(self):
+        toolbox = self._make_toolbox()
+        created = toolbox.lab_session_create(
+            problem="Debate whether x + y = 5 has positive integer solutions.",
+            domain="math",
+            goal="Exercise provider-backed debate routing.",
+            mode="multi_model_debate",
+            participants=["mock", "mock"],
+        )
+        result = toolbox.lab_models_debate(
+            session_id=created["session_id"],
+            question="Debate whether x + y = 5 has positive integer solutions.",
+            participants=["mock:mock-one", "mock:mock-two"],
+            rounds=["independent_discovery", "cross_critique"],
+            use_existing_research_table=True,
+        )
+        self.assertEqual(result["research_table_session_id"], "")
+        self.assertEqual(len(result["transcript"]), 2)
+        self.assertTrue(result["final_synthesis"])
+        self.assertGreaterEqual(len(toolbox.lab_runner.storage.list_model_calls(created["session_id"])), 3)
     def test_research_table_uses_verifier_as_final_decision_source_when_enabled(self):
         toolbox = self._make_toolbox()
         result = toolbox.mystic_run_research_table(
