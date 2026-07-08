@@ -24,6 +24,7 @@ It does **not** exist to:
 
 - `openai_compatible`
 - `gemini`
+- `google_vertex_ai`
 - `anthropic`
 - `future_custom`
 
@@ -94,9 +95,28 @@ They never show:
 
 ### Gemini
 
-- If Google OAuth metadata is genuinely configured and enabled, `provider_connect_start` returns a real Google `authorization_url`.
-- Otherwise Mystic returns `api_key_required` and a secure Mystic setup page URL.
-- The setup page links to Google AI Studio for API-key creation and shows the required Cloudflare secret names.
+- `gemini` remains the Google AI Studio and Gemini API provider.
+- It is intentionally API-key based in Mystic LAB.
+- `provider_connect_start` returns `api_key_required` and a secure Mystic setup page URL when the API key is missing.
+- Mystic must not treat `gemini` as the Google OAuth or Vertex AI provider.
+
+### Google Vertex AI
+
+- `google_vertex_ai` is the separate Google OAuth-backed provider for Vertex AI Gemini access.
+- When real OAuth metadata is configured, `provider_connect_start` returns a real Google `authorization_url`.
+- Required configuration is:
+  - `MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED`
+  - `MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID`
+  - `MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET`
+  - `MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID`
+  - `MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION`
+- Optional configuration is:
+  - `MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL`
+- Current safe limit:
+  - callback receipt is supported
+  - encrypted server-side OAuth token storage is not implemented yet
+  - `provider_verify`, `provider_model_list`, and `provider_call_test` therefore fail closed with `oauth_required` or `provider_required`
+  - once a callback is recorded without token storage support, the safe failure reason is `oauth_storage_required`
 
 ### Anthropic
 
@@ -165,6 +185,11 @@ The setup pages and tools expose exact secret names, for example:
 - `MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL`
 - `MYSTIC_PROVIDER_GEMINI_API_KEY`
 - `MYSTIC_PROVIDER_GEMINI_MODEL`
+- `MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID`
+- `MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET`
+- `MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID`
+- `MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION`
+- `MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL`
 - `MYSTIC_PROVIDER_ANTHROPIC_API_KEY`
 - `MYSTIC_PROVIDER_ANTHROPIC_MODEL`
 
@@ -188,6 +213,9 @@ It does not display or echo raw authorization codes or tokens.
 Current limit:
 
 - callback receipt is recorded
+- raw authorization codes are never displayed back to the user
+- `google_vertex_ai` callbacks become `provider_required` with `oauth_storage_required` until encrypted token storage exists
+- token exchange and real OAuth token-backed provider-call routing remain intentionally deferred until encrypted token storage is implemented
 - real OAuth token exchange for providers that require full delegated OAuth is still separate from the current API-key and configured-provider routing path
 
 ## Security Guardrail
@@ -196,6 +224,7 @@ Mystic LAB must fail closed:
 
 - unsupported OAuth configuration returns `provider_required` or `api_key_required`
 - missing API-key configuration returns `api_key_required`
+- unsupported token-storage state returns `provider_required` with `oauth_storage_required`
 - invalid provider credentials return `provider_auth_failed`
 - provider rate limits return `rate_limited`
 - provider downtime returns `provider_unavailable`

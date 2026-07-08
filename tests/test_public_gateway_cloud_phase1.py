@@ -103,11 +103,12 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
     @staticmethod
     def _provider_connection_row(provider_id: str, *, status: str = "connected") -> dict[str, object]:
         provider_type = "future/custom" if provider_id == "future_custom" else provider_id
+        auth_method = "oauth" if provider_id in {"future_custom", "google_vertex_ai"} else "api_key"
         return {
             "connection_id": f"provider-{provider_id}",
             "provider_id": provider_id,
             "provider_type": provider_type,
-            "auth_method": "api_key" if provider_id != "future_custom" else "oauth",
+            "auth_method": auth_method,
             "status": status,
             "scopes": ["model:generate"],
             "model_list": ["mock-model"] if provider_id == "mock" else [f"{provider_id}-model"],
@@ -359,6 +360,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         status = status_result["body"]["result"]["structuredContent"]
         instructions = instructions_result["body"]["result"]["structuredContent"]
         self.assertEqual(listing["providers"][0]["provider_id"], "openai_compatible")
+        self.assertIn("google_vertex_ai", [item["provider_id"] for item in listing["providers"]])
         self.assertIn(status["status"], {"not_configured", "api_key_required"})
         self.assertIn("/providers/openai_compatible/setup", status["setup_url"])
         self.assertIn("/providers/openai_compatible/connect", status["connect_url"])
@@ -475,6 +477,63 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertEqual(payload["auth_method"], "api_key")
         self.assertIn("/providers/gemini/setup", payload["setup_url"])
 
+    def test_cloud_google_vertex_connect_start_returns_provider_required_without_metadata(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 112,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "provider_connect_start",
+                        "arguments": {"provider_id": "google_vertex_ai", "auth_method": "oauth"},
+                    },
+                },
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["status"], "provider_required")
+        self.assertEqual(payload["auth_method"], "oauth")
+        self.assertIn("MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET", payload["required_secret_names"])
+
+    def test_cloud_google_vertex_connect_start_returns_google_authorization_url_when_metadata_exists(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": {
+                    **self.env,
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED": "true",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID": "google-client-id",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET": "google-client-secret",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
+                },
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 113,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "provider_connect_start",
+                        "arguments": {"provider_id": "google_vertex_ai", "auth_method": "oauth"},
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_auth_flows", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["status"], "oauth_required")
+        self.assertIn("accounts.google.com/o/oauth2/v2/auth", payload["authorization_url"])
+        self.assertNotIn("google-client-secret", json.dumps(payload))
+
     def test_provider_pages_and_secret_route_never_expose_secret_values(self) -> None:
         setup_result = run_worker_helper(
             "simulateRequest",
@@ -521,6 +580,158 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertEqual(result["status"], 200)
         self.assertEqual(result["body"]["provider_id"], "openai_compatible")
         self.assertIn("/providers/openai_compatible/setup", result["body"]["setup_url"])
+
+    def test_google_vertex_callback_rejects_invalid_or_missing_state_without_exposing_code(self) -> None:
+        mismatch_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai&flow_id=flow-1&state=wrong&code=secret-code",
+                "method": "GET",
+                "fetchResponses": [
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_auth_flows",
+                        "status": 200,
+                        "body": [
+                            {
+                                "flow_id": "flow-1",
+                                "provider_id": "google_vertex_ai",
+                                "auth_method": "oauth",
+                                "status": "oauth_required",
+                                "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?response_type=code",
+                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai",
+                                "state": "",
+                                "state_hash": "60e0b9b14540af0cbeb5255ac71b2f842c5130f748e3ae2358145d6d8d005c76",
+                                "code_challenge": "challenge-1",
+                                "code_challenge_method": "S256",
+                                "callback_received_at": None,
+                                "failure_reason": "",
+                                "metadata": {},
+                                "created_at": "2026-07-06T01:01:01Z",
+                                "updated_at": "2026-07-06T01:01:01Z",
+                            }
+                        ],
+                    },
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_auth_flows", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        missing_state_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai&flow_id=flow-2&code=secret-code",
+                "method": "GET",
+                "fetchResponses": [
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_auth_flows",
+                        "status": 200,
+                        "body": [
+                            {
+                                "flow_id": "flow-2",
+                                "provider_id": "google_vertex_ai",
+                                "auth_method": "oauth",
+                                "status": "oauth_required",
+                                "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?response_type=code",
+                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai",
+                                "state": "",
+                                "state_hash": "60e0b9b14540af0cbeb5255ac71b2f842c5130f748e3ae2358145d6d8d005c76",
+                                "code_challenge": "challenge-1",
+                                "code_challenge_method": "S256",
+                                "callback_received_at": None,
+                                "failure_reason": "",
+                                "metadata": {},
+                                "created_at": "2026-07-06T01:01:01Z",
+                                "updated_at": "2026-07-06T01:01:01Z",
+                            }
+                        ],
+                    },
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_auth_flows", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        self.assertEqual(mismatch_result["status"], 400)
+        self.assertEqual(missing_state_result["status"], 400)
+        self.assertNotIn("secret-code", mismatch_result["body"])
+        self.assertNotIn("secret-code", missing_state_result["body"])
+
+    def test_google_vertex_callback_records_safe_provider_required_state(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": {
+                    **self.env,
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED": "true",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID": "google-client-id",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET": "google-client-secret",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
+                },
+                "requestUrl": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai&flow_id=flow-3&state=good-state&code=secret-code",
+                "method": "GET",
+                "fetchResponses": [
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_auth_flows",
+                        "status": 200,
+                        "body": [
+                            {
+                                "flow_id": "flow-3",
+                                "provider_id": "google_vertex_ai",
+                                "auth_method": "oauth",
+                                "status": "oauth_required",
+                                "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?response_type=code",
+                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai",
+                                "state": "",
+                                "state_hash": "aab27fa344587b4fe185e55703daafbcf3934e06b04f920fdb13aa440c25468f",
+                                "code_challenge": "challenge-1",
+                                "code_challenge_method": "S256",
+                                "callback_received_at": None,
+                                "failure_reason": "",
+                                "metadata": {},
+                                "created_at": "2026-07-06T01:01:01Z",
+                                "updated_at": "2026-07-06T01:01:01Z",
+                            }
+                        ],
+                    },
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_auth_flows", "status": 201, "body": [{}]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 200)
+        self.assertIn("provider_required", result["body"])
+        self.assertNotIn("secret-code", result["body"])
+        self.assertNotIn("google-client-secret", result["body"])
+
+    def test_cloud_gemini_remains_api_key_only_even_when_google_oauth_metadata_exists(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": {
+                    **self.env,
+                    "MYSTIC_PROVIDER_GEMINI_OAUTH_ENABLED": "true",
+                    "MYSTIC_PROVIDER_GEMINI_CLIENT_ID": "legacy-google-client-id",
+                    "MYSTIC_PROVIDER_GEMINI_CLIENT_SECRET": "legacy-google-client-secret",
+                },
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 108,
+                    "method": "tools/call",
+                    "params": {"name": "provider_connect_start", "arguments": {"provider_id": "gemini", "auth_method": "oauth"}},
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["status"], "api_key_required")
+        self.assertEqual(payload["auth_method"], "api_key")
+        self.assertNotIn("authorization_url", payload)
+        self.assertNotIn("legacy-google-client-secret", json.dumps(payload))
 
     def test_cloud_provider_verify_disconnect_model_list_and_call_test_follow_foundation_contract(self) -> None:
         verify_result = run_worker_helper(
@@ -609,6 +820,93 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             {"not_configured", "api_key_required"},
         )
         self.assertIn(call_test_result["body"]["result"]["structuredContent"]["status"], {"provider_required", "api_key_required"})
+
+    def test_cloud_google_vertex_verify_and_call_test_return_safe_oauth_states(self) -> None:
+        verify_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": {
+                    **self.env,
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED": "true",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID": "google-client-id",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET": "google-client-secret",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
+                },
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 114,
+                    "method": "tools/call",
+                    "params": {"name": "provider_verify", "arguments": {"provider_id": "google_vertex_ai"}},
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        call_test_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": {
+                    **self.env,
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED": "true",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID": "google-client-id",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET": "google-client-secret",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
+                },
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 115,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "provider_call_test",
+                        "arguments": {"provider_id": "google_vertex_ai", "prompt": "ping"},
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        verify_payload = verify_result["body"]["result"]["structuredContent"]
+        call_payload = call_test_result["body"]["result"]["structuredContent"]
+        self.assertEqual(verify_payload["status"], "oauth_required")
+        self.assertFalse(verify_payload["metadata"]["oauth_token_storage_supported"])
+        self.assertEqual(call_payload["status"], "oauth_required")
+        self.assertIn("/providers/google_vertex_ai/connect", call_payload["connect_url"])
+
+    def test_cloud_gemini_provider_call_test_still_returns_api_key_required_when_missing(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 116,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "provider_call_test",
+                        "arguments": {"provider_id": "gemini", "prompt": "ping"},
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["status"], "api_key_required")
+        self.assertIn("/providers/gemini/setup", payload["setup_url"])
 
     def test_cloud_phase1_lab_session_create_writes_supabase(self) -> None:
         result = run_worker_helper(

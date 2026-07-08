@@ -271,6 +271,7 @@ class MCPToolsTests(unittest.TestCase):
         call_test = toolbox.provider_call_test(provider_id="openai_compatible", prompt="ping")
 
         self.assertEqual(listing["providers"][0]["provider_id"], "openai_compatible")
+        self.assertIn("google_vertex_ai", [item["provider_id"] for item in listing["providers"]])
         self.assertIn(status["status"], {"not_configured", "api_key_required"})
         self.assertIn("/providers/openai_compatible/setup", status["setup_url"])
         self.assertIn("/providers/openai_compatible/connect", status["connect_url"])
@@ -280,6 +281,58 @@ class MCPToolsTests(unittest.TestCase):
         self.assertIn(verified["status"], {"not_configured", "api_key_required"})
         self.assertEqual(models["status"], verified["status"])
         self.assertIn(call_test["status"], {"provider_required", "api_key_required"})
+
+    def test_google_vertex_connect_start_requires_real_oauth_metadata(self):
+        toolbox = self._make_toolbox()
+        started = toolbox.provider_connect_start(provider_id="google_vertex_ai", auth_method="oauth")
+
+        self.assertEqual(started["status"], "provider_required")
+        self.assertEqual(started["auth_method"], "oauth")
+        self.assertIn("/providers/google_vertex_ai/connect", started["connect_url"])
+        self.assertIn("MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET", started["required_secret_names"])
+
+    def test_google_vertex_connect_start_verify_and_call_test_are_safe_when_metadata_exists(self):
+        with patch.dict(
+            os.environ,
+            {
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED": "true",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID": "google-client-id",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET": "google-client-secret",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
+            },
+            clear=False,
+        ):
+            toolbox = self._make_toolbox()
+            started = toolbox.provider_connect_start(provider_id="google_vertex_ai", auth_method="oauth")
+            verified = toolbox.provider_verify(provider_id="google_vertex_ai")
+            call_test = toolbox.provider_call_test(provider_id="google_vertex_ai", prompt="ping")
+
+        self.assertEqual(started["status"], "oauth_required")
+        self.assertIn("accounts.google.com/o/oauth2/v2/auth", started["authorization_url"])
+        self.assertNotIn("google-client-secret", json.dumps(started))
+        self.assertEqual(verified["status"], "oauth_required")
+        self.assertFalse(verified["metadata"]["oauth_token_storage_supported"])
+        self.assertEqual(call_test["status"], "oauth_required")
+        self.assertIn("/providers/google_vertex_ai/connect", call_test["connect_url"])
+
+    def test_gemini_remains_api_key_only_even_when_google_oauth_metadata_exists(self):
+        with patch.dict(
+            os.environ,
+            {
+                "MYSTIC_PROVIDER_GEMINI_OAUTH_ENABLED": "true",
+                "MYSTIC_PROVIDER_GEMINI_CLIENT_ID": "legacy-google-client-id",
+                "MYSTIC_PROVIDER_GEMINI_CLIENT_SECRET": "legacy-google-client-secret",
+            },
+            clear=False,
+        ):
+            toolbox = self._make_toolbox()
+            started = toolbox.provider_connect_start(provider_id="gemini", auth_method="oauth")
+
+        self.assertEqual(started["status"], "api_key_required")
+        self.assertEqual(started["auth_method"], "api_key")
+        self.assertNotIn("authorization_url", started)
+        self.assertNotIn("legacy-google-client-secret", json.dumps(started))
 
     def test_provider_connect_start_returns_setup_url_for_api_key_provider(self):
         toolbox = self._make_toolbox()
@@ -330,6 +383,13 @@ class MCPToolsTests(unittest.TestCase):
         self.assertEqual(mock_started["status"], "connected")
         self.assertEqual(mock_call["status"], "completed")
         self.assertEqual(mock_call["output"], "mock:hello")
+
+    def test_gemini_provider_call_test_still_returns_api_key_required_when_missing(self):
+        toolbox = self._make_toolbox()
+        result = toolbox.provider_call_test(provider_id="gemini", prompt="ping")
+
+        self.assertEqual(result["status"], "api_key_required")
+        self.assertIn("/providers/gemini/setup", result["setup_url"])
 
     def test_provider_call_test_maps_invalid_credentials_without_leaking_secret(self):
         class _ProviderResponse:

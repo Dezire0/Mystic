@@ -12,7 +12,7 @@ from mystic.lab.provider_connect import ProviderConnectManager, normalize_provid
 from mystic.lab.schema import utc_now_iso
 
 
-SUPPORTED_PROVIDER_IDS = {"openai_compatible", "gemini", "anthropic", "mock"}
+SUPPORTED_PROVIDER_IDS = {"openai_compatible", "gemini", "google_vertex_ai", "anthropic", "mock"}
 REDACTED_METADATA_KEYS = {
     "token",
     "bearer_token",
@@ -331,6 +331,8 @@ class ProviderRouter:
 
     @staticmethod
     def _required_message(provider_status: dict[str, Any], mapped_status: str) -> str:
+        if mapped_status == "oauth_required":
+            return "Provider OAuth connection is required. Start the secure OAuth flow and retry."
         if mapped_status == "api_key_required":
             return "Provider credentials are not configured. Complete the secure setup flow and retry."
         if mapped_status == "provider_auth_failed":
@@ -346,7 +348,9 @@ class ProviderRouter:
         status = str(provider_status.get("status", "")).strip()
         mapping = {
             "connected": "connected",
+            "oauth_required": "oauth_required",
             "api_key_required": "api_key_required",
+            "not_configured": "api_key_required",
             "auth_failed": "provider_auth_failed",
             "rate_limited": "rate_limited",
             "provider_unavailable": "provider_unavailable",

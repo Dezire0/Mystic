@@ -26,6 +26,7 @@ The current LAB status is intentionally conservative:
 - session orchestration is implemented
 - provider routing exists for explicit external model access
 - Provider Connect now returns real setup/connect destinations: real OAuth authorization URLs where configured and secure Mystic LAB setup pages where API-key auth is required
+- `gemini` remains the API-key Gemini provider, while `google_vertex_ai` is the separate Google OAuth-backed Vertex AI Gemini provider
 - real provider-backed routing is now implemented for `provider_call_test`, explicit `lab_agent_run`, provider-backed `lab_models_debate`, and optional provider-backed `lab_referee_review`
 - safe `model_calls` records are persisted in local mode and Supabase for provider-backed execution traces
 - unsupported heavy paths return structured `deferred`
@@ -322,6 +323,12 @@ MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL=gpt-4.1-mini
 MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY=YOUR_OPENAI_COMPAT_API_KEY
 MYSTIC_PROVIDER_GEMINI_MODEL=gemini-2.5-flash
 MYSTIC_PROVIDER_GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED=true
+MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID=YOUR_GOOGLE_VERTEX_CLIENT_ID
+MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET=YOUR_GOOGLE_VERTEX_CLIENT_SECRET
+MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID=YOUR_GOOGLE_VERTEX_PROJECT_ID
+MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION=YOUR_GOOGLE_VERTEX_LOCATION
+MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL=gemini-2.5-flash
 MYSTIC_PROVIDER_ANTHROPIC_MODEL=claude-3-5-sonnet-latest
 MYSTIC_PROVIDER_ANTHROPIC_API_KEY=YOUR_ANTHROPIC_API_KEY
 ```
@@ -330,6 +337,12 @@ If these provider secrets are absent, the Worker still exposes the tool and retu
 
 - `provider_required=true` for missing external model providers
 - `status=deferred` for heavy cloud paths that are intentionally exposed but not yet executed in-worker
+
+Current Provider Connect boundary:
+
+- `gemini` does not use OAuth in Mystic LAB and stays API-key based
+- `google_vertex_ai` can generate a real Google OAuth authorization URL when metadata is configured
+- encrypted token storage is not implemented yet, so `google_vertex_ai` callback receipt is recorded safely but token-backed model calls fail closed with `oauth_storage_required`
 
 ### Deploy and verify
 

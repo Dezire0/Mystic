@@ -4,7 +4,7 @@ const DEFAULT_TOKEN_TTL_SECONDS = 3600;
 const MANUAL_IMPORT_VERIFICATION_PATH = "/mystic_data/e2e/remote_mcp_lab_smoke/chatgpt_import_verified.json";
 const MANUAL_IMPORT_VERIFICATION_ENV = "MYSTIC_CHATGPT_IMPORT_VERIFICATION_JSON";
 const DEFAULT_SUPABASE_SCHEMA = "public";
-const PUBLIC_PROVIDER_IDS = ["openai_compatible", "gemini", "anthropic", "future_custom"];
+const PUBLIC_PROVIDER_IDS = ["openai_compatible", "gemini", "google_vertex_ai", "anthropic", "future_custom"];
 const CLOUD_REQUIRED_TOOL_NAMES = [
   "mystic_status",
   "health_check",
@@ -2703,6 +2703,9 @@ function normalizeProviderId(value) {
   if (normalized === "google") {
     return "gemini";
   }
+  if (["google-vertex-ai", "google_vertex", "vertex", "vertex_ai"].includes(normalized)) {
+    return "google_vertex_ai";
+  }
   if (normalized === "claude") {
     return "anthropic";
   }
@@ -2762,9 +2765,9 @@ function providerCatalogEntry(env, providerId) {
       provider_id: normalized,
       provider_type: "gemini",
       default_auth_method: "api_key",
-      supported_auth_methods: ["api_key", "oauth", "bearer_token"],
+      supported_auth_methods: ["api_key"],
       supports_api_key: true,
-      supports_oauth: true,
+      supports_oauth: false,
       secret_names: ["MYSTIC_PROVIDER_GEMINI_API_KEY", "MYSTIC_PROVIDER_GEMINI_MODEL"],
       required_secret_names: ["MYSTIC_PROVIDER_GEMINI_API_KEY"],
       optional_secret_names: ["MYSTIC_PROVIDER_GEMINI_MODEL"],
@@ -2774,10 +2777,55 @@ function providerCatalogEntry(env, providerId) {
         "Set Cloudflare secret MYSTIC_PROVIDER_GEMINI_API_KEY and optionally set MYSTIC_PROVIDER_GEMINI_MODEL.",
       scopes: ["model:generate"],
       default_models: ["gemini-1.5-flash"],
-      oauth_env_prefix: "MYSTIC_PROVIDER_GEMINI",
-      oauth_default_scopes: ["openid", "email", "profile"],
+    };
+  }
+  if (normalized === "google_vertex_ai") {
+    return {
+      provider_id: normalized,
+      provider_type: "google_vertex_ai",
+      default_auth_method: "oauth",
+      supported_auth_methods: ["oauth"],
+      supports_api_key: false,
+      supports_oauth: true,
+      secret_names: [
+        "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID",
+        "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET",
+        "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID",
+        "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION",
+        "MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL",
+      ],
+      required_secret_names: [
+        "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID",
+        "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET",
+        "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID",
+        "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION",
+      ],
+      optional_secret_names: ["MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL"],
+      model_env_names: ["MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL"],
+      external_setup_url: trimmed(
+        env.MYSTIC_PROVIDER_GOOGLE_VERTEX_SETUP_URL,
+        "https://console.cloud.google.com/apis/credentials",
+      ),
+      setup_instructions:
+        "Set Cloudflare secrets MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID, MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET, MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID, MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION, and optionally MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL for Google OAuth-backed Vertex AI Gemini access.",
+      scopes: ["model:generate"],
+      default_models: ["gemini-2.5-flash"],
+      oauth_env_prefix: "MYSTIC_PROVIDER_GOOGLE_VERTEX",
+      oauth_default_scopes: [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/cloud-platform",
+      ],
       oauth_default_authorization_endpoint: "https://accounts.google.com/o/oauth2/v2/auth",
       oauth_default_token_endpoint: "https://oauth2.googleapis.com/token",
+      oauth_missing_status: "provider_required",
+      oauth_require_client_secret: true,
+      oauth_required_config_env_names: [
+        "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID",
+        "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION",
+      ],
+      oauth_token_storage_supported: false,
     };
   }
   if (normalized === "anthropic") {
@@ -2879,6 +2927,11 @@ function providerOauthMetadata(env, spec) {
       client_id: "",
       redirect_uri: "",
       scopes: [],
+      client_id_configured: false,
+      client_secret_configured: false,
+      required_config_names: [],
+      missing_config_names: [],
+      token_storage_supported: false,
     };
   }
   const enabled = ["1", "true", "yes", "on"].includes(trimmed(env[`${prefix}_OAUTH_ENABLED`]).toLowerCase());
@@ -2888,6 +2941,7 @@ function providerOauthMetadata(env, spec) {
   );
   const tokenEndpoint = trimmed(env[`${prefix}_TOKEN_ENDPOINT`], spec.oauth_default_token_endpoint || "");
   const clientId = trimmed(env[`${prefix}_CLIENT_ID`]);
+  const clientSecret = trimmed(env[`${prefix}_CLIENT_SECRET`]);
   const redirectUri = trimmed(
     env[`${prefix}_REDIRECT_URI`],
     `${providerRouteBaseUrl(env)}/providers/oauth/callback?provider_id=${spec.provider_id}`,
@@ -2898,15 +2952,35 @@ function providerOauthMetadata(env, spec) {
         .map((item) => item.trim())
         .filter(Boolean)
     : [...(spec.oauth_default_scopes || [])];
+  const requiredConfigNames = Array.isArray(spec.oauth_required_config_env_names)
+    ? [...spec.oauth_required_config_env_names]
+    : [];
+  const missingConfigNames = requiredConfigNames.filter((name) => !trimmed(env[name]));
+  const clientSecretConfigured = Boolean(clientSecret) || !Boolean(spec.oauth_require_client_secret);
+  const available = Boolean(spec.supports_oauth);
   return {
-    available: Boolean(spec.supports_oauth),
-    configured: Boolean(enabled && authorizationEndpoint && clientId && redirectUri),
+    available,
+    configured: Boolean(
+      available &&
+        enabled &&
+        authorizationEndpoint &&
+        tokenEndpoint &&
+        clientId &&
+        redirectUri &&
+        clientSecretConfigured &&
+        missingConfigNames.length === 0,
+    ),
     enabled,
     authorization_endpoint: authorizationEndpoint,
     token_endpoint: tokenEndpoint,
     client_id: clientId,
     redirect_uri: redirectUri,
     scopes,
+    client_id_configured: Boolean(clientId),
+    client_secret_configured: clientSecretConfigured,
+    required_config_names: requiredConfigNames,
+    missing_config_names: missingConfigNames,
+    token_storage_supported: Boolean(spec.oauth_token_storage_supported),
   };
 }
 
@@ -2925,6 +2999,12 @@ function providerDefaultFailureReason(spec, status, oauthMetadata, secretState) 
   if (status === "connected") {
     return "";
   }
+  if (status === "provider_required") {
+    if (spec.provider_id === "google_vertex_ai" && oauthMetadata.configured) {
+      return "oauth_storage_required";
+    }
+    return "oauth_metadata_missing";
+  }
   if (status === "oauth_required" && !oauthMetadata.configured) {
     return "oauth_metadata_missing";
   }
@@ -2939,7 +3019,7 @@ function providerDefaultFailureReason(spec, status, oauthMetadata, secretState) 
 
 function resolveProviderStatus(spec, row, secretState, oauthMetadata) {
   const storedStatus = trimmed(row.status);
-  if (["disconnected", "auth_failed", "rate_limited", "provider_unavailable"].includes(storedStatus)) {
+  if (["provider_required", "disconnected", "auth_failed", "rate_limited", "provider_unavailable"].includes(storedStatus)) {
     return storedStatus;
   }
   const authMethod = trimmed(row.auth_method, spec.default_auth_method);
@@ -2947,25 +3027,34 @@ function resolveProviderStatus(spec, row, secretState, oauthMetadata) {
     return "connected";
   }
   if (authMethod === "oauth") {
+    if (storedStatus === "connected") {
+      return "connected";
+    }
+    if (spec.oauth_missing_status === "provider_required" && (secretState.missing_required_secret_names.length || oauthMetadata.missing_config_names.length)) {
+      return "provider_required";
+    }
     if (oauthMetadata.configured) {
       return "oauth_required";
     }
     if (spec.supports_api_key) {
       return "api_key_required";
     }
-    return "not_configured";
+    return spec.oauth_missing_status || "not_configured";
   }
   if (spec.required_secret_names.length && secretState.missing_required_secret_names.length === 0) {
     return "connected";
   }
   if (authMethod === "bearer_token") {
+    if (storedStatus === "connected") {
+      return "connected";
+    }
     if (oauthMetadata.configured) {
       return "oauth_required";
     }
     if (spec.supports_api_key) {
       return "api_key_required";
     }
-    return "not_configured";
+    return spec.oauth_missing_status || "not_configured";
   }
   if (!storedStatus && secretState.configured_secret_names.length === 0) {
     return "not_configured";
@@ -2982,6 +3071,12 @@ function buildProviderRecord(env, providerId, row = {}) {
   const authMethod = trimmed(row.auth_method, spec.default_auth_method);
   const status = resolveProviderStatus(spec, row, secretState, oauthMetadata);
   const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : {};
+  metadata.oauth_client_id_configured = metadata.oauth_client_id_configured ?? oauthMetadata.client_id_configured;
+  metadata.oauth_client_secret_configured =
+    metadata.oauth_client_secret_configured ?? oauthMetadata.client_secret_configured;
+  metadata.oauth_missing_config_names = metadata.oauth_missing_config_names ?? oauthMetadata.missing_config_names;
+  metadata.oauth_token_storage_supported =
+    metadata.oauth_token_storage_supported ?? oauthMetadata.token_storage_supported;
   return {
     connection_id: trimmed(row.connection_id, `provider-${spec.provider_id}`),
     provider_id: spec.provider_id,
@@ -3013,6 +3108,39 @@ function buildProviderRecord(env, providerId, row = {}) {
     oauth_authorization_endpoint: oauthMetadata.authorization_endpoint,
     ready: status === "connected",
   };
+}
+
+function providerStatusMessage(record) {
+  const status = trimmed(record.provider_status || record.status);
+  const failureReason = trimmed(record.failure_reason);
+  if (status === "connected") {
+    return "Provider is connected.";
+  }
+  if (status === "oauth_required") {
+    return "Provider OAuth connection is required. Start the secure OAuth flow and retry.";
+  }
+  if (status === "api_key_required") {
+    return "Provider credentials are not configured. Complete the secure setup flow and retry.";
+  }
+  if (status === "provider_required" && failureReason === "oauth_storage_required") {
+    return "OAuth callback metadata can be recorded, but encrypted server-side token storage is required before Google Vertex AI model calls can be enabled.";
+  }
+  if (status === "provider_required") {
+    return "Provider configuration is incomplete. Add the required OAuth metadata and retry.";
+  }
+  if (status === "auth_failed") {
+    return "Provider authentication failed. Reconnect the provider and retry.";
+  }
+  if (status === "rate_limited") {
+    return "Provider rate limited the last request. Retry later.";
+  }
+  if (status === "provider_unavailable") {
+    return "Provider is temporarily unavailable. Retry later.";
+  }
+  if (status === "disconnected") {
+    return "Provider is disconnected until an explicit reconnect.";
+  }
+  return "Provider configuration was checked without exposing secrets.";
 }
 
 function defaultProviderRegistry(env) {
@@ -3153,7 +3281,7 @@ function buildProviderAuthorizationUrl(env, spec, oauthMetadata, { flowId, state
     params.set("code_challenge", codeChallenge);
     params.set("code_challenge_method", "S256");
   }
-  if (spec.provider_id === "gemini") {
+  if (spec.provider_id === "google_vertex_ai") {
     params.set("access_type", "offline");
     params.set("prompt", "consent");
   }
@@ -3227,6 +3355,12 @@ function providerCallStatusFromRecord(providerRecord) {
   if (providerRecord.ready) {
     return "connected";
   }
+  if (providerRecord.status === "oauth_required") {
+    return "oauth_required";
+  }
+  if (providerRecord.status === "not_configured") {
+    return "api_key_required";
+  }
   if (providerRecord.status === "api_key_required") {
     return "api_key_required";
   }
@@ -3243,6 +3377,9 @@ function providerCallStatusFromRecord(providerRecord) {
 }
 
 function providerCallErrorMessage(providerRecord, status) {
+  if (status === "oauth_required") {
+    return "Provider OAuth connection is required. Start the secure OAuth flow and retry.";
+  }
   if (status === "api_key_required") {
     return "Provider credentials are not configured. Complete the secure setup flow and retry.";
   }
@@ -4809,6 +4946,7 @@ async function callCloudTool(name, args, env, state) {
           scopes: oauthMetadata.scopes,
           pkce_enabled: true,
           code_verifier_present: Boolean(verifier),
+          token_storage_supported: oauthMetadata.token_storage_supported,
         },
         created_at: nowIso(),
         updated_at: nowIso(),
@@ -4821,6 +4959,9 @@ async function callCloudTool(name, args, env, state) {
           oauth_enabled: true,
           oauth_redirect_uri: oauthMetadata.redirect_uri,
           oauth_client_id_configured: true,
+          oauth_client_secret_configured: oauthMetadata.client_secret_configured,
+          oauth_missing_config_names: oauthMetadata.missing_config_names,
+          oauth_token_storage_supported: oauthMetadata.token_storage_supported,
         },
       });
       return {
@@ -4849,9 +4990,15 @@ async function callCloudTool(name, args, env, state) {
       const record = buildProviderRecord(env, providerId);
       return {
         ...record,
-        status: "provider_required",
-        failure_reason: "oauth_metadata_missing",
-        message: "OAuth metadata is incomplete for this provider.",
+        status: spec.oauth_missing_status || "provider_required",
+        provider_status: spec.oauth_missing_status || "provider_required",
+        failure_reason: providerDefaultFailureReason(spec, spec.oauth_missing_status || "provider_required", oauthMetadata, providerSecretState(env, spec)),
+        message: providerStatusMessage({
+          ...record,
+          status: spec.oauth_missing_status || "provider_required",
+          provider_status: spec.oauth_missing_status || "provider_required",
+          failure_reason: providerDefaultFailureReason(spec, spec.oauth_missing_status || "provider_required", oauthMetadata, providerSecretState(env, spec)),
+        }),
       };
     }
     const record = buildProviderRecord(env, providerId, {
@@ -4918,7 +5065,7 @@ async function callCloudTool(name, args, env, state) {
       ...buildProviderRecord(env, providerId, saved),
       connection_id: saved.connection_id,
       verified_at: saved.last_verified_at,
-      message: "Provider configuration was checked without exposing secrets.",
+      message: providerStatusMessage(buildProviderRecord(env, providerId, saved)),
     };
   }
   if (name === "provider_disconnect") {
@@ -4988,6 +5135,7 @@ async function callCloudTool(name, args, env, state) {
       call_id: result.call_id,
       storage_ref: result.storage_ref,
       setup_url: record.setup_url,
+      connect_url: record.connect_url,
       setup_instructions: record.setup_instructions,
       test_only: providerId === "mock",
     };
@@ -5967,10 +6115,13 @@ function renderProviderConnectPage(provider, spec, oauthMetadata, flow) {
     ? `<div class="card">
          <h2>Latest flow</h2>
          <p><strong>Flow ID:</strong> <code>${escapeHtml(flow.flow_id)}</code></p>
-         <p><strong>Status:</strong> <code>${escapeHtml(flow.status)}</code></p>
-         <p><strong>Callback received:</strong> ${flow.callback_received_at ? "true" : "false"}</p>
-       </div>`
+       <p><strong>Status:</strong> <code>${escapeHtml(flow.status)}</code></p>
+       <p><strong>Callback received:</strong> ${flow.callback_received_at ? "true" : "false"}</p>
+      </div>`
     : "";
+  const oauthMissingMessage = spec.supports_api_key
+    ? "Mystic LAB will not pretend OAuth exists for this provider. Use the secure setup page to configure the required provider credentials."
+    : "Mystic LAB will not pretend OAuth exists for this provider. Use the secure setup page to configure the required provider metadata.";
   const oauthBlock = oauthMetadata.configured
     ? `<div class="card">
          <h2>OAuth ready</h2>
@@ -5980,7 +6131,7 @@ function renderProviderConnectPage(provider, spec, oauthMetadata, flow) {
        </div>`
     : `<div class="card">
          <h2>OAuth not configured</h2>
-         <p class="warn">Mystic LAB will not pretend OAuth exists for this provider. Use the secure setup page if API-key auth is required.</p>
+         <p class="warn">${escapeHtml(oauthMissingMessage)}</p>
          <p><a href="${escapeHtml(provider.setup_url)}">Open secure setup page</a></p>
        </div>`;
   return providerPage(
@@ -6029,6 +6180,16 @@ async function handleProviderOauthCallback(request, env) {
   if (resolvedProviderId !== normalizeProviderId(flow.provider_id)) {
     return htmlResponse(providerPage("Provider callback error", "<h1>Provider callback error</h1><p class=\"warn\">Provider mismatch.</p>"), 400);
   }
+  if (!callbackState && trimmed(flow.state_hash)) {
+    const failedFlow = {
+      ...flow,
+      status: "failed",
+      failure_reason: "oauth_state_missing",
+      updated_at: nowIso(),
+    };
+    await upsertProviderAuthFlow(env, failedFlow);
+    return htmlResponse(providerPage("Provider callback error", "<h1>Provider callback error</h1><p class=\"warn\">OAuth state is required.</p>"), 400);
+  }
   if (callbackState && trimmed(flow.state_hash)) {
     const callbackStateHash = await sha256Hex(callbackState);
     if (callbackStateHash !== trimmed(flow.state_hash)) {
@@ -6058,21 +6219,32 @@ async function handleProviderOauthCallback(request, env) {
   await upsertProviderAuthFlow(env, updatedFlow);
   const existing = (await supabaseSelectOne(env, "provider_connections", { provider_id: `eq.${resolvedProviderId}` })) || {};
   const record = buildProviderRecord(env, resolvedProviderId, existing);
+  const callbackConnectionStatus =
+    callbackError ? "auth_failed" : resolvedProviderId === "google_vertex_ai" ? "provider_required" : "oauth_required";
+  const callbackFailureReason =
+    callbackError
+      ? callbackError
+      : resolvedProviderId === "google_vertex_ai"
+        ? "oauth_storage_required"
+        : "oauth_callback_recorded_pending_token_exchange";
   const updatedConnection = await upsertProviderConnection(env, record, {
     auth_method: "oauth",
-    status: callbackError ? "auth_failed" : "oauth_required",
-    failure_reason: callbackError || "oauth_callback_recorded_pending_token_exchange",
+    status: callbackConnectionStatus,
+    failure_reason: callbackFailureReason,
     metadata: {
       ...(record.metadata && typeof record.metadata === "object" ? record.metadata : {}),
       oauth_callback_received_at: nowIso(),
       oauth_authorization_code_received: Boolean(callbackCode),
+      oauth_token_storage_supported: resolvedProviderId === "google_vertex_ai" ? false : record.metadata?.oauth_token_storage_supported,
     },
     last_verified_at: nowIso(),
   });
   const provider = buildProviderRecord(env, resolvedProviderId, updatedConnection);
   const message = callbackError
     ? `Provider returned OAuth error: ${callbackError}`
-    : "Mystic LAB recorded the OAuth callback. Token exchange is intentionally deferred until a later isolated provider-routing issue.";
+    : resolvedProviderId === "google_vertex_ai"
+      ? "Mystic LAB recorded the Google OAuth callback, but encrypted server-side token storage is required before Vertex AI model calls can be enabled."
+      : "Mystic LAB recorded the OAuth callback. Token exchange is intentionally deferred until a later isolated provider-routing issue.";
   return htmlResponse(renderProviderCallbackPage(provider, publicProviderFlow(updatedFlow), message), callbackError ? 400 : 200);
 }
 
