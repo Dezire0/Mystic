@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Any
 from urllib.parse import urlencode
 import base64
+import hashlib
+import hmac
+import json
 import os
 import secrets
 import uuid
 
+import requests
+
 from mystic.lab.schema import (
     LAB_PROVIDER_AUTH_FLOW_STATUSES,
     LAB_PROVIDER_AUTH_METHODS,
+    LAB_PROVIDER_OAUTH_TOKEN_STATUSES,
     LAB_PROVIDER_STATUSES,
     LAB_PROVIDER_TYPES,
     utc_now_iso,
@@ -238,12 +245,33 @@ def _trimmed(value: Any, default: str = "") -> str:
     return text or default
 
 
+def _safe_metadata(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_safe_metadata(item) for item in value[:12]]
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if "token" in lowered or "secret" in lowered or lowered in {"code_verifier", "state"}:
+                continue
+            sanitized[str(key)] = _safe_metadata(item)
+        return sanitized
+    if isinstance(value, str):
+        return value[:500]
+    return value
+
+
 def _truthy_env(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _base64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("utf-8").rstrip("=")
+
+
+def _base64url_decode(value: str) -> bytes:
+    padded = value + "=" * ((4 - (len(value) % 4)) % 4)
+    return base64.urlsafe_b64decode(padded.encode("utf-8"))
 
 
 def _route_base_url(runtime_mode: str) -> str:
@@ -263,6 +291,67 @@ def _pkce_pair() -> tuple[str, str]:
     verifier = _base64url(secrets.token_bytes(32))
     challenge = _base64url(sha256(verifier.encode("utf-8")).digest())
     return verifier, challenge
+
+
+def _token_encryption_key_bytes() -> bytes:
+    raw = str(os.environ.get("MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY", "")).strip()
+    if not raw:
+        raise ValueError("MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY is required")
+    try:
+        decoded = _base64url_decode(raw)
+        if len(decoded) >= 32:
+            return decoded[:32]
+    except Exception:
+        pass
+    return sha256(raw.encode("utf-8")).digest()
+
+
+def _token_encryption_ready() -> bool:
+    return bool(str(os.environ.get("MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY", "")).strip())
+
+
+def encrypt_provider_token_value(value: str) -> str:
+    key = _token_encryption_key_bytes()
+    nonce = secrets.token_bytes(16)
+    plaintext = str(value or "").encode("utf-8")
+    ciphertext = bytearray()
+    counter = 0
+    while len(ciphertext) < len(plaintext):
+        block = hashlib.sha256(key + nonce + counter.to_bytes(4, "big")).digest()
+        ciphertext.extend(block)
+        counter += 1
+    encrypted = bytes(byte ^ ciphertext[index] for index, byte in enumerate(plaintext))
+    payload = b"mlabtok_v1" + nonce + encrypted
+    tag = hmac.new(key, payload, hashlib.sha256).digest()
+    return "mlabtok_v1:" + ":".join(
+        [
+            _base64url(nonce),
+            _base64url(encrypted),
+            _base64url(tag),
+        ]
+    )
+
+
+def decrypt_provider_token_value(value: str) -> str:
+    key = _token_encryption_key_bytes()
+    parts = str(value or "").split(":")
+    if len(parts) != 4 or parts[0] != "mlabtok_v1":
+        raise ValueError("Unsupported encrypted token envelope")
+    nonce = _base64url_decode(parts[1])
+    encrypted = _base64url_decode(parts[2])
+    expected_tag = _base64url_decode(parts[3])
+    payload = b"mlabtok_v1" + nonce + encrypted
+    actual_tag = hmac.new(key, payload, hashlib.sha256).digest()
+    if not hmac.compare_digest(actual_tag, expected_tag):
+        raise ValueError("Encrypted token integrity check failed")
+    keystream = bytearray()
+    counter = 0
+    while len(keystream) < len(encrypted):
+        block = hashlib.sha256(key + nonce + counter.to_bytes(4, "big")).digest()
+        keystream.extend(block)
+        counter += 1
+    plaintext = bytes(byte ^ keystream[index] for index, byte in enumerate(encrypted))
+    return plaintext.decode("utf-8")
 
 
 @dataclass(slots=True)
@@ -353,7 +442,53 @@ class ProviderAuthFlow:
     def to_public_dict(self) -> dict[str, Any]:
         payload = self.to_dict()
         payload.pop("state", None)
+        payload["metadata"] = _safe_metadata(payload.get("metadata", {}))
+        payload.pop("code_challenge", None)
         return payload
+
+
+@dataclass(slots=True)
+class ProviderOAuthToken:
+    token_id: str
+    provider_id: str
+    connection_id: str
+    encrypted_access_token: str
+    encrypted_refresh_token: str = ""
+    encrypted_id_token: str = ""
+    token_type: str = ""
+    scope_hash: str = ""
+    expires_at: str = ""
+    status: str = "connected"
+    metadata_safe: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utc_now_iso)
+    updated_at: str = field(default_factory=utc_now_iso)
+
+    def __post_init__(self) -> None:
+        self.provider_id = normalize_provider_id(self.provider_id)
+        validate_choice("status", self.status, LAB_PROVIDER_OAUTH_TOKEN_STATUSES)
+        self.token_id = str(self.token_id).strip()
+        self.connection_id = str(self.connection_id).strip()
+        self.encrypted_access_token = str(self.encrypted_access_token).strip()
+        self.encrypted_refresh_token = str(self.encrypted_refresh_token or "").strip()
+        self.encrypted_id_token = str(self.encrypted_id_token or "").strip()
+        self.token_type = str(self.token_type or "").strip()
+        self.scope_hash = str(self.scope_hash or "").strip()
+        self.expires_at = str(self.expires_at or "").strip()
+        self.metadata_safe = _coerce_mapping(self.metadata_safe)
+        if not self.token_id:
+            raise ValueError("token_id is required")
+        if not self.provider_id:
+            raise ValueError("provider_id is required")
+        if not self.connection_id:
+            raise ValueError("connection_id is required")
+        if not self.encrypted_access_token:
+            raise ValueError("encrypted_access_token is required")
+
+    def touch(self) -> None:
+        self.updated_at = utc_now_iso()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 class ProviderConnectManager:
@@ -416,6 +551,7 @@ class ProviderConnectManager:
                         "client_id": oauth_metadata["client_id"],
                         "scopes": oauth_metadata["scopes"],
                         "pkce_enabled": True,
+                        "code_verifier": verifier,
                         "code_verifier_present": bool(verifier),
                         "token_storage_supported": oauth_metadata["token_storage_supported"],
                     },
@@ -618,6 +754,11 @@ class ProviderConnectManager:
         metadata.setdefault("oauth_client_secret_configured", oauth_metadata["client_secret_configured"])
         metadata.setdefault("oauth_missing_config_names", oauth_metadata["missing_config_names"])
         metadata.setdefault("oauth_token_storage_supported", oauth_metadata["token_storage_supported"])
+        token_record = self._load_token_safe(spec["provider_id"])
+        metadata.setdefault("oauth_token_recorded", token_record is not None)
+        metadata.setdefault("oauth_token_status", token_record.status if token_record is not None else "")
+        if token_record is not None:
+            metadata.setdefault("oauth_token_metadata_safe", token_record.metadata_safe)
         return {
             "provider_id": spec["provider_id"],
             "provider_type": spec["provider_type"],
@@ -664,6 +805,8 @@ class ProviderConnectManager:
         if connection is not None and connection.status in {
             "provider_required",
             "disconnected",
+            "token_storage_required",
+            "oauth_callback_received",
             "auth_failed",
             "rate_limited",
             "provider_unavailable",
@@ -672,8 +815,15 @@ class ProviderConnectManager:
         if spec.get("test_only"):
             return "connected"
         auth_method = connection.auth_method if connection is not None else spec["default_auth_method"]
+        token_record = self._load_token_safe(spec["provider_id"])
         if auth_method == "oauth":
-            if connection is not None and connection.status == "connected":
+            if token_record is not None and token_record.status == "connected":
+                return "connected"
+            if connection is not None and connection.status == "oauth_callback_received":
+                return "oauth_callback_received"
+            if connection is not None and connection.status == "token_storage_required":
+                return "token_storage_required"
+            if connection is not None and connection.status == "connected" and spec["provider_id"] != "google_vertex_ai":
                 return "connected"
             if spec.get("oauth_missing_status") == "provider_required" and (
                 secret_state["missing_required_secret_names"] or oauth_metadata["missing_config_names"]
@@ -772,6 +922,7 @@ class ProviderConnectManager:
             name for name in required_config_names if not _trimmed(os.environ.get(name))
         ]
         client_secret_configured = bool(client_secret) or not spec.get("oauth_require_client_secret", False)
+        token_storage_supported = bool(spec.get("supports_oauth")) and _token_encryption_ready()
         configured = bool(
             available
             and enabled
@@ -795,7 +946,7 @@ class ProviderConnectManager:
             "client_secret_configured": client_secret_configured,
             "required_config_names": required_config_names,
             "missing_config_names": missing_config_names,
-            "token_storage_supported": bool(spec.get("oauth_token_storage_supported", False)),
+            "token_storage_supported": token_storage_supported,
         }
 
     def _build_authorization_url(
@@ -843,9 +994,11 @@ class ProviderConnectManager:
     ) -> str:
         if provider_status == "connected":
             return ""
+        if provider_status == "oauth_callback_received":
+            return "oauth_callback_received"
+        if provider_status == "token_storage_required":
+            return "token_storage_required"
         if provider_status == "provider_required":
-            if spec.get("provider_id") == "google_vertex_ai" and oauth_metadata["configured"]:
-                return "oauth_storage_required"
             return "oauth_metadata_missing"
         if provider_status == "oauth_required" and not oauth_metadata["configured"]:
             return "oauth_metadata_missing"
@@ -862,13 +1015,14 @@ class ProviderConnectManager:
             return "Provider is connected."
         if status == "oauth_required":
             return "Provider OAuth connection is required. Start the secure OAuth flow and retry."
+        if status == "oauth_callback_received":
+            return "OAuth callback was received. Mystic LAB is finalizing secure token storage."
+        if status == "token_storage_required":
+            return (
+                "Encrypted server-side token storage is required before OAuth-backed provider access can be completed."
+            )
         if status == "api_key_required":
             return "Provider credentials are not configured. Complete the secure setup flow and retry."
-        if status == "provider_required" and failure_reason == "oauth_storage_required":
-            return (
-                "OAuth callback metadata can be recorded, but encrypted server-side token storage is required "
-                "before Google Vertex AI model calls can be enabled."
-            )
         if status == "provider_required":
             return "Provider configuration is incomplete. Add the required OAuth metadata and retry."
         if status == "auth_failed":
@@ -883,6 +1037,225 @@ class ProviderConnectManager:
 
     def _state_hash(self, value: str) -> str:
         return sha256(value.encode("utf-8")).hexdigest()
+
+    def exchange_google_vertex_callback(
+        self,
+        *,
+        flow_id: str,
+        callback_state: str,
+        callback_code: str,
+        callback_error: str = "",
+    ) -> tuple[ProviderConnection, ProviderAuthFlow]:
+        flow = self._load_flow_safe(flow_id)
+        if flow is None:
+            raise ValueError(f"Unknown provider auth flow: {flow_id}")
+        spec = provider_catalog(flow.provider_id)
+        oauth_metadata = self._oauth_metadata(spec)
+        existing = self._load_connection_safe(flow.provider_id)
+        record = existing or self._save_connection(
+            provider_id=flow.provider_id,
+            auth_method="oauth",
+            status="oauth_required",
+        )
+        if callback_error:
+            flow.status = "failed"
+            flow.failure_reason = callback_error
+            flow.callback_received_at = utc_now_iso()
+            flow.metadata = {
+                **flow.metadata,
+                "oauth_error": callback_error,
+                "authorization_code_received": False,
+            }
+            flow.touch()
+            self.storage.save_provider_auth_flow(flow)
+            connection = self._save_connection(
+                provider_id=flow.provider_id,
+                auth_method="oauth",
+                status="auth_failed",
+                failure_reason=callback_error,
+                last_verified_at=utc_now_iso(),
+            )
+            return connection, flow
+        if not callback_state:
+            raise ValueError("OAuth state is required")
+        if self._state_hash(callback_state) != flow.state_hash:
+            raise ValueError("OAuth state validation failed")
+        flow.callback_received_at = utc_now_iso()
+        flow.metadata = {
+            **flow.metadata,
+            "authorization_code_received": bool(callback_code),
+        }
+        if not callback_code:
+            flow.status = "failed"
+            flow.failure_reason = "oauth_code_missing"
+            flow.touch()
+            self.storage.save_provider_auth_flow(flow)
+            connection = self._save_connection(
+                provider_id=flow.provider_id,
+                auth_method="oauth",
+                status="auth_failed",
+                failure_reason="oauth_code_missing",
+                last_verified_at=utc_now_iso(),
+            )
+            return connection, flow
+        if not oauth_metadata["token_storage_supported"]:
+            flow.status = "callback_received"
+            flow.failure_reason = "token_storage_required"
+            flow.touch()
+            self.storage.save_provider_auth_flow(flow)
+            connection = self._save_connection(
+                provider_id=flow.provider_id,
+                auth_method="oauth",
+                status="token_storage_required",
+                failure_reason="token_storage_required",
+                metadata={
+                    "oauth_callback_received_at": flow.callback_received_at,
+                    "oauth_authorization_code_received": True,
+                    "oauth_token_storage_supported": False,
+                },
+                last_verified_at=utc_now_iso(),
+            )
+            return connection, flow
+
+        try:
+            token_payload = self._exchange_oauth_code(spec=spec, oauth_metadata=oauth_metadata, flow=flow, code=callback_code)
+        except RuntimeError as exc:
+            flow.status = "failed"
+            flow.failure_reason = "oauth_token_exchange_failed"
+            flow.touch()
+            self.storage.save_provider_auth_flow(flow)
+            connection = self._save_connection(
+                provider_id=flow.provider_id,
+                auth_method="oauth",
+                status="auth_failed",
+                failure_reason="oauth_token_exchange_failed",
+                metadata={
+                    "oauth_callback_received_at": flow.callback_received_at,
+                    "oauth_authorization_code_received": True,
+                    "oauth_token_storage_supported": True,
+                },
+                last_verified_at=utc_now_iso(),
+            )
+            raise RuntimeError(str(exc)) from exc
+        connection = self._save_connection(
+            provider_id=flow.provider_id,
+            auth_method="oauth",
+            status="oauth_callback_received",
+            failure_reason="",
+            metadata={
+                "oauth_callback_received_at": flow.callback_received_at,
+                "oauth_authorization_code_received": True,
+                "oauth_token_storage_supported": True,
+            },
+            last_verified_at=utc_now_iso(),
+        )
+        self._store_oauth_token_record(
+            provider_id=flow.provider_id,
+            connection_id=connection.connection_id,
+            token_payload=token_payload,
+        )
+        connection = self._save_connection(
+            provider_id=flow.provider_id,
+            auth_method="oauth",
+            status="connected",
+            failure_reason="",
+            metadata={
+                "oauth_callback_received_at": flow.callback_received_at,
+                "oauth_authorization_code_received": True,
+                "oauth_token_storage_supported": True,
+                "oauth_token_recorded": True,
+            },
+            last_verified_at=utc_now_iso(),
+        )
+        flow.status = "completed"
+        flow.failure_reason = ""
+        flow.touch()
+        self.storage.save_provider_auth_flow(flow)
+        return connection, flow
+
+    def _exchange_oauth_code(
+        self,
+        *,
+        spec: dict[str, Any],
+        oauth_metadata: dict[str, Any],
+        flow: ProviderAuthFlow,
+        code: str,
+    ) -> dict[str, Any]:
+        payload = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": oauth_metadata["redirect_uri"],
+            "client_id": oauth_metadata["client_id"],
+        }
+        verifier = _trimmed(flow.metadata.get("code_verifier")) if isinstance(flow.metadata, dict) else ""
+        if verifier:
+            payload["code_verifier"] = verifier
+        client_secret = _trimmed(os.environ.get(f"{spec['oauth_env_prefix']}_CLIENT_SECRET"))
+        if client_secret:
+            payload["client_secret"] = client_secret
+        try:
+            response = requests.post(
+                oauth_metadata["token_endpoint"],
+                data=payload,
+                headers={"Accept": "application/json"},
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError("OAuth token exchange could not be completed.") from exc
+        if response.status_code in {401, 403}:
+            raise RuntimeError("OAuth token exchange was rejected by the provider.")
+        if response.status_code >= 400:
+            raise RuntimeError(f"OAuth token exchange failed with HTTP {response.status_code}.")
+        try:
+            token_payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError("OAuth token endpoint returned a non-JSON response.") from exc
+        if not isinstance(token_payload, dict) or not _trimmed(token_payload.get("access_token")):
+            raise RuntimeError("OAuth token exchange did not return an access token.")
+        return token_payload
+
+    def _store_oauth_token_record(
+        self,
+        *,
+        provider_id: str,
+        connection_id: str,
+        token_payload: dict[str, Any],
+    ) -> ProviderOAuthToken:
+        access_token = _trimmed(token_payload.get("access_token"))
+        if not access_token:
+            raise ValueError("OAuth access token is required")
+        scope_text = " ".join(_coerce_string_list(str(token_payload.get("scope", "")).split()))
+        expires_in = token_payload.get("expires_in")
+        expires_at = ""
+        if isinstance(expires_in, (int, float)) and int(expires_in) > 0:
+            expires_at = (datetime.now(UTC) + timedelta(seconds=int(expires_in))).isoformat()
+        existing = self._load_token_safe(provider_id)
+        token_record = ProviderOAuthToken(
+            token_id=existing.token_id if existing is not None else f"oauth-token-{provider_id}",
+            provider_id=provider_id,
+            connection_id=connection_id,
+            encrypted_access_token=encrypt_provider_token_value(access_token),
+            encrypted_refresh_token=encrypt_provider_token_value(_trimmed(token_payload.get("refresh_token")))
+            if _trimmed(token_payload.get("refresh_token"))
+            else "",
+            encrypted_id_token=encrypt_provider_token_value(_trimmed(token_payload.get("id_token")))
+            if _trimmed(token_payload.get("id_token"))
+            else "",
+            token_type=_trimmed(token_payload.get("token_type"), "Bearer"),
+            scope_hash=sha256(scope_text.encode("utf-8")).hexdigest() if scope_text else "",
+            expires_at=expires_at,
+            status="connected",
+            metadata_safe={
+                "scopes": scope_text.split() if scope_text else [],
+                "refresh_token_present": bool(_trimmed(token_payload.get("refresh_token"))),
+                "id_token_present": bool(_trimmed(token_payload.get("id_token"))),
+                "expires_in_present": bool(expires_at),
+            },
+            created_at=existing.created_at if existing is not None else utc_now_iso(),
+        )
+        token_record.touch()
+        self.storage.save_provider_oauth_token(token_record)
+        return token_record
 
     def _save_connection(
         self,
@@ -932,5 +1305,11 @@ class ProviderConnectManager:
     def _load_flow_safe(self, flow_id: str) -> ProviderAuthFlow | None:
         try:
             return self.storage.load_provider_auth_flow(flow_id)
+        except Exception:
+            return None
+
+    def _load_token_safe(self, provider_id: str) -> ProviderOAuthToken | None:
+        try:
+            return self.storage.load_provider_oauth_token(provider_id)
         except Exception:
             return None

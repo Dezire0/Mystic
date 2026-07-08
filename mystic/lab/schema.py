@@ -127,6 +127,8 @@ LAB_PROVIDER_STATUSES = {
     "provider_required",
     "api_key_required",
     "oauth_required",
+    "oauth_callback_received",
+    "token_storage_required",
     "connected",
     "auth_failed",
     "rate_limited",
@@ -141,6 +143,13 @@ LAB_PROVIDER_AUTH_FLOW_STATUSES = {
     "failed",
     "completed",
     "disconnected",
+}
+
+LAB_PROVIDER_OAUTH_TOKEN_STATUSES = {
+    "connected",
+    "auth_failed",
+    "token_storage_required",
+    "revoked",
 }
 
 LAB_SIMULATION_STATUSES = {

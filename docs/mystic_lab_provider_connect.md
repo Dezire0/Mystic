@@ -112,11 +112,14 @@ They never show:
   - `MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION`
 - Optional configuration is:
   - `MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL`
-- Current safe limit:
+- Encrypted token storage also requires:
+  - `MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY`
+- Current safe behavior:
   - callback receipt is supported
-  - encrypted server-side OAuth token storage is not implemented yet
-  - `provider_verify`, `provider_model_list`, and `provider_call_test` therefore fail closed with `oauth_required` or `provider_required`
-  - once a callback is recorded without token storage support, the safe failure reason is `oauth_storage_required`
+  - token exchange only runs when the encryption key is configured
+  - `provider_verify` reports `connected` only when an encrypted OAuth token record exists
+  - `provider_call_test` still fails closed after connection because real Vertex inference routing is intentionally separate
+  - if callback storage is unavailable, the safe status is `token_storage_required`
 
 ### Anthropic
 
@@ -190,6 +193,7 @@ The setup pages and tools expose exact secret names, for example:
 - `MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID`
 - `MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION`
 - `MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL`
+- `MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY`
 - `MYSTIC_PROVIDER_ANTHROPIC_API_KEY`
 - `MYSTIC_PROVIDER_ANTHROPIC_MODEL`
 
@@ -210,13 +214,13 @@ The Worker callback route records safe OAuth callback state:
 
 It does not display or echo raw authorization codes or tokens.
 
-Current limit:
+Current behavior:
 
-- callback receipt is recorded
 - raw authorization codes are never displayed back to the user
-- `google_vertex_ai` callbacks become `provider_required` with `oauth_storage_required` until encrypted token storage exists
-- token exchange and real OAuth token-backed provider-call routing remain intentionally deferred until encrypted token storage is implemented
-- real OAuth token exchange for providers that require full delegated OAuth is still separate from the current API-key and configured-provider routing path
+- if `MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY` is missing, callback completion fails closed with `token_storage_required`
+- if the encryption key is present, Mystic exchanges the authorization code and stores only encrypted OAuth token records
+- provider pages and MCP outputs expose only safe token metadata such as presence flags and sanitized scope data
+- `google_vertex_ai` model-call routing is still intentionally deferred after connection, so connected token storage does not yet imply live Vertex inference
 
 ## Security Guardrail
 
@@ -224,7 +228,7 @@ Mystic LAB must fail closed:
 
 - unsupported OAuth configuration returns `provider_required` or `api_key_required`
 - missing API-key configuration returns `api_key_required`
-- unsupported token-storage state returns `provider_required` with `oauth_storage_required`
+- missing encrypted token storage returns `token_storage_required`
 - invalid provider credentials return `provider_auth_failed`
 - provider rate limits return `rate_limited`
 - provider downtime returns `provider_unavailable`

@@ -9,7 +9,7 @@ from typing import Any
 import requests
 
 from mystic.lab.reports import render_report
-from mystic.lab.provider_connect import ProviderAuthFlow, ProviderConnection
+from mystic.lab.provider_connect import ProviderAuthFlow, ProviderConnection, ProviderOAuthToken
 from mystic.lab.provider_router import ModelCallRecord
 from mystic.lab.scene import LabScene, LabSceneBundle, LabSceneObject, LabSimulation
 from mystic.lab.schema import PHASE_TO_ROOM
@@ -62,11 +62,13 @@ class LocalJSONLabStorage:
         self.scenes_base_dir = self.root_path / "mystic_data" / "lab_scenes"
         self.providers_base_dir = self.root_path / "mystic_data" / "provider_connections"
         self.provider_flows_base_dir = self.root_path / "mystic_data" / "provider_auth_flows"
+        self.provider_tokens_base_dir = self.root_path / "mystic_data" / "provider_oauth_tokens"
         self.model_calls_base_dir = self.root_path / "mystic_data" / "model_calls"
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.scenes_base_dir.mkdir(parents=True, exist_ok=True)
         self.providers_base_dir.mkdir(parents=True, exist_ok=True)
         self.provider_flows_base_dir.mkdir(parents=True, exist_ok=True)
+        self.provider_tokens_base_dir.mkdir(parents=True, exist_ok=True)
         self.model_calls_base_dir.mkdir(parents=True, exist_ok=True)
 
     def session_dir(self, session_id: str) -> Path:
@@ -244,6 +246,18 @@ class LocalJSONLabStorage:
                 continue
             flows.append(flow)
         return flows
+
+    def provider_oauth_token_path(self, provider_id: str) -> Path:
+        return self.provider_tokens_base_dir / f"{provider_id}.json"
+
+    def save_provider_oauth_token(self, token: ProviderOAuthToken) -> dict[str, str]:
+        path = self.provider_oauth_token_path(token.provider_id)
+        path.write_text(json.dumps(token.to_dict(), indent=2), encoding="utf-8")
+        return {"oauth_token": str(path)}
+
+    def load_provider_oauth_token(self, provider_id: str) -> ProviderOAuthToken | None:
+        payload = self._load_json(self.provider_oauth_token_path(provider_id), None)
+        return ProviderOAuthToken(**payload) if isinstance(payload, dict) else None
 
     def model_call_path(self, call_id: str) -> Path:
         return self.model_calls_base_dir / f"{call_id}.json"
@@ -462,6 +476,16 @@ class SupabaseLabStorage:
             filters["provider_id"] = f"eq.{provider_id}"
         rows = self._select_rows("provider_auth_flows", filters, order="created_at.asc")
         return [ProviderAuthFlow(**row) for row in rows]
+
+    def save_provider_oauth_token(self, token: ProviderOAuthToken) -> dict[str, str]:
+        self._ensure_configured()
+        self._upsert_rows("provider_oauth_tokens", [token.to_dict()], on_conflict="token_id")
+        return {"oauth_token": f"supabase://{self.schema}/provider_oauth_tokens/{token.token_id}"}
+
+    def load_provider_oauth_token(self, provider_id: str) -> ProviderOAuthToken | None:
+        self._ensure_configured()
+        row = self._select_one("provider_oauth_tokens", {"provider_id": f"eq.{provider_id}"})
+        return ProviderOAuthToken(**row) if row is not None else None
 
     def save_model_call(self, record: ModelCallRecord) -> dict[str, str]:
         self._ensure_configured()
@@ -691,6 +715,12 @@ class LabStorage:
 
     def list_provider_auth_flows(self, provider_id: str | None = None) -> list[ProviderAuthFlow]:
         return self._backend.list_provider_auth_flows(provider_id)
+
+    def save_provider_oauth_token(self, token: ProviderOAuthToken) -> dict[str, str]:
+        return self._backend.save_provider_oauth_token(token)
+
+    def load_provider_oauth_token(self, provider_id: str) -> ProviderOAuthToken | None:
+        return self._backend.load_provider_oauth_token(provider_id)
 
     def save_model_call(self, record: ModelCallRecord) -> dict[str, str]:
         return self._backend.save_model_call(record)

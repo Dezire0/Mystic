@@ -54,6 +54,7 @@ class _FakeSupabaseAPI:
         "lab_simulations": "simulation_id",
         "provider_connections": "connection_id",
         "provider_auth_flows": "flow_id",
+        "provider_oauth_tokens": "token_id",
         "model_calls": "call_id",
     }
 
@@ -302,6 +303,68 @@ class SupabaseLabStorageTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["output"], "mock:hello")
         self.assertEqual(len(fake_api.tables["model_calls"]), 1)
+
+    def test_supabase_backed_google_vertex_callback_stores_encrypted_token_record(self):
+        class _TokenResponse:
+            status_code = 200
+            text = json.dumps(
+                {
+                    "access_token": "vertex-access-token",
+                    "refresh_token": "vertex-refresh-token",
+                    "id_token": "vertex-id-token",
+                    "token_type": "Bearer",
+                    "scope": "openid profile https://www.googleapis.com/auth/cloud-platform",
+                    "expires_in": 3600,
+                }
+            )
+
+            @staticmethod
+            def json() -> dict[str, object]:
+                return {
+                    "access_token": "vertex-access-token",
+                    "refresh_token": "vertex-refresh-token",
+                    "id_token": "vertex-id-token",
+                    "token_type": "Bearer",
+                    "scope": "openid profile https://www.googleapis.com/auth/cloud-platform",
+                    "expires_in": 3600,
+                }
+
+        fake_api = _FakeSupabaseAPI()
+        with patch.dict(
+            os.environ,
+            {
+                "MYSTIC_STORAGE_BACKEND": "supabase",
+                "MYSTIC_SUPABASE_URL": "https://example.supabase.co",
+                "MYSTIC_SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED": "true",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID": "google-client-id",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET": "google-client-secret",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
+                "MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY": "provider-token-encryption-key",
+            },
+            clear=False,
+        ), patch("mystic.lab.storage.requests.request", side_effect=fake_api.request), patch(
+            "mystic.lab.provider_connect.requests.post",
+            return_value=_TokenResponse(),
+        ):
+            router = ModelRouter(root_path=self.root, config_path=self.config_path)
+            toolbox = MysticToolbox(root_path=self.root, router=router)
+            started = toolbox.provider_connect_start(provider_id="google_vertex_ai", auth_method="oauth")
+            connection, flow = toolbox.provider_connect.exchange_google_vertex_callback(
+                flow_id=started["flow"]["flow_id"],
+                callback_state=started["authorization_url"].split("state=", 1)[1].split("&", 1)[0],
+                callback_code="secret-code",
+            )
+            verified = toolbox.provider_verify(provider_id="google_vertex_ai")
+
+        self.assertEqual(connection.status, "connected")
+        self.assertEqual(flow.status, "completed")
+        self.assertEqual(verified["status"], "connected")
+        self.assertEqual(len(fake_api.tables["provider_oauth_tokens"]), 1)
+        saved_row = fake_api.tables["provider_oauth_tokens"][0]
+        self.assertNotEqual(saved_row["encrypted_access_token"], "vertex-access-token")
+        self.assertNotIn("vertex-access-token", json.dumps(saved_row))
 
 
 if __name__ == "__main__":
