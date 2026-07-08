@@ -54,6 +54,7 @@ class _FakeSupabaseAPI:
         "lab_simulations": "simulation_id",
         "provider_connections": "connection_id",
         "provider_auth_flows": "flow_id",
+        "model_calls": "call_id",
     }
 
     def __init__(self) -> None:
@@ -282,6 +283,25 @@ class SupabaseLabStorageTests(unittest.TestCase):
         self.assertEqual(disconnected["status"], "disconnected")
         self.assertEqual(len(fake_api.tables["provider_connections"]), 2)
         self.assertEqual(len(fake_api.tables["provider_auth_flows"]), 1)
+
+    def test_supabase_backed_mock_provider_call_persists_model_call(self):
+        fake_api = _FakeSupabaseAPI()
+        with patch.dict(
+            os.environ,
+            {
+                "MYSTIC_STORAGE_BACKEND": "supabase",
+                "MYSTIC_SUPABASE_URL": "https://example.supabase.co",
+                "MYSTIC_SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+            },
+            clear=False,
+        ), patch("mystic.lab.storage.requests.request", side_effect=fake_api.request):
+            router = ModelRouter(root_path=self.root, config_path=self.config_path)
+            toolbox = MysticToolbox(root_path=self.root, router=router)
+            result = toolbox.provider_call_test(provider_id="mock", prompt="hello")
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["output"], "mock:hello")
+        self.assertEqual(len(fake_api.tables["model_calls"]), 1)
 
 
 if __name__ == "__main__":

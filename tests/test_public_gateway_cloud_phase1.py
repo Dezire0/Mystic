@@ -784,6 +784,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 },
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
                 ],
             },
         )
@@ -804,6 +805,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 },
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
                 ],
             },
         )
@@ -817,7 +819,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             model_list_result["body"]["result"]["structuredContent"]["status"],
             {"not_configured", "api_key_required"},
         )
-        self.assertIn(call_test_result["body"]["result"]["structuredContent"]["status"], {"not_configured", "api_key_required"})
+        self.assertIn(call_test_result["body"]["result"]["structuredContent"]["status"], {"provider_required", "api_key_required"})
 
     def test_cloud_google_vertex_verify_and_call_test_return_safe_oauth_states(self) -> None:
         verify_result = run_worker_helper(
@@ -869,6 +871,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 },
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
                 ],
             },
         )
@@ -897,6 +900,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 },
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
                 ],
             },
         )
@@ -1094,6 +1098,147 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         payload = result["body"]["result"]["structuredContent"]
         self.assertEqual(payload["status"], "AUTH_REQUIRED")
         self.assertEqual(payload["provider_result"]["status"], "provider_required")
+
+    def test_cloud_phase1_provider_call_test_maps_invalid_credentials_without_leaking_secret(self) -> None:
+        env = {
+            **self.env,
+            "MYSTIC_PROVIDER_GEMINI_API_KEY": "gem-test-secret",
+            "MYSTIC_PROVIDER_GEMINI_MODEL": "gemini-1.5-flash",
+        }
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 120,
+                    "method": "tools/call",
+                    "params": {"name": "provider_call_test", "arguments": {"provider_id": "gemini", "prompt": "ping"}},
+                },
+                "fetchResponses": [
+                    {
+                        "methodPrefix": "POST https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+                        "status": 401,
+                        "body": {"error": {"message": "bad gem-test-secret"}},
+                    },
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["status"], "provider_auth_failed")
+        self.assertNotIn("gem-test-secret", json.dumps(payload))
+
+    def test_cloud_phase1_lab_agent_run_can_use_mock_provider_and_persist_model_call(self) -> None:
+        session_id = "lab-agent-mock"
+        session_row = self._session_row(session_id)
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 121,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "lab_agent_run",
+                        "arguments": {
+                            "session_id": session_id,
+                            "agent_role": "Theorist",
+                            "provider": "mock",
+                            "task": "State one observation.",
+                            "context_ids": [],
+                        },
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [session_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/memory_edges", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/reports", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/claims", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["provider_result"]["status"], "completed")
+
+    def test_cloud_phase1_lab_referee_review_can_use_mock_provider(self) -> None:
+        session_id = "lab-referee-mock"
+        session_row = self._session_row(session_id)
+        claim_row = {
+            "session_id": session_id,
+            "text": "A positive integer pair exists.",
+            "claim_type": "result",
+            "status": "HEURISTIC",
+            "confidence": "low",
+            "source_turn_id": "manual",
+            "supporting_evidence": [],
+            "refuting_evidence": [],
+            "related_experiments": [],
+            "related_failures": [],
+            "created_at": "2026-07-06T01:02:01Z",
+            "updated_at": "2026-07-06T01:02:01Z",
+            "claim_id": "claim-1",
+        }
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 122,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "lab_referee_review",
+                        "arguments": {
+                            "session_id": session_id,
+                            "claim_id": "claim-1",
+                            "text": "A positive integer pair exists.",
+                            "strictness": "hostile",
+                            "provider": "mock",
+                        },
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [session_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": [claim_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/memory_edges", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/reports", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/claims", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["provider_result"]["status"], "completed")
+        self.assertIn(payload["verdict"], {"UNKNOWN", "VALID"})
 
     def test_cloud_phase1_lab_referee_review_returns_deferred_result(self) -> None:
         session_id = "lab-referee"
@@ -1372,6 +1517,57 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         )
         payload = result["body"]["result"]["structuredContent"]
         self.assertEqual(payload["provider_result"]["status"], "provider_required")
+
+    def test_cloud_phase1_lab_models_debate_can_use_mock_providers(self) -> None:
+        session_id = "lab-debate-mock"
+        session_row = self._session_row(session_id)
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 123,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "lab_models_debate",
+                        "arguments": {
+                            "session_id": session_id,
+                            "question": "Debate whether x + y = 5 has positive integer solutions.",
+                            "participants": ["mock:mock-one", "mock:mock-two"],
+                            "rounds": ["independent_discovery", "cross_critique"],
+                            "use_existing_research_table": True,
+                        },
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [session_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/memory_edges", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/reports", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/claims", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["research_table_session_id"], "")
+        self.assertEqual(len(payload["transcript"]), 2)
+        self.assertTrue(payload["final_synthesis"])
 
     def test_cloud_phase1_scene_crud_tools_use_supabase(self) -> None:
         session_id = "lab-scene"

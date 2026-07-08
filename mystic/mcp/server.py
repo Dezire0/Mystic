@@ -87,7 +87,7 @@ class MysticMCPServer:
     def _normalize_optional_nulls(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         nullable_fields = {
             "lab_session_advance": {"target_phase"},
-            "lab_referee_review": {"claim_id"},
+            "lab_referee_review": {"claim_id", "provider"},
             "lab_memory_search": {"domain", "status_filter"},
             "create_lab_scene": {"description", "units", "parameters", "metadata"},
             "set_lab_parameters": {"units", "metadata"},
