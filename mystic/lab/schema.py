@@ -110,6 +110,7 @@ LAB_ENGINE_ADAPTERS = {
 LAB_PROVIDER_TYPES = {
     "openai_compatible",
     "gemini",
+    "google_vertex_ai",
     "anthropic",
     "future/custom",
 }
@@ -123,6 +124,7 @@ LAB_PROVIDER_AUTH_METHODS = {
 
 LAB_PROVIDER_STATUSES = {
     "not_configured",
+    "provider_required",
     "api_key_required",
     "oauth_required",
     "connected",

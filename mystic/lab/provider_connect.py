@@ -25,6 +25,7 @@ LOCAL_PUBLIC_BASE_URL = "http://127.0.0.1:8765"
 PUBLIC_PROVIDER_IDS = (
     "openai_compatible",
     "gemini",
+    "google_vertex_ai",
     "anthropic",
     "future_custom",
 )
@@ -66,9 +67,9 @@ PROVIDER_CATALOG: dict[str, dict[str, Any]] = {
         "provider_id": "gemini",
         "provider_type": "gemini",
         "default_auth_method": "api_key",
-        "supported_auth_methods": {"api_key", "oauth", "bearer_token"},
+        "supported_auth_methods": {"api_key"},
         "supports_api_key": True,
-        "supports_oauth": True,
+        "supports_oauth": False,
         "secret_names": [
             "MYSTIC_PROVIDER_GEMINI_API_KEY",
             "MYSTIC_PROVIDER_GEMINI_MODEL",
@@ -83,14 +84,55 @@ PROVIDER_CATALOG: dict[str, dict[str, Any]] = {
         ),
         "scopes": ["model:generate"],
         "default_models": ["gemini-1.5-flash"],
-        "oauth_env_prefix": "MYSTIC_PROVIDER_GEMINI",
+    },
+    "google_vertex_ai": {
+        "provider_id": "google_vertex_ai",
+        "provider_type": "google_vertex_ai",
+        "default_auth_method": "oauth",
+        "supported_auth_methods": {"oauth"},
+        "supports_api_key": False,
+        "supports_oauth": True,
+        "secret_names": [
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID",
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET",
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID",
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION",
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL",
+        ],
+        "required_secret_names": [
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID",
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET",
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID",
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION",
+        ],
+        "optional_secret_names": ["MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL"],
+        "model_env_names": ["MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL"],
+        "external_setup_url": "https://console.cloud.google.com/apis/credentials",
+        "setup_instructions": (
+            "Set Cloudflare secrets MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID, "
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET, "
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID, "
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION, and optionally "
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL for Google OAuth-backed Vertex AI Gemini access."
+        ),
+        "scopes": ["model:generate"],
+        "default_models": ["gemini-2.5-flash"],
+        "oauth_env_prefix": "MYSTIC_PROVIDER_GOOGLE_VERTEX",
         "oauth_default_scopes": [
             "openid",
             "email",
             "profile",
+            "https://www.googleapis.com/auth/cloud-platform",
         ],
         "oauth_default_authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
         "oauth_default_token_endpoint": "https://oauth2.googleapis.com/token",
+        "oauth_missing_status": "provider_required",
+        "oauth_require_client_secret": True,
+        "oauth_required_config_env_names": [
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID",
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION",
+        ],
+        "oauth_token_storage_supported": False,
     },
     "anthropic": {
         "provider_id": "anthropic",
@@ -162,6 +204,10 @@ def normalize_provider_id(value: str) -> str:
     aliases = {
         "openai": "openai_compatible",
         "google": "gemini",
+        "google-vertex-ai": "google_vertex_ai",
+        "google_vertex": "google_vertex_ai",
+        "vertex": "google_vertex_ai",
+        "vertex_ai": "google_vertex_ai",
         "claude": "anthropic",
         "custom": "future_custom",
         "future/custom": "future_custom",
@@ -371,6 +417,7 @@ class ProviderConnectManager:
                         "scopes": oauth_metadata["scopes"],
                         "pkce_enabled": True,
                         "code_verifier_present": bool(verifier),
+                        "token_storage_supported": oauth_metadata["token_storage_supported"],
                     },
                 )
                 self.storage.save_provider_auth_flow(flow)
@@ -382,6 +429,9 @@ class ProviderConnectManager:
                         "oauth_enabled": True,
                         "oauth_redirect_uri": oauth_metadata["redirect_uri"],
                         "oauth_client_id_configured": True,
+                        "oauth_client_secret_configured": oauth_metadata["client_secret_configured"],
+                        "oauth_missing_config_names": oauth_metadata["missing_config_names"],
+                        "oauth_token_storage_supported": oauth_metadata["token_storage_supported"],
                     },
                 )
                 payload = self._provider_payload(provider_key)
@@ -404,9 +454,12 @@ class ProviderConnectManager:
                 payload["message"] = "OAuth is not configured for this provider. Use the secure setup page and Cloudflare secret instructions."
                 return payload
             payload = self._provider_payload(provider_key)
-            payload["status"] = "provider_required"
-            payload["failure_reason"] = "oauth_metadata_missing"
-            payload["message"] = "OAuth metadata is incomplete for this provider."
+            payload["status"] = spec.get("oauth_missing_status", "provider_required")
+            payload["provider_status"] = payload["status"]
+            payload["failure_reason"] = self._default_failure_reason(
+                spec, payload["status"], oauth_metadata, self._secret_state(spec)
+            )
+            payload["message"] = self._provider_status_message(payload)
             return payload
 
         payload = self._provider_payload(provider_key)
@@ -471,7 +524,7 @@ class ProviderConnectManager:
         verified = self._provider_payload(provider_key)
         verified["connection_id"] = connection.connection_id
         verified["verified_at"] = connection.last_verified_at
-        verified["message"] = "Provider configuration was checked without exposing secrets."
+        verified["message"] = self._provider_status_message(verified)
         return verified
 
     def provider_disconnect(self, *, provider_id: str) -> dict[str, Any]:
@@ -521,14 +574,20 @@ class ProviderConnectManager:
                 "output": f"mock:{str(prompt).strip() or 'ping'}",
                 "test_only": True,
             }
+        spec = provider_catalog(provider_key)
         payload = self._provider_payload(provider_key)
+        status = str(payload["provider_status"])
+        if status == "not_configured":
+            status = "api_key_required" if spec.get("supports_api_key", False) else "provider_required"
+        call_payload = {**payload, "provider_status": status, "status": status}
         return {
             "provider_id": payload["provider_id"],
             "provider_type": payload["provider_type"],
             "auth_method": payload["auth_method"],
-            "status": "provider_required",
-            "message": "Provider Connect does not expose direct real provider test calls until model-call routing is isolated safely.",
+            "status": status,
+            "message": self._provider_status_message(call_payload),
             "setup_url": payload["setup_url"],
+            "connect_url": payload["connect_url"],
             "setup_instructions": payload["setup_instructions"],
         }
 
@@ -543,6 +602,10 @@ class ProviderConnectManager:
         route_urls = self._route_urls(spec["provider_id"])
         metadata = dict(connection.metadata if connection is not None else {})
         metadata.setdefault("external_setup_url", spec.get("external_setup_url", ""))
+        metadata.setdefault("oauth_client_id_configured", oauth_metadata["client_id_configured"])
+        metadata.setdefault("oauth_client_secret_configured", oauth_metadata["client_secret_configured"])
+        metadata.setdefault("oauth_missing_config_names", oauth_metadata["missing_config_names"])
+        metadata.setdefault("oauth_token_storage_supported", oauth_metadata["token_storage_supported"])
         return {
             "provider_id": spec["provider_id"],
             "provider_type": spec["provider_type"],
@@ -587,6 +650,7 @@ class ProviderConnectManager:
         oauth_metadata: dict[str, Any],
     ) -> str:
         if connection is not None and connection.status in {
+            "provider_required",
             "disconnected",
             "auth_failed",
             "rate_limited",
@@ -597,17 +661,25 @@ class ProviderConnectManager:
             return "connected"
         auth_method = connection.auth_method if connection is not None else spec["default_auth_method"]
         if auth_method == "oauth":
+            if connection is not None and connection.status == "connected":
+                return "connected"
+            if spec.get("oauth_missing_status") == "provider_required" and (
+                secret_state["missing_required_secret_names"] or oauth_metadata["missing_config_names"]
+            ):
+                return "provider_required"
             if oauth_metadata["configured"]:
                 return "oauth_required"
             if spec.get("supports_api_key", False):
                 return "api_key_required"
-            return "not_configured"
+            return spec.get("oauth_missing_status", "not_configured")
         if auth_method == "bearer_token":
+            if connection is not None and connection.status == "connected":
+                return "connected"
             if oauth_metadata["configured"]:
                 return "oauth_required"
             if spec.get("supports_api_key", False):
                 return "api_key_required"
-            return "not_configured"
+            return spec.get("oauth_missing_status", "not_configured")
         if secret_state["required_secret_names"] and not secret_state["missing_required_secret_names"]:
             return "connected"
         if connection is None and not secret_state["configured_secret_names"]:
@@ -653,12 +725,19 @@ class ProviderConnectManager:
             return {
                 "available": False,
                 "configured": False,
+                "enabled": False,
                 "authorization_endpoint": "",
                 "token_endpoint": "",
                 "client_id": "",
                 "redirect_uri": "",
                 "scopes": [],
+                "client_id_configured": False,
+                "client_secret_configured": False,
+                "required_config_names": [],
+                "missing_config_names": [],
+                "token_storage_supported": False,
             }
+        available = bool(spec.get("supports_oauth"))
         enabled = _truthy_env(os.environ.get(f"{prefix}_OAUTH_ENABLED"))
         authorization_endpoint = _trimmed(
             os.environ.get(f"{prefix}_AUTHORIZATION_ENDPOINT"),
@@ -669,14 +748,28 @@ class ProviderConnectManager:
             spec.get("oauth_default_token_endpoint", ""),
         )
         client_id = _trimmed(os.environ.get(f"{prefix}_CLIENT_ID"))
+        client_secret = _trimmed(os.environ.get(f"{prefix}_CLIENT_SECRET"))
         redirect_uri = _trimmed(
             os.environ.get(f"{prefix}_REDIRECT_URI"),
             f"{_route_base_url(self.runtime_mode)}/providers/oauth/callback?provider_id={spec['provider_id']}",
         )
         scopes_env = _trimmed(os.environ.get(f"{prefix}_SCOPES"))
         scopes = [item for item in scopes_env.split() if item] if scopes_env else list(spec.get("oauth_default_scopes", []))
-        configured = bool(enabled and authorization_endpoint and client_id and redirect_uri)
-        available = bool(spec.get("supports_oauth"))
+        required_config_names = list(spec.get("oauth_required_config_env_names", []))
+        missing_config_names = [
+            name for name in required_config_names if not _trimmed(os.environ.get(name))
+        ]
+        client_secret_configured = bool(client_secret) or not spec.get("oauth_require_client_secret", False)
+        configured = bool(
+            available
+            and enabled
+            and authorization_endpoint
+            and token_endpoint
+            and client_id
+            and redirect_uri
+            and client_secret_configured
+            and not missing_config_names
+        )
         return {
             "available": available,
             "configured": configured,
@@ -686,6 +779,11 @@ class ProviderConnectManager:
             "client_id": client_id,
             "redirect_uri": redirect_uri,
             "scopes": scopes,
+            "client_id_configured": bool(client_id),
+            "client_secret_configured": client_secret_configured,
+            "required_config_names": required_config_names,
+            "missing_config_names": missing_config_names,
+            "token_storage_supported": bool(spec.get("oauth_token_storage_supported", False)),
         }
 
     def _build_authorization_url(
@@ -709,7 +807,7 @@ class ProviderConnectManager:
         if code_challenge:
             params["code_challenge"] = code_challenge
             params["code_challenge_method"] = "S256"
-        if spec["provider_id"] == "gemini":
+        if spec["provider_id"] == "google_vertex_ai":
             params.setdefault("access_type", "offline")
             params.setdefault("prompt", "consent")
         return f"{oauth_metadata['authorization_endpoint']}?{urlencode(params)}"
@@ -733,6 +831,10 @@ class ProviderConnectManager:
     ) -> str:
         if provider_status == "connected":
             return ""
+        if provider_status == "provider_required":
+            if spec.get("provider_id") == "google_vertex_ai" and oauth_metadata["configured"]:
+                return "oauth_storage_required"
+            return "oauth_metadata_missing"
         if provider_status == "oauth_required" and not oauth_metadata["configured"]:
             return "oauth_metadata_missing"
         if provider_status == "api_key_required" and secret_state["missing_required_secret_names"]:
@@ -740,6 +842,32 @@ class ProviderConnectManager:
         if provider_status == "not_configured" and spec.get("supports_api_key", False):
             return "provider_not_configured"
         return ""
+
+    def _provider_status_message(self, payload: dict[str, Any]) -> str:
+        status = str(payload.get("provider_status") or payload.get("status") or "").strip()
+        failure_reason = str(payload.get("failure_reason", "")).strip()
+        if status == "connected":
+            return "Provider is connected."
+        if status == "oauth_required":
+            return "Provider OAuth connection is required. Start the secure OAuth flow and retry."
+        if status == "api_key_required":
+            return "Provider credentials are not configured. Complete the secure setup flow and retry."
+        if status == "provider_required" and failure_reason == "oauth_storage_required":
+            return (
+                "OAuth callback metadata can be recorded, but encrypted server-side token storage is required "
+                "before Google Vertex AI model calls can be enabled."
+            )
+        if status == "provider_required":
+            return "Provider configuration is incomplete. Add the required OAuth metadata and retry."
+        if status == "auth_failed":
+            return "Provider authentication failed. Reconnect the provider and retry."
+        if status == "rate_limited":
+            return "Provider rate limited the last request. Retry later."
+        if status == "provider_unavailable":
+            return "Provider is temporarily unavailable. Retry later."
+        if status == "disconnected":
+            return "Provider is disconnected until an explicit reconnect."
+        return "Provider configuration was checked without exposing secrets."
 
     def _state_hash(self, value: str) -> str:
         return sha256(value.encode("utf-8")).hexdigest()
