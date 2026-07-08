@@ -1,0 +1,175 @@
+# Mystic LAB Provider Connect
+
+## Purpose
+
+Provider Connect is the safe connection layer for external model providers in Mystic LAB.
+
+It exists to let Mystic expose:
+
+- provider status
+- provider setup guidance
+- provider OAuth connect entry points where genuinely supported
+- secure setup pages for API-key providers
+
+It does **not** exist to:
+
+- ask for raw passwords
+- perform hidden third-party logins
+- print API keys or tokens
+- store raw provider secrets in Supabase
+- fake model output
+
+## Current Providers
+
+- `openai_compatible`
+- `gemini`
+- `anthropic`
+- `future_custom`
+
+## Public MCP Tools
+
+- `provider_list`
+- `provider_status`
+- `provider_connect_start`
+- `provider_connect_callback_status`
+- `provider_configure_secret_instructions`
+- `provider_verify`
+- `provider_disconnect`
+- `provider_model_list`
+- `provider_call_test`
+
+## Route Surface
+
+The Cloudflare Worker now exposes provider pages and callback routes:
+
+- `GET /providers`
+- `GET /providers/:provider_id/connect`
+- `GET /providers/:provider_id/setup`
+- `POST /providers/:provider_id/secret`
+- `GET /providers/:provider_id/status`
+- `GET /providers/oauth/callback`
+
+These routes show only safe metadata:
+
+- provider status
+- required auth method
+- required secret names
+- configured vs missing secret names
+- OAuth callback state
+
+They never show:
+
+- stored secret values
+- raw OAuth tokens
+- raw API keys
+- raw passwords
+
+## OAuth vs API-key Providers
+
+### Gemini
+
+- If Google OAuth metadata is genuinely configured and enabled, `provider_connect_start` returns a real Google `authorization_url`.
+- Otherwise Mystic returns `api_key_required` and a secure Mystic setup page URL.
+- The setup page links to Google AI Studio for API-key creation and shows the required Cloudflare secret names.
+
+### Anthropic
+
+- Mystic does not pretend Anthropic OAuth exists by default.
+- If official OAuth metadata is configured in a future deployment, `provider_connect_start` can return a real `authorization_url`.
+- Otherwise Mystic returns `api_key_required` and a secure setup page URL.
+
+### OpenAI-compatible
+
+- Default behavior is API-key setup, not fake OAuth.
+- `provider_connect_start` returns `api_key_required` with a secure setup page unless custom OAuth metadata is explicitly configured.
+
+### Future Custom Providers
+
+- `future_custom` supports metadata-driven OAuth.
+- When `authorization_endpoint`, `client_id`, `redirect_uri`, and enabled mode are configured, `provider_connect_start` returns a real `authorization_url`.
+- PKCE metadata and hashed state are persisted for safe callback tracking.
+
+## Secret Storage Boundary
+
+Provider secrets must remain outside Supabase.
+
+Allowed storage targets:
+
+- Cloudflare Worker secret storage
+- approved encrypted server-side secret storage
+
+For ChatGPT remote MCP readiness in Worker mode, the validated manual import artifact may be mirrored into runtime configuration through `MYSTIC_CHATGPT_IMPORT_VERIFICATION_JSON`. That payload must remain sanitized and must not contain raw tokens, secrets, or passwords.
+
+Supabase may store only:
+
+- provider connection metadata
+- provider status
+- auth flow metadata
+- callback timestamps
+- failure reasons
+
+Supabase must not store:
+
+- raw API keys
+- raw bearer tokens
+- raw OAuth tokens
+- raw passwords
+
+## Why Passwords Are Never Used
+
+Mystic LAB does not implement provider login by collecting user passwords.
+
+Reasons:
+
+- it would create an unnecessary credential-handling boundary
+- it would blur the line between Mystic OAuth and third-party provider auth
+- it would increase the blast radius of any logging or storage mistake
+
+Mystic only supports:
+
+- real provider OAuth authorization URLs where the provider actually supports OAuth and Mystic has real client metadata
+- API-key setup flows where the provider uses keys instead of OAuth
+
+## Cloudflare Secret Setup
+
+The setup pages and tools expose exact secret names, for example:
+
+- `MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY`
+- `MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL`
+- `MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL`
+- `MYSTIC_PROVIDER_GEMINI_API_KEY`
+- `MYSTIC_PROVIDER_GEMINI_MODEL`
+- `MYSTIC_PROVIDER_ANTHROPIC_API_KEY`
+- `MYSTIC_PROVIDER_ANTHROPIC_MODEL`
+
+If direct secret writing is not available in the current deployment, Mystic returns manual Cloudflare instructions such as:
+
+```bash
+wrangler secret put MYSTIC_PROVIDER_GEMINI_API_KEY --name mystic
+```
+
+## Callback Handling
+
+The Worker callback route records safe OAuth callback state:
+
+- `callback_received_at`
+- `failure_reason`
+- whether an authorization code was received
+- hashed state validation result
+
+It does not display or echo raw authorization codes or tokens.
+
+Current limit:
+
+- callback receipt is recorded
+- token exchange and real provider-call routing remain intentionally deferred to a later isolated issue
+
+## Security Guardrail
+
+Mystic LAB must fail closed:
+
+- unsupported OAuth configuration returns `provider_required` or `api_key_required`
+- missing API-key configuration returns `api_key_required`
+- direct secret writes remain unavailable unless explicitly configured through approved infrastructure
+
+Provider Connect must never invent credentials, fake OAuth support, or fake model execution.

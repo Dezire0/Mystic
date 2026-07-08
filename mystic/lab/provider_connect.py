@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from hashlib import sha256
 from typing import Any
+from urllib.parse import urlencode
+import base64
 import os
+import secrets
 import uuid
 
 from mystic.lab.schema import (
@@ -14,6 +18,9 @@ from mystic.lab.schema import (
     validate_choice,
 )
 
+
+DEFAULT_PUBLIC_BASE_URL = "https://mystic.dexproject.workers.dev"
+LOCAL_PUBLIC_BASE_URL = "http://127.0.0.1:8765"
 
 PUBLIC_PROVIDER_IDS = (
     "openai_compatible",
@@ -30,8 +37,9 @@ PROVIDER_CATALOG: dict[str, dict[str, Any]] = {
         "provider_id": "openai_compatible",
         "provider_type": "openai_compatible",
         "default_auth_method": "api_key",
-        "supported_auth_methods": {"api_key", "bearer_token"},
-        "supports_oauth": False,
+        "supported_auth_methods": {"api_key", "oauth", "bearer_token"},
+        "supports_api_key": True,
+        "supports_oauth": True,
         "secret_names": [
             "MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY",
             "MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL",
@@ -43,7 +51,7 @@ PROVIDER_CATALOG: dict[str, dict[str, Any]] = {
         ],
         "optional_secret_names": ["MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL"],
         "model_env_names": ["MYSTIC_PROVIDER_OPENAI_COMPAT_MODEL"],
-        "setup_url": "https://platform.openai.com/api-keys",
+        "external_setup_url": "https://platform.openai.com/api-keys",
         "setup_instructions": (
             "Set Cloudflare secret MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY, "
             "set MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL, and optionally set "
@@ -51,13 +59,16 @@ PROVIDER_CATALOG: dict[str, dict[str, Any]] = {
         ),
         "scopes": ["model:generate"],
         "default_models": ["openai-compatible"],
+        "oauth_env_prefix": "MYSTIC_PROVIDER_OPENAI_COMPAT",
+        "oauth_default_scopes": [],
     },
     "gemini": {
         "provider_id": "gemini",
         "provider_type": "gemini",
         "default_auth_method": "api_key",
-        "supported_auth_methods": {"api_key", "bearer_token"},
-        "supports_oauth": False,
+        "supported_auth_methods": {"api_key", "oauth", "bearer_token"},
+        "supports_api_key": True,
+        "supports_oauth": True,
         "secret_names": [
             "MYSTIC_PROVIDER_GEMINI_API_KEY",
             "MYSTIC_PROVIDER_GEMINI_MODEL",
@@ -65,20 +76,29 @@ PROVIDER_CATALOG: dict[str, dict[str, Any]] = {
         "required_secret_names": ["MYSTIC_PROVIDER_GEMINI_API_KEY"],
         "optional_secret_names": ["MYSTIC_PROVIDER_GEMINI_MODEL"],
         "model_env_names": ["MYSTIC_PROVIDER_GEMINI_MODEL"],
-        "setup_url": "https://aistudio.google.com/app/apikey",
+        "external_setup_url": "https://aistudio.google.com/app/apikey",
         "setup_instructions": (
             "Set Cloudflare secret MYSTIC_PROVIDER_GEMINI_API_KEY and optionally set "
             "MYSTIC_PROVIDER_GEMINI_MODEL."
         ),
         "scopes": ["model:generate"],
         "default_models": ["gemini-1.5-flash"],
+        "oauth_env_prefix": "MYSTIC_PROVIDER_GEMINI",
+        "oauth_default_scopes": [
+            "openid",
+            "email",
+            "profile",
+        ],
+        "oauth_default_authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+        "oauth_default_token_endpoint": "https://oauth2.googleapis.com/token",
     },
     "anthropic": {
         "provider_id": "anthropic",
         "provider_type": "anthropic",
         "default_auth_method": "api_key",
-        "supported_auth_methods": {"api_key", "bearer_token"},
-        "supports_oauth": False,
+        "supported_auth_methods": {"api_key", "oauth", "bearer_token"},
+        "supports_api_key": True,
+        "supports_oauth": True,
         "secret_names": [
             "MYSTIC_PROVIDER_ANTHROPIC_API_KEY",
             "MYSTIC_PROVIDER_ANTHROPIC_MODEL",
@@ -86,44 +106,49 @@ PROVIDER_CATALOG: dict[str, dict[str, Any]] = {
         "required_secret_names": ["MYSTIC_PROVIDER_ANTHROPIC_API_KEY"],
         "optional_secret_names": ["MYSTIC_PROVIDER_ANTHROPIC_MODEL"],
         "model_env_names": ["MYSTIC_PROVIDER_ANTHROPIC_MODEL"],
-        "setup_url": "https://console.anthropic.com/settings/keys",
+        "external_setup_url": "https://console.anthropic.com/settings/keys",
         "setup_instructions": (
             "Set Cloudflare secret MYSTIC_PROVIDER_ANTHROPIC_API_KEY and optionally set "
             "MYSTIC_PROVIDER_ANTHROPIC_MODEL."
         ),
         "scopes": ["model:generate"],
         "default_models": ["claude-3-5-sonnet-latest"],
+        "oauth_env_prefix": "MYSTIC_PROVIDER_ANTHROPIC",
+        "oauth_default_scopes": [],
     },
     "future_custom": {
         "provider_id": "future_custom",
         "provider_type": "future/custom",
         "default_auth_method": "oauth",
         "supported_auth_methods": {"api_key", "oauth", "bearer_token"},
+        "supports_api_key": False,
         "supports_oauth": True,
         "secret_names": [],
         "required_secret_names": [],
         "optional_secret_names": [],
         "model_env_names": [],
-        "setup_url": "",
+        "external_setup_url": "",
         "setup_instructions": (
-            "Future custom providers are metadata-only in this foundation issue. "
-            "Use provider_connect_start to record intent, then finish provider-specific "
-            "wiring in a later issue."
+            "Configure OAuth metadata for the future custom provider, then use "
+            "provider_connect_start to generate a real authorization URL."
         ),
         "scopes": ["model:generate"],
         "default_models": [],
+        "oauth_env_prefix": "MYSTIC_PROVIDER_FUTURE_CUSTOM",
+        "oauth_default_scopes": [],
     },
     "mock": {
         "provider_id": "mock",
         "provider_type": "future/custom",
         "default_auth_method": "none/mock",
         "supported_auth_methods": {"none/mock"},
+        "supports_api_key": False,
         "supports_oauth": False,
         "secret_names": [],
         "required_secret_names": [],
         "optional_secret_names": [],
         "model_env_names": [],
-        "setup_url": "",
+        "external_setup_url": "",
         "setup_instructions": "Mock provider is test-only and must not be used for production routing.",
         "scopes": ["model:generate"],
         "default_models": ["mock-model"],
@@ -160,6 +185,38 @@ def _coerce_string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _trimmed(value: Any, default: str = "") -> str:
+    text = str(value or "").strip()
+    return text or default
+
+
+def _truthy_env(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _base64url(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("utf-8").rstrip("=")
+
+
+def _route_base_url(runtime_mode: str) -> str:
+    configured = (
+        os.environ.get("MYSTIC_PROVIDER_CONNECT_BASE_URL")
+        or os.environ.get("MYSTIC_PUBLIC_BASE_URL")
+        or os.environ.get("MYSTIC_PUBLIC_MCP_BASE_URL")
+    )
+    if configured:
+        return configured.rstrip("/")
+    if runtime_mode == "local_backend":
+        return LOCAL_PUBLIC_BASE_URL
+    return DEFAULT_PUBLIC_BASE_URL
+
+
+def _pkce_pair() -> tuple[str, str]:
+    verifier = _base64url(secrets.token_bytes(32))
+    challenge = _base64url(sha256(verifier.encode("utf-8")).digest())
+    return verifier, challenge
 
 
 @dataclass(slots=True)
@@ -210,8 +267,10 @@ class ProviderAuthFlow:
     provider_id: str
     auth_method: str
     status: str
+    authorization_url: str = ""
     redirect_url: str = ""
     state: str = ""
+    state_hash: str = ""
     code_challenge: str = ""
     code_challenge_method: str = ""
     callback_received_at: str = ""
@@ -225,8 +284,10 @@ class ProviderAuthFlow:
         validate_choice("auth_method", self.auth_method, LAB_PROVIDER_AUTH_METHODS)
         validate_choice("status", self.status, LAB_PROVIDER_AUTH_FLOW_STATUSES)
         self.flow_id = str(self.flow_id).strip()
+        self.authorization_url = str(self.authorization_url).strip()
         self.redirect_url = str(self.redirect_url).strip()
         self.state = str(self.state).strip()
+        self.state_hash = str(self.state_hash).strip()
         self.code_challenge = str(self.code_challenge).strip()
         self.code_challenge_method = str(self.code_challenge_method).strip()
         self.callback_received_at = str(self.callback_received_at).strip()
@@ -243,6 +304,11 @@ class ProviderAuthFlow:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def to_public_dict(self) -> dict[str, Any]:
+        payload = self.to_dict()
+        payload.pop("state", None)
+        return payload
+
 
 class ProviderConnectManager:
     def __init__(self, *, storage: Any, runtime_mode: str) -> None:
@@ -257,66 +323,105 @@ class ProviderConnectManager:
 
     def provider_connect_start(self, *, provider_id: str, auth_method: str | None = None) -> dict[str, Any]:
         spec = provider_catalog(provider_id)
-        requested_auth = str(auth_method or spec["default_auth_method"]).strip() or spec["default_auth_method"]
-        if requested_auth == "none/mock" and normalize_provider_id(provider_id) == "mock":
+        provider_key = spec["provider_id"]
+        requested_auth = _trimmed(auth_method, spec["default_auth_method"])
+        if requested_auth not in spec["supported_auth_methods"]:
+            requested_auth = spec["default_auth_method"]
+        if requested_auth == "none/mock" and provider_key == "mock":
             connection = self._save_connection(
-                provider_id="mock",
+                provider_id=provider_key,
                 auth_method="none/mock",
                 status="connected",
                 model_list=["mock-model"],
                 metadata={"test_only": True},
             )
-            payload = self._provider_payload("mock")
+            payload = self._provider_payload(provider_key)
             payload["connection_id"] = connection.connection_id
             payload["message"] = "Mock provider connected for tests."
             return payload
-        if requested_auth not in spec["supported_auth_methods"]:
-            requested_auth = spec["default_auth_method"]
-        if requested_auth in {"oauth", "bearer_token"} and not spec.get("supports_oauth", False):
-            connection = self._save_connection(
-                provider_id=spec["provider_id"],
-                auth_method="api_key",
-                status="api_key_required",
-                failure_reason="official_oauth_not_supported",
-            )
-            payload = self._provider_payload(spec["provider_id"])
-            payload["connection_id"] = connection.connection_id
-            payload["message"] = "This provider foundation does not expose official provider OAuth here. Use API key setup instructions."
+
+        oauth_metadata = self._oauth_metadata(spec)
+        if requested_auth in {"oauth", "bearer_token"}:
+            if oauth_metadata["configured"]:
+                verifier, challenge = _pkce_pair()
+                flow_id = f"flow-{uuid.uuid4().hex[:12]}"
+                state_value = f"{flow_id}.{secrets.token_urlsafe(18)}"
+                authorization_url = self._build_authorization_url(
+                    spec=spec,
+                    oauth_metadata=oauth_metadata,
+                    flow_id=flow_id,
+                    state_value=state_value,
+                    code_challenge=challenge,
+                )
+                flow = ProviderAuthFlow(
+                    flow_id=flow_id,
+                    provider_id=provider_key,
+                    auth_method="oauth",
+                    status="oauth_required",
+                    authorization_url=authorization_url,
+                    redirect_url=oauth_metadata["redirect_uri"],
+                    state_hash=self._state_hash(state_value),
+                    code_challenge=challenge,
+                    code_challenge_method="S256",
+                    metadata={
+                        "runtime_mode": self.runtime_mode,
+                        "authorization_endpoint": oauth_metadata["authorization_endpoint"],
+                        "token_endpoint": oauth_metadata["token_endpoint"],
+                        "client_id": oauth_metadata["client_id"],
+                        "scopes": oauth_metadata["scopes"],
+                        "pkce_enabled": True,
+                        "code_verifier_present": bool(verifier),
+                    },
+                )
+                self.storage.save_provider_auth_flow(flow)
+                connection = self._save_connection(
+                    provider_id=provider_key,
+                    auth_method="oauth",
+                    status="oauth_required",
+                    metadata={
+                        "oauth_enabled": True,
+                        "oauth_redirect_uri": oauth_metadata["redirect_uri"],
+                        "oauth_client_id_configured": True,
+                    },
+                )
+                payload = self._provider_payload(provider_key)
+                payload["connection_id"] = connection.connection_id
+                payload["authorization_url"] = authorization_url
+                payload["flow"] = flow.to_public_dict()
+                payload["message"] = "Provider connect start produced a real OAuth authorization URL."
+                return payload
+            if spec.get("supports_api_key", False):
+                connection = self._save_connection(
+                    provider_id=provider_key,
+                    auth_method="api_key",
+                    status="api_key_required",
+                    failure_reason="oauth_not_configured",
+                )
+                payload = self._provider_payload(provider_key)
+                payload["connection_id"] = connection.connection_id
+                payload["auth_method"] = "api_key"
+                payload["status"] = "api_key_required"
+                payload["message"] = "OAuth is not configured for this provider. Use the secure setup page and Cloudflare secret instructions."
+                return payload
+            payload = self._provider_payload(provider_key)
+            payload["status"] = "provider_required"
+            payload["failure_reason"] = "oauth_metadata_missing"
+            payload["message"] = "OAuth metadata is incomplete for this provider."
             return payload
-        if requested_auth == "oauth":
-            flow = ProviderAuthFlow(
-                flow_id=f"flow-{uuid.uuid4().hex[:12]}",
-                provider_id=spec["provider_id"],
-                auth_method=requested_auth,
-                status="oauth_required",
-                state=uuid.uuid4().hex,
-                metadata={"runtime_mode": self.runtime_mode},
-            )
-            self.storage.save_provider_auth_flow(flow)
-            connection = self._save_connection(
-                provider_id=spec["provider_id"],
-                auth_method=requested_auth,
-                status="oauth_required",
-            )
-            payload = self._provider_payload(spec["provider_id"])
-            payload["connection_id"] = connection.connection_id
-            payload["flow"] = flow.to_dict()
-            payload["message"] = "OAuth metadata flow recorded. Provider-specific callback completion is deferred."
-            return payload
-        resolved = self._provider_payload(spec["provider_id"])
-        target_status = str(resolved["status"])
-        if requested_auth == "api_key" and target_status != "connected":
-            target_status = "api_key_required"
+
+        payload = self._provider_payload(provider_key)
+        target_status = "connected" if payload["configured"] else "api_key_required"
         connection = self._save_connection(
-            provider_id=spec["provider_id"],
+            provider_id=provider_key,
             auth_method=requested_auth,
             status=target_status,
+            failure_reason="" if payload["configured"] else payload["failure_reason"],
         )
-        resolved = self._provider_payload(spec["provider_id"])
-        resolved["connection_id"] = connection.connection_id
-        resolved["status"] = target_status
-        resolved["message"] = "Provider connect foundation recorded setup intent."
-        return resolved
+        payload = self._provider_payload(provider_key)
+        payload["connection_id"] = connection.connection_id
+        payload["status"] = target_status
+        payload["message"] = "Provider connect start returned the secure Mystic LAB setup page."
+        return payload
 
     def provider_connect_callback_status(self, *, provider_id: str, flow_id: str) -> dict[str, Any]:
         flow = self._load_flow_safe(flow_id)
@@ -324,7 +429,7 @@ class ProviderConnectManager:
             raise ValueError(f"Unknown provider auth flow: {flow_id}")
         return {
             "provider": self._provider_payload(provider_id),
-            "flow": flow.to_dict(),
+            "flow": flow.to_public_dict(),
             "callback_received": bool(flow.callback_received_at),
         }
 
@@ -339,11 +444,8 @@ class ProviderConnectManager:
                 "optional_secret_names": list(spec["optional_secret_names"]),
                 "configured_secret_names": secret_state["configured_secret_names"],
                 "missing_secret_names": secret_state["missing_secret_names"],
-                "instructions": [
-                    "Do not store provider secrets in Supabase.",
-                    "Store production provider secrets only in Cloudflare Worker secret storage or approved server-side secret storage.",
-                    "Do not paste API keys into tool output or chat transcripts.",
-                ],
+                "instructions": self._manual_secret_instructions(spec),
+                "direct_secret_write_supported": False,
                 "runtime_mode": self.runtime_mode,
             }
         )
@@ -361,9 +463,10 @@ class ProviderConnectManager:
         connection = self._save_connection(
             provider_id=provider_key,
             auth_method=str(payload["auth_method"]),
-            status=str(payload["status"]),
+            status=str(payload["provider_status"]),
             last_verified_at=utc_now_iso(),
             model_list=list(payload.get("model_list", [])),
+            failure_reason=str(payload.get("failure_reason", "")),
         )
         verified = self._provider_payload(provider_key)
         verified["connection_id"] = connection.connection_id
@@ -389,13 +492,12 @@ class ProviderConnectManager:
 
     def provider_model_list(self, *, provider_id: str) -> dict[str, Any]:
         payload = self._provider_payload(provider_id)
-        status = str(payload["status"])
-        if status != "connected":
+        if payload["provider_status"] != "connected":
             return {
                 "provider_id": payload["provider_id"],
                 "provider_type": payload["provider_type"],
                 "auth_method": payload["auth_method"],
-                "status": status,
+                "status": payload["provider_status"],
                 "model_list": [],
                 "setup_url": payload["setup_url"],
                 "setup_instructions": payload["setup_instructions"],
@@ -404,7 +506,7 @@ class ProviderConnectManager:
             "provider_id": payload["provider_id"],
             "provider_type": payload["provider_type"],
             "auth_method": payload["auth_method"],
-            "status": status,
+            "status": payload["provider_status"],
             "model_list": list(payload.get("model_list", [])),
         }
 
@@ -425,7 +527,7 @@ class ProviderConnectManager:
             "provider_type": payload["provider_type"],
             "auth_method": payload["auth_method"],
             "status": "provider_required",
-            "message": "Provider Connect foundation does not expose direct real provider test calls yet.",
+            "message": "Provider Connect does not expose direct real provider test calls until model-call routing is isolated safely.",
             "setup_url": payload["setup_url"],
             "setup_instructions": payload["setup_instructions"],
         }
@@ -434,28 +536,47 @@ class ProviderConnectManager:
         spec = provider_catalog(provider_id)
         connection = self._load_connection_safe(spec["provider_id"])
         secret_state = self._secret_state(spec)
-        status = self._resolve_status(spec, connection, secret_state)
+        oauth_metadata = self._oauth_metadata(spec)
+        provider_status = self._resolve_status(spec, connection, secret_state, oauth_metadata)
         model_list = self._model_list(spec, connection)
         auth_method = connection.auth_method if connection is not None else spec["default_auth_method"]
+        route_urls = self._route_urls(spec["provider_id"])
+        metadata = dict(connection.metadata if connection is not None else {})
+        metadata.setdefault("external_setup_url", spec.get("external_setup_url", ""))
         return {
             "provider_id": spec["provider_id"],
             "provider_type": spec["provider_type"],
             "auth_method": auth_method,
-            "status": status,
+            "auth_mode": "oauth" if oauth_metadata["configured"] else ("api_key" if spec.get("supports_api_key", False) else auth_method),
+            "status": provider_status,
+            "provider_status": provider_status,
             "scopes": list(connection.scopes if connection is not None and connection.scopes else spec["scopes"]),
             "model_list": model_list,
-            "setup_url": connection.setup_url if connection is not None and connection.setup_url else spec["setup_url"],
+            "setup_url": route_urls["setup_url"],
+            "connect_url": route_urls["connect_url"],
+            "status_url": route_urls["status_url"],
+            "external_setup_url": spec.get("external_setup_url", ""),
             "setup_instructions": (
                 connection.setup_instructions
                 if connection is not None and connection.setup_instructions
                 else spec["setup_instructions"]
             ),
             "last_verified_at": connection.last_verified_at if connection is not None else "",
-            "failure_reason": connection.failure_reason if connection is not None else "",
-            "metadata": connection.metadata if connection is not None else {},
+            "failure_reason": (
+                connection.failure_reason
+                if connection is not None and connection.failure_reason
+                else self._default_failure_reason(spec, provider_status, oauth_metadata, secret_state)
+            ),
+            "metadata": metadata,
+            "configured": provider_status == "connected",
             "configured_secret_names": secret_state["configured_secret_names"],
             "missing_secret_names": secret_state["missing_secret_names"],
+            "required_secret_names": secret_state["required_secret_names"],
+            "missing_required_secret_names": secret_state["missing_required_secret_names"],
             "runtime_mode": self.runtime_mode,
+            "oauth_supported": oauth_metadata["available"],
+            "oauth_configured": oauth_metadata["configured"],
+            "oauth_authorization_endpoint": oauth_metadata["authorization_endpoint"],
         }
 
     def _resolve_status(
@@ -463,6 +584,7 @@ class ProviderConnectManager:
         spec: dict[str, Any],
         connection: ProviderConnection | None,
         secret_state: dict[str, list[str]],
+        oauth_metadata: dict[str, Any],
     ) -> str:
         if connection is not None and connection.status in {
             "disconnected",
@@ -474,20 +596,26 @@ class ProviderConnectManager:
         if spec.get("test_only"):
             return "connected"
         auth_method = connection.auth_method if connection is not None else spec["default_auth_method"]
-        if auth_method in {"oauth", "bearer_token"} and not spec.get("supports_oauth", False):
-            return "api_key_required"
         if auth_method == "oauth":
-            return "oauth_required"
+            if oauth_metadata["configured"]:
+                return "oauth_required"
+            if spec.get("supports_api_key", False):
+                return "api_key_required"
+            return "not_configured"
+        if auth_method == "bearer_token":
+            if oauth_metadata["configured"]:
+                return "oauth_required"
+            if spec.get("supports_api_key", False):
+                return "api_key_required"
+            return "not_configured"
         if secret_state["required_secret_names"] and not secret_state["missing_required_secret_names"]:
             return "connected"
-        if auth_method == "bearer_token":
-            return "oauth_required"
         if connection is None and not secret_state["configured_secret_names"]:
             return "not_configured"
         return "api_key_required"
 
     def _secret_state(self, spec: dict[str, Any]) -> dict[str, list[str]]:
-        configured = [name for name in spec["secret_names"] if str(os.environ.get(name, "")).strip()]
+        configured = [name for name in spec["secret_names"] if _trimmed(os.environ.get(name))]
         missing = [name for name in spec["secret_names"] if name not in configured]
         missing_required = [name for name in spec["required_secret_names"] if name not in configured]
         return {
@@ -500,10 +628,121 @@ class ProviderConnectManager:
     def _model_list(self, spec: dict[str, Any], connection: ProviderConnection | None) -> list[str]:
         if connection is not None and connection.model_list:
             return list(connection.model_list)
-        models = [str(os.environ.get(name, "")).strip() for name in spec["model_env_names"] if str(os.environ.get(name, "")).strip()]
+        models = [_trimmed(os.environ.get(name)) for name in spec["model_env_names"] if _trimmed(os.environ.get(name))]
         if models:
             return models
         return list(spec["default_models"])
+
+    def _manual_secret_instructions(self, spec: dict[str, Any]) -> list[str]:
+        instructions = [
+            "Do not store provider secrets in Supabase.",
+            "Store production provider secrets only in Cloudflare Worker secret storage or approved server-side secret storage.",
+            "Do not paste API keys into tool output or chat transcripts.",
+        ]
+        if spec["required_secret_names"]:
+            instructions.extend(
+                [f"wrangler secret put {name} --name mystic" for name in spec["required_secret_names"]]
+            )
+        for name in spec["optional_secret_names"]:
+            instructions.append(f"Set optional provider variable or secret {name} if needed.")
+        return instructions
+
+    def _oauth_metadata(self, spec: dict[str, Any]) -> dict[str, Any]:
+        prefix = spec.get("oauth_env_prefix", "")
+        if not prefix:
+            return {
+                "available": False,
+                "configured": False,
+                "authorization_endpoint": "",
+                "token_endpoint": "",
+                "client_id": "",
+                "redirect_uri": "",
+                "scopes": [],
+            }
+        enabled = _truthy_env(os.environ.get(f"{prefix}_OAUTH_ENABLED"))
+        authorization_endpoint = _trimmed(
+            os.environ.get(f"{prefix}_AUTHORIZATION_ENDPOINT"),
+            spec.get("oauth_default_authorization_endpoint", ""),
+        )
+        token_endpoint = _trimmed(
+            os.environ.get(f"{prefix}_TOKEN_ENDPOINT"),
+            spec.get("oauth_default_token_endpoint", ""),
+        )
+        client_id = _trimmed(os.environ.get(f"{prefix}_CLIENT_ID"))
+        redirect_uri = _trimmed(
+            os.environ.get(f"{prefix}_REDIRECT_URI"),
+            f"{_route_base_url(self.runtime_mode)}/providers/oauth/callback?provider_id={spec['provider_id']}",
+        )
+        scopes_env = _trimmed(os.environ.get(f"{prefix}_SCOPES"))
+        scopes = [item for item in scopes_env.split() if item] if scopes_env else list(spec.get("oauth_default_scopes", []))
+        configured = bool(enabled and authorization_endpoint and client_id and redirect_uri)
+        available = bool(spec.get("supports_oauth"))
+        return {
+            "available": available,
+            "configured": configured,
+            "enabled": enabled,
+            "authorization_endpoint": authorization_endpoint,
+            "token_endpoint": token_endpoint,
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "scopes": scopes,
+        }
+
+    def _build_authorization_url(
+        self,
+        *,
+        spec: dict[str, Any],
+        oauth_metadata: dict[str, Any],
+        flow_id: str,
+        state_value: str,
+        code_challenge: str,
+    ) -> str:
+        params = {
+            "response_type": "code",
+            "client_id": oauth_metadata["client_id"],
+            "redirect_uri": oauth_metadata["redirect_uri"],
+            "state": state_value,
+            "flow_id": flow_id,
+        }
+        if oauth_metadata["scopes"]:
+            params["scope"] = " ".join(oauth_metadata["scopes"])
+        if code_challenge:
+            params["code_challenge"] = code_challenge
+            params["code_challenge_method"] = "S256"
+        if spec["provider_id"] == "gemini":
+            params.setdefault("access_type", "offline")
+            params.setdefault("prompt", "consent")
+        return f"{oauth_metadata['authorization_endpoint']}?{urlencode(params)}"
+
+    def _route_urls(self, provider_id: str) -> dict[str, str]:
+        base_url = _route_base_url(self.runtime_mode)
+        return {
+            "providers_url": f"{base_url}/providers",
+            "connect_url": f"{base_url}/providers/{provider_id}/connect",
+            "setup_url": f"{base_url}/providers/{provider_id}/setup",
+            "status_url": f"{base_url}/providers/{provider_id}/status",
+            "callback_url": f"{base_url}/providers/oauth/callback?provider_id={provider_id}",
+        }
+
+    def _default_failure_reason(
+        self,
+        spec: dict[str, Any],
+        provider_status: str,
+        oauth_metadata: dict[str, Any],
+        secret_state: dict[str, list[str]],
+    ) -> str:
+        if provider_status == "connected":
+            return ""
+        if provider_status == "oauth_required" and not oauth_metadata["configured"]:
+            return "oauth_metadata_missing"
+        if provider_status == "api_key_required" and secret_state["missing_required_secret_names"]:
+            return "missing_required_secrets"
+        if provider_status == "not_configured" and spec.get("supports_api_key", False):
+            return "provider_not_configured"
+        return ""
+
+    def _state_hash(self, value: str) -> str:
+        return sha256(value.encode("utf-8")).hexdigest()
 
     def _save_connection(
         self,
@@ -518,6 +757,7 @@ class ProviderConnectManager:
     ) -> ProviderConnection:
         spec = provider_catalog(provider_id)
         existing = self._load_connection_safe(spec["provider_id"])
+        route_urls = self._route_urls(spec["provider_id"])
         connection = ProviderConnection(
             connection_id=existing.connection_id if existing is not None else f"provider-{spec['provider_id']}",
             provider_id=spec["provider_id"],
@@ -526,11 +766,17 @@ class ProviderConnectManager:
             status=status,
             scopes=list(existing.scopes if existing is not None and existing.scopes else spec["scopes"]),
             model_list=list(model_list if model_list is not None else (existing.model_list if existing is not None else self._model_list(spec, None))),
-            setup_url=spec["setup_url"],
+            setup_url=route_urls["setup_url"],
             setup_instructions=spec["setup_instructions"],
             last_verified_at=last_verified_at or (existing.last_verified_at if existing is not None else ""),
-            failure_reason=failure_reason,
-            metadata={**(existing.metadata if existing is not None else {}), **(metadata or {})},
+            failure_reason=failure_reason or (existing.failure_reason if existing is not None else ""),
+            metadata={
+                **(existing.metadata if existing is not None else {}),
+                "connect_url": route_urls["connect_url"],
+                "status_url": route_urls["status_url"],
+                "external_setup_url": spec.get("external_setup_url", ""),
+                **(metadata or {}),
+            },
             created_at=existing.created_at if existing is not None else utc_now_iso(),
         )
         connection.touch()

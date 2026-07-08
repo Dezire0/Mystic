@@ -179,8 +179,10 @@ create table if not exists public.provider_auth_flows (
   provider_id text not null,
   auth_method text not null,
   status text not null,
+  authorization_url text not null default '',
   redirect_url text not null default '',
   state text not null default '',
+  state_hash text not null default '',
   code_challenge text not null default '',
   code_challenge_method text not null default '',
   callback_received_at timestamptz,
@@ -191,3 +193,9 @@ create table if not exists public.provider_auth_flows (
 );
 
 create index if not exists provider_auth_flows_provider_id_idx on public.provider_auth_flows (provider_id, created_at);
+
+alter table public.provider_auth_flows
+  add column if not exists authorization_url text not null default '';
+
+alter table public.provider_auth_flows
+  add column if not exists state_hash text not null default '';

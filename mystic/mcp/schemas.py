@@ -672,18 +672,18 @@ TOOL_DEFINITIONS = [
     ),
     _tool_definition(
         "provider_connect_start",
-        "Record a provider setup intent and start the safe Provider Connect foundation flow for API key or OAuth metadata.",
+        "Return a real provider authorization URL when OAuth is configured, or a secure Mystic LAB setup URL when API-key auth is required.",
         title="Start Provider Connect",
     ),
     _tool_definition(
         "provider_connect_callback_status",
-        "Check the stored status of a provider OAuth metadata flow without exposing tokens or callback codes.",
+        "Check the safe stored status of a provider OAuth flow without exposing raw codes, tokens, or secrets.",
         title="Provider Callback Status",
         read_only=True,
     ),
     _tool_definition(
         "provider_configure_secret_instructions",
-        "Return safe Cloudflare secret setup instructions for a provider without printing secret values.",
+        "Return exact safe Cloudflare secret setup instructions for a provider without printing secret values.",
         title="Provider Secret Instructions",
         read_only=True,
     ),

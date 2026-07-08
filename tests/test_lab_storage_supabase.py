@@ -141,6 +141,11 @@ class SupabaseLabStorageTests(unittest.TestCase):
                 "MYSTIC_STORAGE_BACKEND": "supabase",
                 "MYSTIC_SUPABASE_URL": "https://example.supabase.co",
                 "MYSTIC_SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_OAUTH_ENABLED": "true",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_AUTHORIZATION_ENDPOINT": "https://provider.example.com/oauth/authorize",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_TOKEN_ENDPOINT": "https://provider.example.com/oauth/token",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_CLIENT_ID": "client-123",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_REDIRECT_URI": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=future_custom",
             },
             clear=False,
         ), patch("mystic.lab.storage.requests.request", side_effect=fake_api.request):
@@ -177,6 +182,11 @@ class SupabaseLabStorageTests(unittest.TestCase):
                 "MYSTIC_STORAGE_BACKEND": "supabase",
                 "MYSTIC_SUPABASE_URL": "https://example.supabase.co",
                 "MYSTIC_SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_OAUTH_ENABLED": "true",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_AUTHORIZATION_ENDPOINT": "https://provider.example.com/oauth/authorize",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_TOKEN_ENDPOINT": "https://provider.example.com/oauth/token",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_CLIENT_ID": "client-123",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_REDIRECT_URI": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=future_custom",
             },
             clear=False,
         ), patch("mystic.lab.storage.requests.request", side_effect=fake_api.request):
@@ -247,6 +257,11 @@ class SupabaseLabStorageTests(unittest.TestCase):
                 "MYSTIC_STORAGE_BACKEND": "supabase",
                 "MYSTIC_SUPABASE_URL": "https://example.supabase.co",
                 "MYSTIC_SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_OAUTH_ENABLED": "true",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_AUTHORIZATION_ENDPOINT": "https://provider.example.com/oauth/authorize",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_TOKEN_ENDPOINT": "https://provider.example.com/oauth/token",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_CLIENT_ID": "client-123",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_REDIRECT_URI": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=future_custom",
             },
             clear=False,
         ), patch("mystic.lab.storage.requests.request", side_effect=fake_api.request):
@@ -261,6 +276,7 @@ class SupabaseLabStorageTests(unittest.TestCase):
             disconnected = toolbox.provider_disconnect(provider_id="openai_compatible")
 
         self.assertEqual(started["status"], "oauth_required")
+        self.assertIn("authorization_url", started)
         self.assertEqual(callback["flow"]["status"], "oauth_required")
         self.assertIn(verified["status"], {"not_configured", "api_key_required"})
         self.assertEqual(disconnected["status"], "disconnected")

@@ -272,21 +272,49 @@ class MCPToolsTests(unittest.TestCase):
 
         self.assertEqual(listing["providers"][0]["provider_id"], "openai_compatible")
         self.assertIn(status["status"], {"not_configured", "api_key_required"})
+        self.assertIn("/providers/openai_compatible/setup", status["setup_url"])
+        self.assertIn("/providers/openai_compatible/connect", status["connect_url"])
         self.assertIn("MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY", instructions["secret_names"])
         self.assertNotIn("sk-", json.dumps(instructions))
+        self.assertFalse(instructions["direct_secret_write_supported"])
         self.assertIn(verified["status"], {"not_configured", "api_key_required"})
         self.assertEqual(models["status"], verified["status"])
         self.assertEqual(call_test["status"], "provider_required")
 
-    def test_provider_connect_start_and_callback_status_cover_oauth_metadata_flow(self):
+    def test_provider_connect_start_returns_setup_url_for_api_key_provider(self):
         toolbox = self._make_toolbox()
-        started = toolbox.provider_connect_start(provider_id="future_custom", auth_method="oauth")
-        callback = toolbox.provider_connect_callback_status(
-            provider_id="future_custom",
-            flow_id=started["flow"]["flow_id"],
-        )
+        started = toolbox.provider_connect_start(provider_id="gemini", auth_method="oauth")
+
+        self.assertEqual(started["status"], "api_key_required")
+        self.assertEqual(started["auth_method"], "api_key")
+        self.assertIn("/providers/gemini/setup", started["setup_url"])
+        self.assertNotIn("authorization_url", started)
+
+    def test_provider_connect_start_and_callback_status_cover_oauth_metadata_flow(self):
+        with patch.dict(
+            os.environ,
+            {
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_OAUTH_ENABLED": "true",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_AUTHORIZATION_ENDPOINT": "https://provider.example.com/oauth/authorize",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_TOKEN_ENDPOINT": "https://provider.example.com/oauth/token",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_CLIENT_ID": "client-123",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_REDIRECT_URI": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=future_custom",
+                "MYSTIC_PROVIDER_FUTURE_CUSTOM_SCOPES": "model:generate profile",
+            },
+            clear=False,
+        ):
+            toolbox = self._make_toolbox()
+            started = toolbox.provider_connect_start(provider_id="future_custom", auth_method="oauth")
+            callback = toolbox.provider_connect_callback_status(
+                provider_id="future_custom",
+                flow_id=started["flow"]["flow_id"],
+            )
 
         self.assertEqual(started["status"], "oauth_required")
+        self.assertIn("authorization_url", started)
+        self.assertIn("provider.example.com/oauth/authorize", started["authorization_url"])
+        self.assertNotIn("state", callback["flow"])
+        self.assertTrue(callback["flow"]["state_hash"])
         self.assertEqual(callback["flow"]["status"], "oauth_required")
         self.assertFalse(callback["callback_received"])
 

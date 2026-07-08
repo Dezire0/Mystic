@@ -39,6 +39,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             "MYSTIC_OAUTH_ISSUER": "https://mystic.dexproject.workers.dev",
             "MYSTIC_OAUTH_SIGNING_SECRET": "secret-signing-key",
             "MYSTIC_OAUTH_DEV_STATIC_TOKEN": "dev-static-token",
+            "MYSTIC_PROVIDER_CONNECT_BASE_URL": "https://mystic.dexproject.workers.dev",
         }
         self.auth_headers = {"Authorization": "Bearer dev-static-token"}
         self.request_url = "https://mystic.dexproject.workers.dev/mcp"
@@ -110,11 +111,14 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             "status": status,
             "scopes": ["model:generate"],
             "model_list": ["mock-model"] if provider_id == "mock" else [f"{provider_id}-model"],
-            "setup_url": "",
+            "setup_url": f"https://mystic.dexproject.workers.dev/providers/{provider_id}/setup",
             "setup_instructions": "setup",
             "last_verified_at": "2026-07-06T01:01:01Z",
             "failure_reason": "",
-            "metadata": {},
+            "metadata": {
+                "connect_url": f"https://mystic.dexproject.workers.dev/providers/{provider_id}/connect",
+                "status_url": f"https://mystic.dexproject.workers.dev/providers/{provider_id}/status",
+            },
             "created_at": "2026-07-06T01:01:01Z",
             "updated_at": "2026-07-06T01:01:01Z",
         }
@@ -249,9 +253,64 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertEqual(payload["runtime_mode"], "cloud_native_worker_lab_v0")
         self.assertIn("health_check", payload["tools"])
         self.assertIn("provider_list", payload["tools"])
+        self.assertTrue(payload["chatgpt_remote_import_ready_candidate"])
+        self.assertFalse(payload["chatgpt_remote_import_ready"])
         self.assertEqual(result["fetchCalls"], [])
 
+    def test_cloud_phase1_mystic_status_reports_verified_import_when_runtime_artifact_is_configured(self) -> None:
+        verification_payload = {
+            "artifact_version": 1,
+            "verified_at": "2026-07-07T13:48:38.147408+00:00",
+            "verified_by": "manual",
+            "public_endpoint": "https://mystic.dexproject.workers.dev",
+            "mcp_endpoint": "https://mystic.dexproject.workers.dev/mcp",
+            "chatgpt_developer_mode_imported": True,
+            "oauth_flow_completed": True,
+            "tools_list_visible_in_chatgpt": True,
+            "required_tools_visible": [
+                "health_check",
+                "lab_session_create",
+                "lab_session_get",
+                "lab_report_generate",
+            ],
+            "manual_tool_call_results": {
+                "health_check": "passed",
+                "lab_session_create": "passed",
+                "lab_session_get": "passed",
+                "lab_report_generate": "passed",
+            },
+            "notes": "manual verification notes",
+        }
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": {
+                    **self.env,
+                    "MYSTIC_CHATGPT_IMPORT_VERIFICATION_JSON": json.dumps(verification_payload),
+                },
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 11,
+                    "method": "tools/call",
+                    "params": {"name": "mystic_status", "arguments": {}},
+                },
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertTrue(payload["chatgpt_remote_import_ready"])
+        self.assertTrue(payload["manual_import_verification_checked"])
+        self.assertTrue(payload["manual_import_verified"])
+        self.assertEqual(payload["manual_import_verification_path"], "env://MYSTIC_CHATGPT_IMPORT_VERIFICATION_JSON")
+        self.assertNotIn("MANUAL_IMPORT_NOT_VERIFIED", payload["blockers"])
+        self.assertEqual(payload["manual_import_verification_summary"]["verified_by"], "manual")
+        self.assertNotIn("notes", json.dumps(payload))
+
     def test_cloud_provider_list_and_status_return_safe_registry_data(self) -> None:
+        legacy_row = self._provider_connection_row("openai_compatible", status="api_key_required")
+        legacy_row["setup_url"] = "https://platform.openai.com/api-keys"
+        legacy_row["metadata"]["external_setup_url"] = "https://platform.openai.com/api-keys"
         list_result = run_worker_helper(
             "simulateRequest",
             {
@@ -260,7 +319,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "headers": self.auth_headers,
                 "body": {"jsonrpc": "2.0", "id": 101, "method": "tools/call", "params": {"name": "provider_list", "arguments": {}}},
                 "fetchResponses": [
-                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": [legacy_row]},
                 ],
             },
         )
@@ -277,7 +336,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                     "params": {"name": "provider_status", "arguments": {"provider_id": "openai_compatible"}},
                 },
                 "fetchResponses": [
-                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": [legacy_row]},
                 ],
             },
         )
@@ -301,14 +360,26 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         instructions = instructions_result["body"]["result"]["structuredContent"]
         self.assertEqual(listing["providers"][0]["provider_id"], "openai_compatible")
         self.assertIn(status["status"], {"not_configured", "api_key_required"})
+        self.assertIn("/providers/openai_compatible/setup", status["setup_url"])
+        self.assertIn("/providers/openai_compatible/connect", status["connect_url"])
+        self.assertEqual(listing["providers"][0]["external_setup_url"], "https://platform.openai.com/api-keys")
         self.assertIn("MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY", instructions["secret_names"])
         self.assertNotIn("service-role-key", json.dumps(instructions))
+        self.assertFalse(instructions["direct_secret_write_supported"])
 
     def test_cloud_provider_connect_start_and_callback_status_record_oauth_metadata_flow(self) -> None:
         connect_result = run_worker_helper(
             "simulateRequest",
             {
-                "env": self.env,
+                "env": {
+                    **self.env,
+                    "MYSTIC_PROVIDER_FUTURE_CUSTOM_OAUTH_ENABLED": "true",
+                    "MYSTIC_PROVIDER_FUTURE_CUSTOM_AUTHORIZATION_ENDPOINT": "https://provider.example.com/oauth/authorize",
+                    "MYSTIC_PROVIDER_FUTURE_CUSTOM_TOKEN_ENDPOINT": "https://provider.example.com/oauth/token",
+                    "MYSTIC_PROVIDER_FUTURE_CUSTOM_CLIENT_ID": "client-123",
+                    "MYSTIC_PROVIDER_FUTURE_CUSTOM_REDIRECT_URI": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=future_custom",
+                    "MYSTIC_PROVIDER_FUTURE_CUSTOM_SCOPES": "model:generate profile",
+                },
                 "requestUrl": self.request_url,
                 "headers": self.auth_headers,
                 "body": {
@@ -352,10 +423,12 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                                 "provider_id": "future_custom",
                                 "auth_method": "oauth",
                                 "status": "oauth_required",
-                                "redirect_url": "",
-                                "state": "state-1",
-                                "code_challenge": "",
-                                "code_challenge_method": "",
+                                "authorization_url": "https://provider.example.com/oauth/authorize?response_type=code",
+                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=future_custom",
+                                "state": "",
+                                "state_hash": "abc123",
+                                "code_challenge": "challenge-1",
+                                "code_challenge_method": "S256",
                                 "callback_received_at": None,
                                 "failure_reason": "",
                                 "metadata": {},
@@ -373,8 +446,81 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             },
         )
         self.assertEqual(connect_result["body"]["result"]["structuredContent"]["status"], "oauth_required")
+        self.assertIn("provider.example.com/oauth/authorize", connect_result["body"]["result"]["structuredContent"]["authorization_url"])
+        self.assertNotIn("state", callback_result["body"]["result"]["structuredContent"]["flow"])
+        self.assertTrue(callback_result["body"]["result"]["structuredContent"]["flow"]["state_hash"])
         self.assertEqual(callback_result["body"]["result"]["structuredContent"]["flow"]["status"], "oauth_required")
         self.assertFalse(callback_result["body"]["result"]["structuredContent"]["callback_received"])
+
+    def test_cloud_provider_connect_start_returns_secure_setup_url_for_api_key_provider(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 111,
+                    "method": "tools/call",
+                    "params": {"name": "provider_connect_start", "arguments": {"provider_id": "gemini", "auth_method": "oauth"}},
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["status"], "api_key_required")
+        self.assertEqual(payload["auth_method"], "api_key")
+        self.assertIn("/providers/gemini/setup", payload["setup_url"])
+
+    def test_provider_pages_and_secret_route_never_expose_secret_values(self) -> None:
+        setup_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": {**self.env, "MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY": "sk-secret-live"},
+                "requestUrl": "https://mystic.dexproject.workers.dev/providers/openai_compatible/setup",
+                "method": "GET",
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                ],
+            },
+        )
+        secret_post = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": "https://mystic.dexproject.workers.dev/providers/openai_compatible/secret",
+                "method": "POST",
+                "headers": {"Content-Type": "application/json"},
+                "rawBody": json.dumps({"secret_name": "MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY", "secret_value": "sk-secret-live"}),
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                ],
+            },
+        )
+        self.assertEqual(setup_result["status"], 200)
+        self.assertIn("MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY", setup_result["body"])
+        self.assertNotIn("sk-secret-live", setup_result["body"])
+        self.assertEqual(secret_post["status"], 501)
+        self.assertNotIn("sk-secret-live", json.dumps(secret_post["body"]))
+
+    def test_provider_status_route_returns_safe_json(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": "https://mystic.dexproject.workers.dev/providers/openai_compatible/status",
+                "method": "GET",
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 200)
+        self.assertEqual(result["body"]["provider_id"], "openai_compatible")
+        self.assertIn("/providers/openai_compatible/setup", result["body"]["setup_url"])
 
     def test_cloud_provider_verify_disconnect_model_list_and_call_test_follow_foundation_contract(self) -> None:
         verify_result = run_worker_helper(
