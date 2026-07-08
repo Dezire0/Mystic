@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from mystic.mcp.tools import MysticToolbox
 from mystic.models.router import ModelRouter
@@ -104,6 +105,49 @@ class LabRunnerTests(unittest.TestCase):
         updated = self.toolbox.lab_session_get(session_id=created["session_id"])
         self.assertIn(updated["claims"][0]["status"], {"FAILED", "REFUTED"})
         self.assertTrue(updated["failures"])
+
+    def test_lab_referee_review_can_use_mock_provider_when_requested(self):
+        created = self.toolbox.lab_session_create(
+            problem="Check whether x + y = 5 has a valid positive integer pair.",
+            domain="math",
+            goal="Run provider-backed referee review.",
+            mode="proof_critical",
+            participants=["mock"],
+        )
+        self.toolbox.lab_memory_write(
+            session_id=created["session_id"],
+            kind="claim",
+            payload={
+                "text": "A positive integer pair exists.",
+                "claim_type": "result",
+                "status": "HEURISTIC",
+                "confidence": "low",
+                "source_turn_id": "manual",
+            },
+        )
+        with patch(
+            "mystic.lab.provider_router.ProviderRouter.invoke",
+            return_value={
+                "status": "completed",
+                "provider_id": "mock",
+                "model": "mock-model",
+                "output_text": '{"verdict":"VALID","critique":"Looks plausible.","first_fatal_error":"","recommended_next_action":"Keep claim."}',
+                "raw_usage_safe": {},
+                "latency_ms": 0,
+                "error_type": "",
+                "error_message_safe": "",
+                "call_id": "call-mock",
+                "storage_ref": "",
+            },
+        ):
+            review = self.toolbox.lab_referee_review(
+                session_id=created["session_id"],
+                text="A positive integer pair exists.",
+                strictness="hostile",
+                provider="mock",
+            )
+        self.assertEqual(review["verdict"], "VALID")
+        self.assertEqual(review["provider_result"]["status"], "completed")
 
 
 if __name__ == "__main__":

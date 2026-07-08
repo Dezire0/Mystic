@@ -12,6 +12,8 @@ from mystic.lab.claims import claims_from_turn
 from mystic.lab.experiments import summarize_experiment
 from mystic.lab.failures import make_failure
 from mystic.lab.memory_graph import make_edge
+from mystic.lab.provider_connect import ProviderConnectManager, normalize_provider_id
+from mystic.lab.provider_router import ProviderRouter, SUPPORTED_PROVIDER_IDS
 from mystic.lab.reality_anchor import normalize_claim_status
 from mystic.lab.reports import render_report
 from mystic.lab.schema import LAB_PHASES, PHASE_TO_ROOM
@@ -34,6 +36,8 @@ class LabRunner:
         self.verify_answer = verify_answer
         self.research_table_runner = research_table_runner
         self.storage = LabStorage(self.root_path)
+        self.provider_connect = ProviderConnectManager(storage=self.storage, runtime_mode="local_backend")
+        self.provider_router = ProviderRouter(storage=self.storage, runtime_mode="local_backend")
 
     def create_session(
         self,
@@ -175,6 +179,7 @@ class LabRunner:
             "turn_id": turn.turn_id,
             "status": turn.status,
             "output": turn.output,
+            "provider_result": turn.tool_results[0] if turn.tool_results else {},
             "extracted_claims": [item.to_dict() for item in new_claims],
             "next_actions": list(bundle.session.next_actions),
         }
@@ -186,9 +191,16 @@ class LabRunner:
         claim_id: str | None,
         text: str,
         strictness: str,
+        provider: str = "",
     ) -> dict[str, Any]:
         bundle = self.storage.load_bundle(session_id)
-        result = self._referee_review_in_bundle(bundle=bundle, claim_id=claim_id, text=text, strictness=strictness)
+        result = self._referee_review_in_bundle(
+            bundle=bundle,
+            claim_id=claim_id,
+            text=text,
+            strictness=strictness,
+            provider=provider,
+        )
         bundle.session.next_actions = ["Review referee verdict.", "Archive any failed claims."]
         bundle.session.touch()
         self.storage.save_bundle(bundle)
@@ -338,6 +350,17 @@ class LabRunner:
             raise ValueError("Model Arena currently requires use_existing_research_table=true")
         bundle = self.storage.load_bundle(session_id)
         selected = participants or [item["model_id"] for item in bundle.session.participants[:2] if item.get("model_id")]
+        if selected and all(self._resolve_provider_alias(item)[0] in SUPPORTED_PROVIDER_IDS for item in selected):
+            result = self._run_provider_debate_in_bundle(
+                bundle=bundle,
+                question=question,
+                participants=selected,
+                rounds=rounds,
+            )
+            bundle.session.next_actions = ["Review imported provider-backed debate claims.", "Run referee review on disputed claims."]
+            bundle.session.touch()
+            self.storage.save_bundle(bundle)
+            return result
         result, imported_claims, imported_failures, imported_experiments = self._run_model_arena_in_bundle(
             bundle=bundle,
             question=question,
@@ -757,6 +780,29 @@ class LabRunner:
         snapshot = self.router.status_snapshot() if hasattr(self.router, "status_snapshot") else {}
         models = []
         for model_id in participants:
+            provider_key = normalize_provider_id(model_id)
+            if provider_key in SUPPORTED_PROVIDER_IDS:
+                provider_status = self.provider_connect.provider_status(provider_id=provider_key)
+                ready = provider_key == "mock" or provider_status["status"] == "connected"
+                model_name = (
+                    provider_status.get("model_list", [provider_key])[0]
+                    if isinstance(provider_status.get("model_list"), list) and provider_status.get("model_list")
+                    else provider_key
+                )
+                models.append(
+                    {
+                        "model_id": provider_key,
+                        "provider": provider_key,
+                        "model_name": model_name,
+                        "status": {
+                            "state": provider_status["status"],
+                            "available": ready,
+                            "authenticated": ready,
+                            "message": provider_status.get("failure_reason", ""),
+                        },
+                    }
+                )
+                continue
             item = snapshot.get(model_id, {})
             status = item.get("status", {})
             models.append(
@@ -801,6 +847,18 @@ class LabRunner:
             )
         model_id = str(participant.get("model_id", ""))
         provider = str(participant.get("provider", "unknown"))
+        provider_key = self._provider_key_for_participant(participant)
+        if provider_key in SUPPORTED_PROVIDER_IDS:
+            return self._run_provider_turn(
+                bundle=bundle,
+                phase=phase,
+                agent_role=agent_role,
+                task=task,
+                context=context,
+                requested_tools=requested_tools,
+                provider_id=provider_key,
+                requested_model=str(participant.get("model_name", "")),
+            )
         result = self.router.call_model(
             model_id=model_id,
             role=model_role_for_agent(agent_role),
@@ -828,6 +886,60 @@ class LabRunner:
             error="" if result["status"] != "ERROR" else "Model call failed.",
         )
         return turn
+
+    def _run_provider_turn(
+        self,
+        *,
+        bundle: LabSessionBundle,
+        phase: str,
+        agent_role: str,
+        task: str,
+        context: str,
+        requested_tools: list[str],
+        provider_id: str,
+        requested_model: str,
+    ) -> LabTurn:
+        provider_result = self.provider_router.invoke(
+            provider_id=provider_id,
+            tool_name="lab_agent_run",
+            session_id=bundle.session.session_id,
+            agent_role=agent_role,
+            model=requested_model,
+            system_prompt=f"You are Mystic LAB agent {agent_role} operating in phase {phase}.",
+            prompt="\n".join(
+                [
+                    f"Problem: {bundle.session.problem}",
+                    f"Goal: {bundle.session.goal}",
+                    f"Task: {task}",
+                    "",
+                    "Context:",
+                    context,
+                ]
+            ),
+            metadata={"phase": phase},
+        )
+        turn_status = "completed"
+        if provider_result["status"] in {"provider_required", "api_key_required", "provider_auth_failed"}:
+            turn_status = "AUTH_REQUIRED"
+        elif provider_result["status"] != "completed":
+            turn_status = "ERROR"
+        output = provider_result["output_text"] or provider_result["error_message_safe"] or "Provider returned no output."
+        extracted_claims = self._extract_claim_payloads(output, phase=phase) if turn_status == "completed" else []
+        return LabTurn(
+            session_id=bundle.session.session_id,
+            phase=phase,
+            room=room_for_phase(phase),
+            agent_role=agent_role,
+            provider=provider_id,
+            model_name=provider_result["model"] or provider_id,
+            input_summary=task[:200],
+            output=output,
+            extracted_claims=extracted_claims,
+            requested_tools=requested_tools,
+            tool_results=[provider_result],
+            status=turn_status,
+            error="" if turn_status == "completed" else provider_result["error_message_safe"],
+        )
 
     @staticmethod
     def _extract_claim_payloads(text: str, *, phase: str) -> list[dict[str, Any]]:
@@ -977,7 +1089,17 @@ class LabRunner:
         claim_id: str | None,
         text: str,
         strictness: str,
+        provider: str = "",
     ) -> dict[str, Any]:
+        provider_key = normalize_provider_id(provider)
+        if provider_key in SUPPORTED_PROVIDER_IDS:
+            return self._provider_referee_review_in_bundle(
+                bundle=bundle,
+                claim_id=claim_id,
+                text=text,
+                strictness=strictness,
+                provider_id=provider_key,
+            )
         claim = self._claim_by_id(bundle, claim_id) if claim_id else None
         target_text = text.strip() or (claim.text if claim is not None else "")
         verification = self.verify_answer(problem=bundle.session.problem, candidate_answer=target_text)
@@ -1034,6 +1156,90 @@ class LabRunner:
             "failures": [item.to_dict() for item in failures],
         }
 
+    def _provider_referee_review_in_bundle(
+        self,
+        *,
+        bundle: LabSessionBundle,
+        claim_id: str | None,
+        text: str,
+        strictness: str,
+        provider_id: str,
+    ) -> dict[str, Any]:
+        claim = self._claim_by_id(bundle, claim_id) if claim_id else None
+        target_text = text.strip() or (claim.text if claim is not None else "")
+        provider_result = self.provider_router.invoke(
+            provider_id=provider_id,
+            tool_name="lab_referee_review",
+            session_id=bundle.session.session_id,
+            agent_role="Referee",
+            system_prompt="You are a strict Mystic LAB referee. Return JSON with keys verdict, critique, first_fatal_error, recommended_next_action.",
+            prompt="\n".join(
+                [
+                    f"Problem: {bundle.session.problem}",
+                    f"Strictness: {strictness}",
+                    f"Claim text: {target_text}",
+                    "If you cannot verify completely, return verdict UNKNOWN and explain the gap.",
+                ]
+            ),
+            metadata={"strictness": strictness, "claim_id": claim_id or ""},
+        )
+        parsed = self._parse_provider_referee_output(provider_result["output_text"])
+        verdict = parsed.get("verdict", "UNKNOWN")
+        first_fatal_error = parsed.get("first_fatal_error", "")
+        critique = parsed.get("critique", provider_result["error_message_safe"] or provider_result["output_text"])
+        recommended_next_action = parsed.get("recommended_next_action", "Review referee verdict.")
+        updated_claims: list[Claim] = []
+        failures = []
+        if provider_result["status"] == "completed" and claim is not None:
+            claim.status = normalize_claim_status(
+                verifier_verdict=verdict,
+                referee_fatal_error=bool(first_fatal_error and strictness == "hostile"),
+                incomplete_proof=verdict == "UNKNOWN",
+            )
+            claim.touch()
+            updated_claims.append(claim)
+            if first_fatal_error:
+                failure = make_failure(
+                    session_id=bundle.session.session_id,
+                    claim_id=claim.claim_id,
+                    source_turn_id="",
+                    first_fatal_error=first_fatal_error,
+                    failure_type="logic_gap",
+                    lesson="Provider-backed referee identified a failure or proof gap.",
+                )
+                bundle.failures.append(failure)
+                claim.related_failures.append(failure.failure_id)
+                failures.append(failure)
+        turn_status = "completed"
+        if provider_result["status"] in {"provider_required", "api_key_required", "provider_auth_failed"}:
+            turn_status = "AUTH_REQUIRED"
+        elif provider_result["status"] != "completed":
+            turn_status = "ERROR"
+        turn = LabTurn(
+            session_id=bundle.session.session_id,
+            phase="referee_review",
+            room=room_for_phase("referee_review"),
+            agent_role="Referee",
+            provider=provider_id,
+            model_name=provider_result["model"] or provider_id,
+            input_summary=target_text[:200],
+            output=provider_result["output_text"] or provider_result["error_message_safe"],
+            requested_tools=["lab_referee_review"],
+            tool_results=[provider_result],
+            status=turn_status,
+            error="" if turn_status == "completed" else provider_result["error_message_safe"],
+        )
+        bundle.turns.append(turn)
+        return {
+            "verdict": verdict if provider_result["status"] == "completed" else provider_result["status"].upper(),
+            "first_fatal_error": first_fatal_error,
+            "critique": critique,
+            "recommended_next_action": recommended_next_action,
+            "updated_claims": [item.to_dict() for item in updated_claims],
+            "failures": [item.to_dict() for item in failures],
+            "provider_result": provider_result,
+        }
+
     def _run_model_arena_in_bundle(
         self,
         *,
@@ -1070,6 +1276,136 @@ class LabRunner:
         )
         bundle.turns.append(arena_turn)
         return result, imported_claims, imported_failures, imported_experiments
+
+    def _run_provider_debate_in_bundle(
+        self,
+        *,
+        bundle: LabSessionBundle,
+        question: str,
+        participants: list[str],
+        rounds: list[str],
+    ) -> dict[str, Any]:
+        resolved = [self._resolve_provider_alias(item) for item in participants[:3]]
+        missing = [item for item in resolved if self._provider_readiness(item[0]) != "connected"]
+        if missing:
+            provider_status = self.provider_connect.provider_status(provider_id=missing[0][0])
+            return {
+                "debate_session_id": "",
+                "research_table_session_id": "",
+                "imported_claims": 0,
+                "imported_failures": 0,
+                "summary": "Provider-backed debate could not start because a participant is not connected.",
+                "provider_result": {
+                    "status": self.provider_router._status_from_provider_payload(provider_status),
+                    "provider_id": provider_status["provider_id"],
+                    "model": "",
+                    "output_text": "",
+                    "raw_usage_safe": {},
+                    "latency_ms": 0,
+                    "error_type": self.provider_router._status_from_provider_payload(provider_status),
+                    "error_message_safe": provider_status.get("setup_instructions", ""),
+                    "call_id": "",
+                    "storage_ref": "",
+                },
+                "transcript": [],
+                "final_synthesis": "",
+            }
+
+        transcript: list[dict[str, Any]] = []
+        imported_claims = 0
+        for provider_id, requested_model in resolved:
+            debate_prompt = "\n".join(
+                [
+                    "Participate in a Mystic LAB debate.",
+                    f"Question: {question or bundle.session.problem}",
+                    f"Rounds: {', '.join(rounds)}",
+                    "Prior transcript:",
+                    json.dumps(transcript, ensure_ascii=False),
+                ]
+            )
+            result = self.provider_router.invoke(
+                provider_id=provider_id,
+                tool_name="lab_models_debate",
+                session_id=bundle.session.session_id,
+                agent_role="ModelArena",
+                model=requested_model,
+                system_prompt="You are one participant in a structured research debate. Be explicit about assumptions and uncertainties.",
+                prompt=debate_prompt,
+                metadata={"rounds": rounds, "question": question},
+            )
+            turn_status = "completed" if result["status"] == "completed" else "ERROR"
+            output = result["output_text"] or result["error_message_safe"]
+            turn = LabTurn(
+                session_id=bundle.session.session_id,
+                phase="simulation_or_execution",
+                room="Model Arena",
+                agent_role="ModelArena",
+                provider=provider_id,
+                model_name=result["model"] or provider_id,
+                input_summary=(question or bundle.session.problem)[:200],
+                output=output,
+                extracted_claims=self._extract_claim_payloads(output, phase="simulation_or_execution") if turn_status == "completed" else [],
+                requested_tools=["lab_models_debate"],
+                tool_results=[result],
+                status=turn_status,
+                error="" if turn_status == "completed" else result["error_message_safe"],
+            )
+            bundle.turns.append(turn)
+            claims = claims_from_turn(bundle.session.session_id, turn) if turn_status == "completed" else []
+            if claims:
+                bundle.claims.extend(claims)
+                imported_claims += len(claims)
+            transcript.append(
+                {
+                    "provider_id": provider_id,
+                    "model": result["model"],
+                    "status": result["status"],
+                    "output_text": output,
+                    "call_id": result["call_id"],
+                }
+            )
+
+        synthesis_result = self.provider_router.invoke(
+            provider_id=resolved[0][0],
+            tool_name="lab_models_debate",
+            session_id=bundle.session.session_id,
+            agent_role="Synthesizer",
+            model=resolved[0][1],
+            system_prompt="You are the final synthesizer for a provider-backed Mystic LAB debate. Summarize agreement, disagreements, and next checks.",
+            prompt="\n".join(
+                [
+                    f"Question: {question or bundle.session.problem}",
+                    "Transcript:",
+                    json.dumps(transcript, ensure_ascii=False),
+                ]
+            ),
+            metadata={"rounds": rounds, "synthesis": True},
+        )
+        synthesis_turn = LabTurn(
+            session_id=bundle.session.session_id,
+            phase="simulation_or_execution",
+            room="Model Arena",
+            agent_role="Synthesizer",
+            provider=resolved[0][0],
+            model_name=synthesis_result["model"] or resolved[0][0],
+            input_summary=(question or bundle.session.problem)[:200],
+            output=synthesis_result["output_text"] or synthesis_result["error_message_safe"],
+            requested_tools=["lab_models_debate"],
+            tool_results=[synthesis_result],
+            status="completed" if synthesis_result["status"] == "completed" else "ERROR",
+            error="" if synthesis_result["status"] == "completed" else synthesis_result["error_message_safe"],
+        )
+        bundle.turns.append(synthesis_turn)
+        return {
+            "debate_session_id": f"debate-{uuid.uuid4().hex[:12]}",
+            "research_table_session_id": "",
+            "imported_claims": imported_claims,
+            "imported_failures": 0,
+            "summary": synthesis_turn.output or f"Provider-backed debate completed with {len(transcript)} participants.",
+            "transcript": transcript,
+            "final_synthesis": synthesis_turn.output,
+            "provider_results": [item["call_id"] for item in transcript],
+        }
 
     def _import_research_table(
         self,
@@ -1138,6 +1474,56 @@ class LabRunner:
             bundle.experiments.append(experiment)
             imported_experiments += 1
         return imported_claims, imported_failures, imported_experiments
+
+    @staticmethod
+    def _provider_key_for_participant(participant: dict[str, Any]) -> str:
+        provider = normalize_provider_id(str(participant.get("provider", "")))
+        if provider in SUPPORTED_PROVIDER_IDS:
+            return provider
+        model_id = normalize_provider_id(str(participant.get("model_id", "")))
+        return model_id if model_id in SUPPORTED_PROVIDER_IDS else ""
+
+    @staticmethod
+    def _resolve_provider_alias(value: str) -> tuple[str, str]:
+        raw = str(value or "").strip()
+        if ":" in raw:
+            provider_id, model = raw.split(":", 1)
+            return normalize_provider_id(provider_id), model.strip()
+        return normalize_provider_id(raw), ""
+
+    def _provider_readiness(self, provider_id: str) -> str:
+        if provider_id == "mock":
+            return "connected"
+        payload = self.provider_connect.provider_status(provider_id=provider_id)
+        return self.provider_router._status_from_provider_payload(payload)
+
+    @staticmethod
+    def _parse_provider_referee_output(text: str) -> dict[str, str]:
+        try:
+            payload = json.loads(text)
+        except (TypeError, json.JSONDecodeError):
+            return {
+                "verdict": "UNKNOWN",
+                "critique": str(text or "").strip() or "Provider referee did not return parseable JSON.",
+                "first_fatal_error": "",
+                "recommended_next_action": "Review provider-backed referee output manually.",
+            }
+        if not isinstance(payload, dict):
+            return {
+                "verdict": "UNKNOWN",
+                "critique": str(text or "").strip() or "Provider referee returned an unexpected payload.",
+                "first_fatal_error": "",
+                "recommended_next_action": "Review provider-backed referee output manually.",
+            }
+        verdict = str(payload.get("verdict", "UNKNOWN")).upper()
+        if verdict not in {"VALID", "INVALID", "UNKNOWN"}:
+            verdict = "UNKNOWN"
+        return {
+            "verdict": verdict,
+            "critique": str(payload.get("critique", "")).strip(),
+            "first_fatal_error": str(payload.get("first_fatal_error", "")).strip(),
+            "recommended_next_action": str(payload.get("recommended_next_action", "Review referee verdict.")).strip(),
+        }
 
     @staticmethod
     def _scene_object_by_id(scene_bundle: LabSceneBundle, object_id: str) -> LabSceneObject:

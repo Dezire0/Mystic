@@ -26,6 +26,8 @@ The current LAB status is intentionally conservative:
 - session orchestration is implemented
 - provider routing exists for explicit external model access
 - Provider Connect now returns real setup/connect destinations: real OAuth authorization URLs where configured and secure Mystic LAB setup pages where API-key auth is required
+- real provider-backed routing is now implemented for `provider_call_test`, explicit `lab_agent_run`, provider-backed `lab_models_debate`, and optional provider-backed `lab_referee_review`
+- safe `model_calls` records are persisted in local mode and Supabase for provider-backed execution traces
 - unsupported heavy paths return structured `deferred`
 - missing model providers return structured `provider_required`
 - Phase 1 scene tools, deterministic simple physics, and `scene.three_json` export are implemented
@@ -49,6 +51,7 @@ It keeps the design intentionally narrow:
 Mystic LAB includes a local-first AI Research Lab OS backend. It is a computational research orchestration layer, not a wet-lab control system and not a game.
 
 - lab sessions can be stored under `mystic_data/lab_sessions/` or in Supabase
+- provider-backed call traces can be stored under `mystic_data/model_calls/` or in Supabase
 - each session persists structured `session.json`, `turns.json`, `claims.json`, `experiments.json`, `failures.json`, `memory_edges.json`, `notebook.md`, and `report.md`
 - the Research Table acts as the Model Arena and can import discoveries back into a lab session
 - MCP `lab_*` tools expose session create/get/advance, role execution, referee review, experiment create/run, memory search/write, model debate, and report generation
@@ -285,8 +288,8 @@ Current cloud-native LAB tools exposed directly by the Worker:
 Cloud support levels:
 
 - fully cloud-backed via Supabase: `mystic_status`, `health_check`, `lab_session_create`, `lab_session_advance`, `lab_experiment_create`, `lab_memory_search`, `lab_memory_write`, `lab_session_get`, `lab_report_generate`
-- exposed with structured `deferred` responses until a worker-native executor exists: `lab_referee_review`, `lab_experiment_run`, `lab_models_debate` when `use_existing_research_table=false`
-- exposed with structured `provider_required` responses when an external model provider is not explicitly connected: `lab_agent_run`, `lab_models_debate`
+- exposed with structured `deferred` responses until a worker-native executor exists: `lab_experiment_run`, `lab_models_debate` when `use_existing_research_table=false`, and `lab_referee_review` when no deterministic or explicit provider-backed referee path is selected
+- exposed with structured `provider_required`, `api_key_required`, `provider_auth_failed`, `rate_limited`, or `provider_unavailable` responses when an external model provider cannot complete the requested call safely
 
 External model providers are never auto-logged-in by the Worker. Cloud-native model actions require explicit provider authorization through Cloudflare secrets or approved provider connection records.
 

@@ -511,25 +511,41 @@ class ProviderConnectManager:
         }
 
     def provider_call_test(self, *, provider_id: str, prompt: str) -> dict[str, Any]:
+        from mystic.lab.provider_router import ProviderRouter
+
         provider_key = normalize_provider_id(provider_id)
-        if provider_key == "mock":
-            return {
-                "provider_id": "mock",
-                "provider_type": "future/custom",
-                "auth_method": "none/mock",
-                "status": "completed",
-                "output": f"mock:{str(prompt).strip() or 'ping'}",
-                "test_only": True,
-            }
-        payload = self._provider_payload(provider_key)
+        payload = self._provider_payload(provider_key) if provider_key != "mock" else {
+            "provider_id": "mock",
+            "provider_type": "future/custom",
+            "auth_method": "none/mock",
+            "setup_url": "",
+            "setup_instructions": "Mock provider is test-only and must not be used for production routing.",
+        }
+        result = ProviderRouter(storage=self.storage, runtime_mode=self.runtime_mode).invoke(
+            provider_id=provider_key,
+            tool_name="provider_call_test",
+            prompt=str(prompt).strip() or "ping",
+            agent_role="ProviderTest",
+            metadata={"test_only": provider_key == "mock"},
+        )
         return {
             "provider_id": payload["provider_id"],
             "provider_type": payload["provider_type"],
             "auth_method": payload["auth_method"],
-            "status": "provider_required",
-            "message": "Provider Connect does not expose direct real provider test calls until model-call routing is isolated safely.",
-            "setup_url": payload["setup_url"],
-            "setup_instructions": payload["setup_instructions"],
+            "status": result["status"],
+            "model": result["model"],
+            "output": result["output_text"],
+            "output_text": result["output_text"],
+            "latency_ms": result["latency_ms"],
+            "usage": result["raw_usage_safe"],
+            "error_type": result["error_type"],
+            "message": result["error_message_safe"],
+            "error_message_safe": result["error_message_safe"],
+            "call_id": result["call_id"],
+            "storage_ref": result["storage_ref"],
+            "test_only": provider_key == "mock",
+            "setup_url": payload.get("setup_url", ""),
+            "setup_instructions": payload.get("setup_instructions", ""),
         }
 
     def _provider_payload(self, provider_id: str) -> dict[str, Any]:

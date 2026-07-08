@@ -10,7 +10,6 @@ from typing import Any
 
 from mystic.debate.runner import DebateRunner
 from mystic.final_answer_verifier import extract_candidate_tuples, verify_final_answer
-from mystic.lab.provider_connect import ProviderConnectManager
 from mystic.lab.runner import LabRunner
 from mystic.mcp.import_verification import (
     default_verification_artifact_path,
@@ -108,7 +107,7 @@ class MysticToolbox:
             verify_answer=self.mystic_verify_answer,
             research_table_runner=self.research_table_runner,
         )
-        self.provider_connect = ProviderConnectManager(storage=self.lab_runner.storage, runtime_mode="local_backend")
+        self.provider_connect = self.lab_runner.provider_connect
         self._ensure_data_dirs()
 
     def mystic_status(self) -> dict[str, Any]:
@@ -567,12 +566,14 @@ class MysticToolbox:
         claim_id: str | None = None,
         text: str,
         strictness: str,
+        provider: str = "",
     ) -> dict[str, Any]:
         return self.lab_runner.referee_review(
             session_id=session_id,
             claim_id=claim_id,
             text=text,
             strictness=strictness,
+            provider=provider,
         )
 
     def lab_experiment_create(
