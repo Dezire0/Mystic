@@ -321,6 +321,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "body": {"jsonrpc": "2.0", "id": 101, "method": "tools/call", "params": {"name": "provider_list", "arguments": {}}},
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": [legacy_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
                 ],
             },
         )
@@ -338,6 +339,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 },
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": [legacy_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
                 ],
             },
         )
@@ -543,6 +545,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "method": "GET",
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
                 ],
             },
         )
@@ -556,6 +559,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "rawBody": json.dumps({"secret_name": "MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY", "secret_value": "sk-secret-live"}),
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
                 ],
             },
         )
@@ -574,6 +578,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "method": "GET",
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
                 ],
             },
         )
@@ -655,7 +660,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertNotIn("secret-code", mismatch_result["body"])
         self.assertNotIn("secret-code", missing_state_result["body"])
 
-    def test_google_vertex_callback_records_safe_provider_required_state(self) -> None:
+    def test_google_vertex_callback_returns_token_storage_required_without_encryption_key(self) -> None:
         result = run_worker_helper(
             "simulateRequest",
             {
@@ -700,9 +705,73 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             },
         )
         self.assertEqual(result["status"], 200)
-        self.assertIn("provider_required", result["body"])
+        self.assertIn("token_storage_required", result["body"])
         self.assertNotIn("secret-code", result["body"])
         self.assertNotIn("google-client-secret", result["body"])
+
+    def test_google_vertex_callback_stores_encrypted_token_when_key_exists(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": {
+                    **self.env,
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED": "true",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID": "google-client-id",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET": "google-client-secret",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
+                    "MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY": "provider-token-encryption-key",
+                },
+                "requestUrl": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai&flow_id=flow-4&state=good-state&code=secret-code",
+                "method": "GET",
+                "fetchResponses": [
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_auth_flows",
+                        "status": 200,
+                        "body": [
+                            {
+                                "flow_id": "flow-4",
+                                "provider_id": "google_vertex_ai",
+                                "auth_method": "oauth",
+                                "status": "oauth_required",
+                                "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?response_type=code",
+                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai",
+                                "state": "",
+                                "state_hash": "aab27fa344587b4fe185e55703daafbcf3934e06b04f920fdb13aa440c25468f",
+                                "code_challenge": "challenge-1",
+                                "code_challenge_method": "S256",
+                                "callback_received_at": None,
+                                "failure_reason": "",
+                                "metadata": {"code_verifier": "verifier-123"},
+                                "created_at": "2026-07-06T01:01:01Z",
+                                "updated_at": "2026-07-06T01:01:01Z",
+                            }
+                        ],
+                    },
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_auth_flows", "status": 201, "body": [{}]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
+                    {
+                        "methodPrefix": "POST https://oauth2.googleapis.com/token",
+                        "status": 200,
+                        "body": {
+                            "access_token": "vertex-access-token",
+                            "refresh_token": "vertex-refresh-token",
+                            "id_token": "vertex-id-token",
+                            "token_type": "Bearer",
+                            "scope": "openid profile https://www.googleapis.com/auth/cloud-platform",
+                            "expires_in": 3600,
+                        },
+                    },
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 200)
+        self.assertIn("<code>connected</code>", result["body"])
+        self.assertNotIn("vertex-access-token", result["body"])
+        self.assertNotIn("vertex-refresh-token", result["body"])
 
     def test_cloud_gemini_remains_api_key_only_even_when_google_oauth_metadata_exists(self) -> None:
         result = run_worker_helper(
@@ -748,6 +817,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 },
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
                 ],
             },
@@ -766,6 +836,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 },
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
                 ],
             },
@@ -784,6 +855,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 },
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
                 ],
             },
@@ -805,6 +877,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 },
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
                 ],
             },
@@ -843,6 +916,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 },
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
                 ],
             },
@@ -871,6 +945,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 },
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
                 ],
             },
@@ -881,6 +956,63 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertFalse(verify_payload["metadata"]["oauth_token_storage_supported"])
         self.assertEqual(call_payload["status"], "oauth_required")
         self.assertIn("/providers/google_vertex_ai/connect", call_payload["connect_url"])
+
+    def test_cloud_google_vertex_verify_reports_connected_when_encrypted_token_exists(self) -> None:
+        verify_result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": {
+                    **self.env,
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED": "true",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID": "google-client-id",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET": "google-client-secret",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
+                    "MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY": "provider-token-encryption-key",
+                },
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 117,
+                    "method": "tools/call",
+                    "params": {"name": "provider_verify", "arguments": {"provider_id": "google_vertex_ai"}},
+                },
+                "fetchResponses": [
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections",
+                        "status": 200,
+                        "body": [self._provider_connection_row("google_vertex_ai", status="oauth_callback_received")],
+                    },
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens",
+                        "status": 200,
+                        "body": [
+                            {
+                                "token_id": "oauth-token-google_vertex_ai",
+                                "provider_id": "google_vertex_ai",
+                                "connection_id": "provider-google_vertex_ai",
+                                "encrypted_access_token": "mlabtok_v1:abc:def:ghi",
+                                "encrypted_refresh_token": "",
+                                "encrypted_id_token": "",
+                                "token_type": "Bearer",
+                                "scope_hash": "scope-hash",
+                                "expires_at": "2026-07-06T02:01:01Z",
+                                "status": "connected",
+                                "metadata_safe": {"refresh_token_present": False},
+                                "created_at": "2026-07-06T01:01:01Z",
+                                "updated_at": "2026-07-06T01:01:01Z",
+                            }
+                        ],
+                    },
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = verify_result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["status"], "connected")
+        self.assertTrue(payload["metadata"]["oauth_token_recorded"])
+        self.assertNotIn("encrypted_access_token", json.dumps(payload))
 
     def test_cloud_gemini_provider_call_test_still_returns_api_key_required_when_missing(self) -> None:
         result = run_worker_helper(
@@ -1473,7 +1605,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertEqual(payload["deferred"]["status"], "deferred")
         self.assertEqual(payload["experiment_id"], experiment_id)
 
-    def test_cloud_phase1_lab_models_debate_returns_provider_required_when_unconfigured(self) -> None:
+    def test_cloud_phase1_lab_models_debate_returns_api_key_required_when_unconfigured(self) -> None:
         session_id = "lab-debate"
         session_row = self._session_row(session_id)
         result = run_worker_helper(
@@ -1505,6 +1637,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
@@ -1516,7 +1649,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             },
         )
         payload = result["body"]["result"]["structuredContent"]
-        self.assertEqual(payload["provider_result"]["status"], "provider_required")
+        self.assertEqual(payload["provider_result"]["status"], "api_key_required")
 
     def test_cloud_phase1_lab_models_debate_can_use_mock_providers(self) -> None:
         session_id = "lab-debate-mock"

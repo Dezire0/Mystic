@@ -174,6 +174,23 @@ class ProviderRouter:
             )
 
         resolved_model = self._resolve_model(provider_status, model)
+        if normalized_provider == "google_vertex_ai":
+            return self._persist_result(
+                provider_id=provider_status["provider_id"],
+                tool_name=tool_name,
+                session_id=session_id,
+                agent_role=agent_role,
+                model=resolved_model,
+                prompt_hash=prompt_hash,
+                prompt_excerpt_safe=prompt_excerpt,
+                output_text="",
+                status="provider_required",
+                error_type="provider_required",
+                error_message_safe="Google Vertex AI token storage is connected, but model-call routing is still deferred to the next provider-routing issue.",
+                latency_ms=0,
+                raw_usage_safe={},
+                metadata=safe_metadata,
+            )
         started_at = time.perf_counter()
         try:
             response = self._invoke_remote(
@@ -333,6 +350,8 @@ class ProviderRouter:
     def _required_message(provider_status: dict[str, Any], mapped_status: str) -> str:
         if mapped_status == "oauth_required":
             return "Provider OAuth connection is required. Start the secure OAuth flow and retry."
+        if mapped_status == "token_storage_required":
+            return "Encrypted server-side token storage is required before OAuth-backed provider access can be completed."
         if mapped_status == "api_key_required":
             return "Provider credentials are not configured. Complete the secure setup flow and retry."
         if mapped_status == "provider_auth_failed":
@@ -349,6 +368,7 @@ class ProviderRouter:
         mapping = {
             "connected": "connected",
             "oauth_required": "oauth_required",
+            "token_storage_required": "token_storage_required",
             "api_key_required": "api_key_required",
             "not_configured": "api_key_required",
             "auth_failed": "provider_auth_failed",

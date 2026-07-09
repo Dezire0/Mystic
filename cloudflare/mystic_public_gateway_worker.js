@@ -2958,6 +2958,7 @@ function providerOauthMetadata(env, spec) {
   const missingConfigNames = requiredConfigNames.filter((name) => !trimmed(env[name]));
   const clientSecretConfigured = Boolean(clientSecret) || !Boolean(spec.oauth_require_client_secret);
   const available = Boolean(spec.supports_oauth);
+  const tokenStorageSupported = Boolean(trimmed(env.MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY));
   return {
     available,
     configured: Boolean(
@@ -2980,7 +2981,7 @@ function providerOauthMetadata(env, spec) {
     client_secret_configured: clientSecretConfigured,
     required_config_names: requiredConfigNames,
     missing_config_names: missingConfigNames,
-    token_storage_supported: Boolean(spec.oauth_token_storage_supported),
+    token_storage_supported: tokenStorageSupported,
   };
 }
 
@@ -2999,10 +3000,13 @@ function providerDefaultFailureReason(spec, status, oauthMetadata, secretState) 
   if (status === "connected") {
     return "";
   }
+  if (status === "oauth_callback_received") {
+    return "oauth_callback_received";
+  }
+  if (status === "token_storage_required") {
+    return "token_storage_required";
+  }
   if (status === "provider_required") {
-    if (spec.provider_id === "google_vertex_ai" && oauthMetadata.configured) {
-      return "oauth_storage_required";
-    }
     return "oauth_metadata_missing";
   }
   if (status === "oauth_required" && !oauthMetadata.configured) {
@@ -3019,7 +3023,7 @@ function providerDefaultFailureReason(spec, status, oauthMetadata, secretState) 
 
 function resolveProviderStatus(spec, row, secretState, oauthMetadata) {
   const storedStatus = trimmed(row.status);
-  if (["provider_required", "disconnected", "auth_failed", "rate_limited", "provider_unavailable"].includes(storedStatus)) {
+  if (["provider_required", "disconnected", "token_storage_required", "oauth_callback_received", "auth_failed", "rate_limited", "provider_unavailable"].includes(storedStatus)) {
     return storedStatus;
   }
   const authMethod = trimmed(row.auth_method, spec.default_auth_method);
@@ -3027,7 +3031,7 @@ function resolveProviderStatus(spec, row, secretState, oauthMetadata) {
     return "connected";
   }
   if (authMethod === "oauth") {
-    if (storedStatus === "connected") {
+    if (storedStatus === "connected" && (spec.provider_id !== "google_vertex_ai" || Boolean(row.metadata && row.metadata.oauth_token_recorded))) {
       return "connected";
     }
     if (spec.oauth_missing_status === "provider_required" && (secretState.missing_required_secret_names.length || oauthMetadata.missing_config_names.length)) {
@@ -3112,18 +3116,20 @@ function buildProviderRecord(env, providerId, row = {}) {
 
 function providerStatusMessage(record) {
   const status = trimmed(record.provider_status || record.status);
-  const failureReason = trimmed(record.failure_reason);
   if (status === "connected") {
     return "Provider is connected.";
   }
   if (status === "oauth_required") {
     return "Provider OAuth connection is required. Start the secure OAuth flow and retry.";
   }
+  if (status === "oauth_callback_received") {
+    return "OAuth callback was received. Mystic LAB is finalizing secure token storage.";
+  }
+  if (status === "token_storage_required") {
+    return "Encrypted server-side token storage is required before OAuth-backed provider access can be completed.";
+  }
   if (status === "api_key_required") {
     return "Provider credentials are not configured. Complete the secure setup flow and retry.";
-  }
-  if (status === "provider_required" && failureReason === "oauth_storage_required") {
-    return "OAuth callback metadata can be recorded, but encrypted server-side token storage is required before Google Vertex AI model calls can be enabled.";
   }
   if (status === "provider_required") {
     return "Provider configuration is incomplete. Add the required OAuth metadata and retry.";
@@ -3155,13 +3161,27 @@ async function loadProviderRegistry(env) {
     return { providers: fallback, warnings };
   }
   try {
-    const rows = await supabaseSelectRows(env, "provider_connections", {}, { order: "created_at.asc" });
+    const [rows, tokenRows] = await Promise.all([
+      supabaseSelectRows(env, "provider_connections", {}, { order: "created_at.asc" }),
+      supabaseSelectRows(env, "provider_oauth_tokens", {}, { order: "updated_at.asc" }),
+    ]);
+    const tokenMap = new Map(tokenRows.map((row) => [normalizeProviderId(row.provider_id), row]));
     for (const row of rows) {
       const providerId = normalizeProviderId(row.provider_id);
       if (!providerId) {
         continue;
       }
-      providerMap.set(providerId, buildProviderRecord(env, providerId, row));
+      const tokenRow = tokenMap.get(providerId);
+      const mergedMetadata = {
+        ...(row.metadata && typeof row.metadata === "object" ? row.metadata : {}),
+      };
+      if (tokenRow) {
+        mergedMetadata.oauth_token_recorded = true;
+        mergedMetadata.oauth_token_status = trimmed(tokenRow.status);
+        mergedMetadata.oauth_token_metadata_safe =
+          tokenRow.metadata_safe && typeof tokenRow.metadata_safe === "object" ? tokenRow.metadata_safe : {};
+      }
+      providerMap.set(providerId, buildProviderRecord(env, providerId, { ...row, metadata: mergedMetadata }));
     }
   } catch (error) {
     warnings.push(`provider_registry_unavailable:${String(error.message || error).slice(0, 120)}`);
@@ -3224,6 +3244,33 @@ async function loadProviderAuthFlow(env, flowId) {
   return supabaseSelectOne(env, "provider_auth_flows", { flow_id: `eq.${flowId}` });
 }
 
+async function upsertProviderOauthToken(env, tokenRow) {
+  const row = {
+    token_id: trimmed(tokenRow.token_id),
+    provider_id: normalizeProviderId(tokenRow.provider_id),
+    connection_id: trimmed(tokenRow.connection_id),
+    encrypted_access_token: trimmed(tokenRow.encrypted_access_token),
+    encrypted_refresh_token: trimmed(tokenRow.encrypted_refresh_token),
+    encrypted_id_token: trimmed(tokenRow.encrypted_id_token),
+    token_type: trimmed(tokenRow.token_type),
+    scope_hash: trimmed(tokenRow.scope_hash),
+    expires_at: tokenRow.expires_at || null,
+    status: trimmed(tokenRow.status, "connected"),
+    metadata_safe:
+      tokenRow.metadata_safe && typeof tokenRow.metadata_safe === "object" && !Array.isArray(tokenRow.metadata_safe)
+        ? tokenRow.metadata_safe
+        : {},
+    created_at: tokenRow.created_at || nowIso(),
+    updated_at: nowIso(),
+  };
+  await supabaseUpsertRows(env, "provider_oauth_tokens", [row], "token_id");
+  return row;
+}
+
+async function loadProviderOauthToken(env, providerId) {
+  return supabaseSelectOne(env, "provider_oauth_tokens", { provider_id: `eq.${normalizeProviderId(providerId)}` });
+}
+
 function publicProviderFlow(flow = {}) {
   return {
     flow_id: trimmed(flow.flow_id),
@@ -3233,11 +3280,13 @@ function publicProviderFlow(flow = {}) {
     authorization_url: trimmed(flow.authorization_url),
     redirect_url: trimmed(flow.redirect_url),
     state_hash: trimmed(flow.state_hash),
-    code_challenge: trimmed(flow.code_challenge),
     code_challenge_method: trimmed(flow.code_challenge_method),
     callback_received_at: flow.callback_received_at || null,
     failure_reason: trimmed(flow.failure_reason),
-    metadata: flow.metadata && typeof flow.metadata === "object" && !Array.isArray(flow.metadata) ? flow.metadata : {},
+    metadata:
+      flow.metadata && typeof flow.metadata === "object" && !Array.isArray(flow.metadata)
+        ? safeProviderMetadata(flow.metadata)
+        : {},
     created_at: flow.created_at || "",
     updated_at: flow.updated_at || "",
   };
@@ -3249,6 +3298,68 @@ function base64UrlEncode(bytes) {
     binary += String.fromCharCode(byte);
   }
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlDecode(value) {
+  const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+async function tokenEncryptionKeyBytes(env) {
+  const raw = trimmed(env.MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY);
+  if (!raw) {
+    throw new Error("MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY is required");
+  }
+  try {
+    const decoded = base64UrlDecode(raw);
+    if (decoded.length >= 32) {
+      return decoded.slice(0, 32);
+    }
+  } catch (_) {}
+  const digest = await crypto.subtle.digest("SHA-256", textEncoder.encode(raw));
+  return new Uint8Array(digest);
+}
+
+function concatUint8Arrays(parts) {
+  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
+  const combined = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    combined.set(part, offset);
+    offset += part.length;
+  }
+  return combined;
+}
+
+async function encryptProviderTokenValue(env, value) {
+  const key = await tokenEncryptionKeyBytes(env);
+  const nonce = new Uint8Array(16);
+  crypto.getRandomValues(nonce);
+  const plaintext = textEncoder.encode(String(value || ""));
+  const encrypted = new Uint8Array(plaintext.length);
+  let offset = 0;
+  let counter = 0;
+  while (offset < plaintext.length) {
+    const counterBytes = new Uint8Array(4);
+    new DataView(counterBytes.buffer).setUint32(0, counter);
+    const digest = await crypto.subtle.digest("SHA-256", concatUint8Arrays([key, nonce, counterBytes]));
+    const block = new Uint8Array(digest);
+    for (let index = 0; index < block.length && offset < plaintext.length; index += 1) {
+      encrypted[offset] = plaintext[offset] ^ block[index];
+      offset += 1;
+    }
+    counter += 1;
+  }
+  const payload = concatUint8Arrays([textEncoder.encode("mlabtok_v1"), nonce, encrypted]);
+  const hmacKey = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const tag = new Uint8Array(await crypto.subtle.sign("HMAC", hmacKey, payload));
+  return `mlabtok_v1:${base64UrlEncode(nonce)}:${base64UrlEncode(encrypted)}:${base64UrlEncode(tag)}`;
 }
 
 async function sha256Hex(value) {
@@ -3358,6 +3469,12 @@ function providerCallStatusFromRecord(providerRecord) {
   if (providerRecord.status === "oauth_required") {
     return "oauth_required";
   }
+  if (providerRecord.status === "oauth_callback_received") {
+    return "provider_required";
+  }
+  if (providerRecord.status === "token_storage_required") {
+    return "provider_required";
+  }
   if (providerRecord.status === "not_configured") {
     return "api_key_required";
   }
@@ -3379,6 +3496,12 @@ function providerCallStatusFromRecord(providerRecord) {
 function providerCallErrorMessage(providerRecord, status) {
   if (status === "oauth_required") {
     return "Provider OAuth connection is required. Start the secure OAuth flow and retry.";
+  }
+  if (providerRecord.status === "oauth_callback_received") {
+    return "OAuth callback was received. Mystic LAB is finalizing secure token storage.";
+  }
+  if (providerRecord.status === "token_storage_required") {
+    return "Encrypted server-side token storage is required before OAuth-backed provider access can be completed.";
   }
   if (status === "api_key_required") {
     return "Provider credentials are not configured. Complete the secure setup flow and retry.";
@@ -3403,7 +3526,13 @@ function safeProviderMetadata(value) {
     const sanitized = {};
     for (const [key, item] of Object.entries(value)) {
       const lowered = String(key).toLowerCase();
-      if (IMPORT_VERIFICATION_FORBIDDEN_FIELD_NAMES.has(lowered) || lowered.includes("secret") || lowered.includes("token")) {
+      if (
+        IMPORT_VERIFICATION_FORBIDDEN_FIELD_NAMES.has(lowered) ||
+        lowered.includes("secret") ||
+        lowered.includes("token") ||
+        lowered === "code_verifier" ||
+        lowered === "state"
+      ) {
         continue;
       }
       sanitized[key] = safeProviderMetadata(item);
@@ -3575,6 +3704,13 @@ async function invokeCloudProvider(env, providerRecord, options = {}) {
         prompt_chars: providerPromptExcerpt(messages).length,
         completion_chars: providerUserPrompt(messages).length + 5,
       },
+    };
+  }
+  if (providerRecord.provider_id === "google_vertex_ai") {
+    throw {
+      error_type: "provider_required",
+      safe_message:
+        "Google Vertex AI token storage is connected, but model-call routing is still deferred to the next provider-routing issue.",
     };
   }
   if (providerRecord.provider_id === "openai_compatible") {
@@ -4945,6 +5081,7 @@ async function callCloudTool(name, args, env, state) {
           client_id: oauthMetadata.client_id,
           scopes: oauthMetadata.scopes,
           pkce_enabled: true,
+          code_verifier: verifier,
           code_verifier_present: Boolean(verifier),
           token_storage_supported: oauthMetadata.token_storage_supported,
         },
@@ -5046,6 +5183,7 @@ async function callCloudTool(name, args, env, state) {
   if (name === "provider_verify") {
     const providerId = normalizeProviderId(args.provider_id);
     const existing = await supabaseSelectOne(env, "provider_connections", { provider_id: `eq.${providerId}` });
+    const tokenRow = providerId === "google_vertex_ai" ? await loadProviderOauthToken(env, providerId) : null;
     if (existing && trimmed(existing.status) === "disconnected") {
       return {
         ...buildProviderRecord(env, providerId, existing),
@@ -5054,12 +5192,27 @@ async function callCloudTool(name, args, env, state) {
       };
     }
     const record = buildProviderRecord(env, providerId, existing || {});
+    const nextStatus =
+      providerId === "google_vertex_ai"
+        ? tokenRow && trimmed(tokenRow.status) === "connected"
+          ? "connected"
+          : record.status === "connected"
+            ? "token_storage_required"
+            : record.status
+        : record.status;
     const saved = await upsertProviderConnection(env, record, {
-      status: record.status,
+      status: nextStatus,
       auth_method: record.auth_method,
       model_list: record.model_list,
       last_verified_at: nowIso(),
-      failure_reason: "",
+      failure_reason: nextStatus === "token_storage_required" ? "token_storage_required" : "",
+      metadata: {
+        ...(record.metadata && typeof record.metadata === "object" ? record.metadata : {}),
+        oauth_token_recorded: Boolean(tokenRow),
+        oauth_token_status: tokenRow ? trimmed(tokenRow.status) : "",
+        oauth_token_metadata_safe:
+          tokenRow && tokenRow.metadata_safe && typeof tokenRow.metadata_safe === "object" ? tokenRow.metadata_safe : {},
+      },
     });
     return {
       ...buildProviderRecord(env, providerId, saved),
@@ -6203,6 +6356,8 @@ async function handleProviderOauthCallback(request, env) {
       return htmlResponse(providerPage("Provider callback error", "<h1>Provider callback error</h1><p class=\"warn\">OAuth state validation failed.</p>"), 400);
     }
   }
+  const spec = providerCatalogEntry(env, resolvedProviderId);
+  const oauthMetadata = providerOauthMetadata(env, spec);
   const nextStatus = callbackError ? "failed" : "callback_received";
   const updatedFlow = {
     ...flow,
@@ -6219,33 +6374,228 @@ async function handleProviderOauthCallback(request, env) {
   await upsertProviderAuthFlow(env, updatedFlow);
   const existing = (await supabaseSelectOne(env, "provider_connections", { provider_id: `eq.${resolvedProviderId}` })) || {};
   const record = buildProviderRecord(env, resolvedProviderId, existing);
-  const callbackConnectionStatus =
-    callbackError ? "auth_failed" : resolvedProviderId === "google_vertex_ai" ? "provider_required" : "oauth_required";
-  const callbackFailureReason =
-    callbackError
-      ? callbackError
-      : resolvedProviderId === "google_vertex_ai"
-        ? "oauth_storage_required"
-        : "oauth_callback_recorded_pending_token_exchange";
-  const updatedConnection = await upsertProviderConnection(env, record, {
+  if (callbackError) {
+    const failedConnection = await upsertProviderConnection(env, record, {
+      auth_method: "oauth",
+      status: "auth_failed",
+      failure_reason: callbackError,
+      metadata: {
+        ...(record.metadata && typeof record.metadata === "object" ? record.metadata : {}),
+        oauth_callback_received_at: nowIso(),
+        oauth_authorization_code_received: Boolean(callbackCode),
+        oauth_token_storage_supported: oauthMetadata.token_storage_supported,
+      },
+      last_verified_at: nowIso(),
+    });
+    const provider = buildProviderRecord(env, resolvedProviderId, failedConnection);
+    return htmlResponse(
+      renderProviderCallbackPage(provider, publicProviderFlow(updatedFlow), `Provider returned OAuth error: ${callbackError}`),
+      400,
+    );
+  }
+  if (!callbackCode) {
+    const failedFlow = {
+      ...updatedFlow,
+      status: "failed",
+      failure_reason: "oauth_code_missing",
+      updated_at: nowIso(),
+    };
+    await upsertProviderAuthFlow(env, failedFlow);
+    const failedConnection = await upsertProviderConnection(env, record, {
+      auth_method: "oauth",
+      status: "auth_failed",
+      failure_reason: "oauth_code_missing",
+      metadata: {
+        ...(record.metadata && typeof record.metadata === "object" ? record.metadata : {}),
+        oauth_callback_received_at: nowIso(),
+        oauth_authorization_code_received: false,
+        oauth_token_storage_supported: oauthMetadata.token_storage_supported,
+      },
+      last_verified_at: nowIso(),
+    });
+    const provider = buildProviderRecord(env, resolvedProviderId, failedConnection);
+    return htmlResponse(
+      renderProviderCallbackPage(provider, publicProviderFlow(failedFlow), "Provider callback did not include an authorization code."),
+      400,
+    );
+  }
+  if (!oauthMetadata.token_storage_supported) {
+    const tokenStorageFlow = {
+      ...updatedFlow,
+      status: "callback_received",
+      failure_reason: "token_storage_required",
+      updated_at: nowIso(),
+    };
+    await upsertProviderAuthFlow(env, tokenStorageFlow);
+    const waitingConnection = await upsertProviderConnection(env, record, {
+      auth_method: "oauth",
+      status: "token_storage_required",
+      failure_reason: "token_storage_required",
+      metadata: {
+        ...(record.metadata && typeof record.metadata === "object" ? record.metadata : {}),
+        oauth_callback_received_at: nowIso(),
+        oauth_authorization_code_received: true,
+        oauth_token_storage_supported: false,
+      },
+      last_verified_at: nowIso(),
+    });
+    const provider = buildProviderRecord(env, resolvedProviderId, waitingConnection);
+    return htmlResponse(
+      renderProviderCallbackPage(
+        provider,
+        publicProviderFlow(tokenStorageFlow),
+        "Mystic LAB received the OAuth callback, but encrypted server-side token storage is required before provider access can be completed.",
+      ),
+      200,
+    );
+  }
+
+  const tokenRequestBody = new URLSearchParams();
+  tokenRequestBody.set("grant_type", "authorization_code");
+  tokenRequestBody.set("code", callbackCode);
+  tokenRequestBody.set("redirect_uri", oauthMetadata.redirect_uri);
+  tokenRequestBody.set("client_id", oauthMetadata.client_id);
+  const codeVerifier =
+    updatedFlow.metadata && typeof updatedFlow.metadata === "object" ? trimmed(updatedFlow.metadata.code_verifier) : "";
+  if (codeVerifier) {
+    tokenRequestBody.set("code_verifier", codeVerifier);
+  }
+  const clientSecret = trimmed(env[`${spec.oauth_env_prefix}_CLIENT_SECRET`]);
+  if (clientSecret) {
+    tokenRequestBody.set("client_secret", clientSecret);
+  }
+  let tokenPayload = null;
+  try {
+    const tokenResponse = await fetch(oauthMetadata.token_endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "application/json",
+      },
+      body: tokenRequestBody.toString(),
+    });
+    if (!tokenResponse.ok) {
+      throw new Error(`token_exchange_http_${tokenResponse.status}`);
+    }
+    tokenPayload = await tokenResponse.json();
+  } catch (_) {
+    const failedFlow = {
+      ...updatedFlow,
+      status: "failed",
+      failure_reason: "oauth_token_exchange_failed",
+      updated_at: nowIso(),
+    };
+    await upsertProviderAuthFlow(env, failedFlow);
+    const failedConnection = await upsertProviderConnection(env, record, {
+      auth_method: "oauth",
+      status: "auth_failed",
+      failure_reason: "oauth_token_exchange_failed",
+      metadata: {
+        ...(record.metadata && typeof record.metadata === "object" ? record.metadata : {}),
+        oauth_callback_received_at: nowIso(),
+        oauth_authorization_code_received: true,
+        oauth_token_storage_supported: true,
+      },
+      last_verified_at: nowIso(),
+    });
+    const provider = buildProviderRecord(env, resolvedProviderId, failedConnection);
+    return htmlResponse(
+      renderProviderCallbackPage(provider, publicProviderFlow(failedFlow), "OAuth token exchange failed. Reconnect the provider and retry."),
+      400,
+    );
+  }
+  const accessToken = trimmed(tokenPayload && tokenPayload.access_token);
+  if (!accessToken) {
+    const failedFlow = {
+      ...updatedFlow,
+      status: "failed",
+      failure_reason: "oauth_token_exchange_failed",
+      updated_at: nowIso(),
+    };
+    await upsertProviderAuthFlow(env, failedFlow);
+    const failedConnection = await upsertProviderConnection(env, record, {
+      auth_method: "oauth",
+      status: "auth_failed",
+      failure_reason: "oauth_token_exchange_failed",
+      metadata: {
+        ...(record.metadata && typeof record.metadata === "object" ? record.metadata : {}),
+        oauth_callback_received_at: nowIso(),
+        oauth_authorization_code_received: true,
+        oauth_token_storage_supported: true,
+      },
+      last_verified_at: nowIso(),
+    });
+    const provider = buildProviderRecord(env, resolvedProviderId, failedConnection);
+    return htmlResponse(
+      renderProviderCallbackPage(provider, publicProviderFlow(failedFlow), "OAuth token exchange did not return an access token."),
+      400,
+    );
+  }
+
+  const callbackReceivedConnection = await upsertProviderConnection(env, record, {
     auth_method: "oauth",
-    status: callbackConnectionStatus,
-    failure_reason: callbackFailureReason,
+    status: "oauth_callback_received",
+    failure_reason: "",
     metadata: {
       ...(record.metadata && typeof record.metadata === "object" ? record.metadata : {}),
       oauth_callback_received_at: nowIso(),
-      oauth_authorization_code_received: Boolean(callbackCode),
-      oauth_token_storage_supported: resolvedProviderId === "google_vertex_ai" ? false : record.metadata?.oauth_token_storage_supported,
+      oauth_authorization_code_received: true,
+      oauth_token_storage_supported: true,
+    },
+    last_verified_at: nowIso(),
+  });
+  const scopeText = trimmed(tokenPayload.scope);
+  const oauthTokenRow = await upsertProviderOauthToken(env, {
+    token_id: trimmed((await loadProviderOauthToken(env, resolvedProviderId))?.token_id, `oauth-token-${resolvedProviderId}`),
+    provider_id: resolvedProviderId,
+    connection_id: callbackReceivedConnection.connection_id,
+    encrypted_access_token: await encryptProviderTokenValue(env, accessToken),
+    encrypted_refresh_token: trimmed(tokenPayload.refresh_token)
+      ? await encryptProviderTokenValue(env, trimmed(tokenPayload.refresh_token))
+      : "",
+    encrypted_id_token: trimmed(tokenPayload.id_token) ? await encryptProviderTokenValue(env, trimmed(tokenPayload.id_token)) : "",
+    token_type: trimmed(tokenPayload.token_type, "Bearer"),
+    scope_hash: scopeText ? await sha256Hex(scopeText) : "",
+    expires_at:
+      Number.isFinite(Number(tokenPayload.expires_in)) && Number(tokenPayload.expires_in) > 0
+        ? new Date(Date.now() + Number(tokenPayload.expires_in) * 1000).toISOString()
+        : null,
+    status: "connected",
+    metadata_safe: {
+      scopes: scopeText ? scopeText.split(/\s+/).filter(Boolean) : [],
+      refresh_token_present: Boolean(trimmed(tokenPayload.refresh_token)),
+      id_token_present: Boolean(trimmed(tokenPayload.id_token)),
+      expires_in_present: Number.isFinite(Number(tokenPayload.expires_in)) && Number(tokenPayload.expires_in) > 0,
+    },
+  });
+  const completedFlow = {
+    ...updatedFlow,
+    status: "completed",
+    failure_reason: "",
+    updated_at: nowIso(),
+  };
+  await upsertProviderAuthFlow(env, completedFlow);
+  const updatedConnection = await upsertProviderConnection(env, record, {
+    auth_method: "oauth",
+    status: "connected",
+    failure_reason: "",
+    metadata: {
+      ...(record.metadata && typeof record.metadata === "object" ? record.metadata : {}),
+      oauth_callback_received_at: nowIso(),
+      oauth_authorization_code_received: true,
+      oauth_token_storage_supported: true,
+      oauth_token_recorded: true,
+      oauth_token_status: "connected",
+      oauth_token_metadata_safe:
+        oauthTokenRow.metadata_safe && typeof oauthTokenRow.metadata_safe === "object" ? oauthTokenRow.metadata_safe : {},
     },
     last_verified_at: nowIso(),
   });
   const provider = buildProviderRecord(env, resolvedProviderId, updatedConnection);
-  const message = callbackError
-    ? `Provider returned OAuth error: ${callbackError}`
-    : resolvedProviderId === "google_vertex_ai"
-      ? "Mystic LAB recorded the Google OAuth callback, but encrypted server-side token storage is required before Vertex AI model calls can be enabled."
-      : "Mystic LAB recorded the OAuth callback. Token exchange is intentionally deferred until a later isolated provider-routing issue.";
-  return htmlResponse(renderProviderCallbackPage(provider, publicProviderFlow(updatedFlow), message), callbackError ? 400 : 200);
+  return htmlResponse(
+    renderProviderCallbackPage(provider, publicProviderFlow(completedFlow), "Mystic LAB completed the OAuth callback and stored encrypted provider tokens."),
+    200,
+  );
 }
 
 async function handleProviderRoute(request, env) {

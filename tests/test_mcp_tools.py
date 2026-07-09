@@ -316,6 +316,90 @@ class MCPToolsTests(unittest.TestCase):
         self.assertEqual(call_test["status"], "oauth_required")
         self.assertIn("/providers/google_vertex_ai/connect", call_test["connect_url"])
 
+    def test_google_vertex_callback_requires_encrypted_token_storage_key(self):
+        with patch.dict(
+            os.environ,
+            {
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED": "true",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID": "google-client-id",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET": "google-client-secret",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
+            },
+            clear=False,
+        ):
+            toolbox = self._make_toolbox()
+            started = toolbox.provider_connect_start(provider_id="google_vertex_ai", auth_method="oauth")
+            state = started["authorization_url"].split("state=", 1)[1].split("&", 1)[0]
+            connection, flow = toolbox.provider_connect.exchange_google_vertex_callback(
+                flow_id=started["flow"]["flow_id"],
+                callback_state=state,
+                callback_code="secret-code",
+            )
+            verified = toolbox.provider_verify(provider_id="google_vertex_ai")
+
+        self.assertEqual(flow.status, "callback_received")
+        self.assertEqual(connection.status, "token_storage_required")
+        self.assertEqual(verified["status"], "token_storage_required")
+        self.assertNotIn("secret-code", json.dumps(verified))
+
+    def test_google_vertex_callback_stores_encrypted_token_and_connects(self):
+        class _TokenResponse:
+            status_code = 200
+            text = json.dumps(
+                {
+                    "access_token": "vertex-access-token",
+                    "refresh_token": "vertex-refresh-token",
+                    "id_token": "vertex-id-token",
+                    "token_type": "Bearer",
+                    "scope": "openid profile https://www.googleapis.com/auth/cloud-platform",
+                    "expires_in": 3600,
+                }
+            )
+
+            @staticmethod
+            def json() -> dict[str, object]:
+                return {
+                    "access_token": "vertex-access-token",
+                    "refresh_token": "vertex-refresh-token",
+                    "id_token": "vertex-id-token",
+                    "token_type": "Bearer",
+                    "scope": "openid profile https://www.googleapis.com/auth/cloud-platform",
+                    "expires_in": 3600,
+                }
+
+        with patch.dict(
+            os.environ,
+            {
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED": "true",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID": "google-client-id",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET": "google-client-secret",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
+                "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
+                "MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY": "provider-token-encryption-key",
+            },
+            clear=False,
+        ), patch("mystic.lab.provider_connect.requests.post", return_value=_TokenResponse()):
+            toolbox = self._make_toolbox()
+            started = toolbox.provider_connect_start(provider_id="google_vertex_ai", auth_method="oauth")
+            state = started["authorization_url"].split("state=", 1)[1].split("&", 1)[0]
+            connection, flow = toolbox.provider_connect.exchange_google_vertex_callback(
+                flow_id=started["flow"]["flow_id"],
+                callback_state=state,
+                callback_code="secret-code",
+            )
+            verified = toolbox.provider_verify(provider_id="google_vertex_ai")
+            stored = toolbox.lab_runner.storage.load_provider_oauth_token("google_vertex_ai")
+
+        self.assertEqual(flow.status, "completed")
+        self.assertEqual(connection.status, "connected")
+        self.assertEqual(verified["status"], "connected")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertNotEqual(stored.encrypted_access_token, "vertex-access-token")
+        self.assertTrue(stored.metadata_safe["refresh_token_present"])
+        self.assertNotIn("vertex-access-token", json.dumps(verified))
+
     def test_gemini_remains_api_key_only_even_when_google_oauth_metadata_exists(self):
         with patch.dict(
             os.environ,

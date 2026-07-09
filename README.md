@@ -329,6 +329,7 @@ MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET=YOUR_GOOGLE_VERTEX_CLIENT_SECRET
 MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID=YOUR_GOOGLE_VERTEX_PROJECT_ID
 MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION=YOUR_GOOGLE_VERTEX_LOCATION
 MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL=gemini-2.5-flash
+MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY=YOUR_PROVIDER_TOKEN_ENCRYPTION_KEY
 MYSTIC_PROVIDER_ANTHROPIC_MODEL=claude-3-5-sonnet-latest
 MYSTIC_PROVIDER_ANTHROPIC_API_KEY=YOUR_ANTHROPIC_API_KEY
 ```
@@ -342,7 +343,9 @@ Current Provider Connect boundary:
 
 - `gemini` does not use OAuth in Mystic LAB and stays API-key based
 - `google_vertex_ai` can generate a real Google OAuth authorization URL when metadata is configured
-- encrypted token storage is not implemented yet, so `google_vertex_ai` callback receipt is recorded safely but token-backed model calls fail closed with `oauth_storage_required`
+- `google_vertex_ai` now completes OAuth callback handling only when `MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY` is configured
+- OAuth access, refresh, and ID tokens are stored only as encrypted server-side records
+- `google_vertex_ai` model-call routing is still deferred after connection, so connected token storage does not yet enable real Vertex inference in this issue
 
 ### Deploy and verify
 
