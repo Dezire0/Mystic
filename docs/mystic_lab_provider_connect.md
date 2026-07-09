@@ -104,6 +104,8 @@ They never show:
 
 - `google_vertex_ai` is the separate Google OAuth-backed provider for Vertex AI Gemini access.
 - When real OAuth metadata is configured, `provider_connect_start` returns a real Google `authorization_url`.
+- The same `provider_connect_start` response also returns top-level `flow_id` plus a short `user_action` object that points to the Worker `connect_url`.
+- When `user_action.type=open_url`, ChatGPT-facing clients should render it as a clickable link such as [Sign in with Google Vertex AI](https://mystic.dexproject.workers.dev/providers/google_vertex_ai/connect).
 - `GET /providers/google_vertex_ai/connect` also starts the same OAuth flow directly in the browser and returns an immediate `302` redirect to Google login.
 - The Google OAuth redirect URI must be exactly `https://mystic.dexproject.workers.dev/providers/oauth/callback`.
 - `provider_id` is recovered from the stored OAuth flow during callback; it is not encoded into the Google redirect URI.

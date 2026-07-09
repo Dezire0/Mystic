@@ -534,6 +534,16 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         payload = result["body"]["result"]["structuredContent"]
         self.assertEqual(payload["status"], "oauth_required")
         self.assertIn("accounts.google.com/o/oauth2/v2/auth", payload["authorization_url"])
+        self.assertTrue(payload["flow_id"].startswith("flow-"))
+        self.assertEqual(payload["flow_id"], payload["flow"]["flow_id"])
+        self.assertEqual(payload["user_action"]["type"], "open_url")
+        self.assertEqual(payload["user_action"]["label"], "Sign in with Google Vertex AI")
+        self.assertEqual(payload["user_action"]["url"], payload["connect_url"])
+        self.assertEqual(
+            payload["user_action"]["url"],
+            "https://mystic.dexproject.workers.dev/providers/google_vertex_ai/connect",
+        )
+        self.assertEqual(payload["user_action"]["target"], "_blank")
         self.assertIn(
             "redirect_uri=https%3A%2F%2Fmystic.dexproject.workers.dev%2Fproviders%2Foauth%2Fcallback",
             payload["authorization_url"],

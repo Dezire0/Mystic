@@ -70,6 +70,8 @@ Provider Connect routes exposed by the Worker:
 
 When OAuth metadata is configured, `GET /providers/:provider_id/connect` now starts the Provider Connect flow inside the Worker and returns an immediate `302` redirect to the provider login page instead of showing a manual-start placeholder.
 
+For ChatGPT-facing clients, `provider_connect_start` also returns a short `user_action` object for OAuth-capable login flows. When `user_action.type=open_url`, render the short `connect_url` as a clickable link such as [Sign in with Google Vertex AI](https://mystic.dexproject.workers.dev/providers/google_vertex_ai/connect) instead of asking the user to copy a long `authorization_url`.
+
 The core lab objects are:
 
 - `LabSession`: top-level research workflow state
@@ -345,6 +347,7 @@ Current Provider Connect boundary:
 
 - `gemini` does not use OAuth in Mystic LAB and stays API-key based
 - `google_vertex_ai` can generate a real Google OAuth authorization URL when metadata is configured
+- `google_vertex_ai` now also returns a short `user_action` login link plus top-level `flow_id` from `provider_connect_start`, while still exposing `authorization_url` for tooling/debugging
 - `google_vertex_ai` now completes OAuth callback handling only when `MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY` is configured
 - OAuth access, refresh, and ID tokens are stored only as encrypted server-side records
 - `google_vertex_ai` model-call routing is still deferred after connection, so connected token storage does not yet enable real Vertex inference in this issue

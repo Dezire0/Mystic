@@ -497,7 +497,8 @@ const CLOUD_TOOL_DEFINITIONS = [
   {
     name: "provider_connect_start",
     title: "Start Provider Connect",
-    description: "Return a real provider authorization URL when OAuth is configured, or a secure Mystic LAB setup URL when API-key auth is required.",
+    description:
+      "Return a real provider authorization URL when OAuth is configured, or a secure Mystic LAB setup URL when API-key auth is required. OAuth responses also include a short user_action open_url link for client-side login buttons.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3402,6 +3403,20 @@ function providerRegistryMap(registry) {
   return new Map(registry.providers.map((item) => [item.provider_id, item]));
 }
 
+function providerUserAction(env, providerId) {
+  const routeUrls = providerRouteUrls(env, providerId);
+  const label =
+    normalizeProviderId(providerId) === "google_vertex_ai"
+      ? "Sign in with Google Vertex AI"
+      : `Connect ${normalizeProviderId(providerId)}`;
+  return {
+    type: "open_url",
+    label,
+    url: routeUrls.connect_url,
+    target: "_blank",
+  };
+}
+
 async function startProviderConnect(env, providerId, authMethod) {
   const spec = providerCatalogEntry(env, providerId);
   const requestedAuthMethod = trimmed(authMethod, spec.default_auth_method);
@@ -3464,7 +3479,9 @@ async function startProviderConnect(env, providerId, authMethod) {
     return {
       ...buildProviderRecord(env, providerId, saved),
       authorization_url: authorizationUrl,
+      flow_id: flowId,
       flow: publicProviderFlow(flow),
+      user_action: providerUserAction(env, spec.provider_id),
       message: "Provider connect start produced a real OAuth authorization URL.",
     };
   }
