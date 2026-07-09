@@ -3006,6 +3006,80 @@ function providerModelList(env, spec, row = {}) {
   return [...spec.default_models];
 }
 
+function providerSafeConfigMetadata(env, spec, oauthMetadata) {
+  const metadata = {
+    client_id_configured: oauthMetadata.client_id_configured,
+    client_secret_configured: oauthMetadata.client_secret_configured,
+    redirect_uri: oauthMetadata.redirect_uri,
+    oauth_client_id_configured: oauthMetadata.client_id_configured,
+    oauth_client_secret_configured: oauthMetadata.client_secret_configured,
+    oauth_missing_config_names: oauthMetadata.missing_config_names,
+    oauth_redirect_uri: oauthMetadata.redirect_uri,
+    oauth_authorization_endpoint: oauthMetadata.authorization_endpoint,
+    oauth_token_endpoint: oauthMetadata.token_endpoint,
+    oauth_token_storage_supported: oauthMetadata.token_storage_supported,
+  };
+  if (spec.provider_id === "google_vertex_ai") {
+    metadata.project_id_configured = Boolean(trimmed(env.MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID));
+    metadata.location_configured = Boolean(trimmed(env.MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION));
+    metadata.model_configured = Boolean(trimmed(env.MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL));
+    metadata.oauth_client_type_required = "web_application";
+  }
+  return metadata;
+}
+
+function redactSensitiveOAuthText(value) {
+  const raw = trimmed(value).slice(0, 500);
+  if (!raw) {
+    return "";
+  }
+  return raw
+    .replace(
+      /([?&](?:code|access_token|refresh_token|id_token|client_secret|state)=)[^&\s]+/gi,
+      "$1[redacted]",
+    )
+    .replace(/\b4\/[A-Za-z0-9._~-]+\b/g, "[redacted]")
+    .replace(/\bya29\.[A-Za-z0-9._~-]+\b/g, "[redacted]")
+    .replace(/\b[A-Za-z0-9_-]{32,}\.[A-Za-z0-9._-]{12,}\.[A-Za-z0-9._-]{12,}\b/g, "[redacted]");
+}
+
+function mapOauthTokenExchangeError(errorCode, safeDescription, httpStatus) {
+  const normalized = trimmed(errorCode).toLowerCase();
+  const description = trimmed(safeDescription).toLowerCase();
+  if (description.includes("redirect_uri_mismatch") || description.includes("redirect uri mismatch")) {
+    return "redirect_uri_mismatch";
+  }
+  if (normalized === "invalid_grant" && description.includes("redirect uri")) {
+    return "redirect_uri_mismatch";
+  }
+  if (["invalid_client", "invalid_grant", "redirect_uri_mismatch", "unauthorized_client"].includes(normalized)) {
+    return normalized;
+  }
+  if (!normalized && Number(httpStatus) === 401) {
+    return "invalid_client";
+  }
+  return normalized || "unknown";
+}
+
+function oauthTokenExchangeFailureMessage(errorCode, safeDescription) {
+  const code = trimmed(errorCode, "unknown");
+  const baseMessage =
+    code === "invalid_client"
+      ? "Google rejected the OAuth client credentials. Verify that the configured Client ID and Client Secret belong to the same Web application OAuth client."
+      : code === "invalid_grant"
+        ? "Google rejected the authorization grant. Retry with a fresh login and verify that the authorization code was not reused and that PKCE is enabled."
+        : code === "redirect_uri_mismatch"
+          ? "Google rejected the redirect URI. Verify the OAuth client uses exactly https://mystic.dexproject.workers.dev/providers/oauth/callback."
+          : code === "unauthorized_client"
+            ? "Google reported that this OAuth client is not allowed for this flow. Verify the OAuth client type is Web application and that the consent screen is configured for the login account."
+            : "OAuth token exchange failed. Reconnect the provider and retry.";
+  const prefix = code === "unknown" ? "" : `OAuth token exchange failed (${code}). `;
+  if (!trimmed(safeDescription)) {
+    return `${prefix}${baseMessage}`;
+  }
+  return `${prefix}${baseMessage} Google reported: ${safeDescription}`;
+}
+
 function providerDefaultFailureReason(spec, status, oauthMetadata, secretState) {
   if (status === "connected") {
     return "";
@@ -3084,13 +3158,10 @@ function buildProviderRecord(env, providerId, row = {}) {
   const modelList = providerModelList(env, spec, row);
   const authMethod = trimmed(row.auth_method, spec.default_auth_method);
   const status = resolveProviderStatus(spec, row, secretState, oauthMetadata);
-  const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : {};
-  metadata.oauth_client_id_configured = metadata.oauth_client_id_configured ?? oauthMetadata.client_id_configured;
-  metadata.oauth_client_secret_configured =
-    metadata.oauth_client_secret_configured ?? oauthMetadata.client_secret_configured;
-  metadata.oauth_missing_config_names = metadata.oauth_missing_config_names ?? oauthMetadata.missing_config_names;
-  metadata.oauth_token_storage_supported =
-    metadata.oauth_token_storage_supported ?? oauthMetadata.token_storage_supported;
+  const metadata = {
+    ...providerSafeConfigMetadata(env, spec, oauthMetadata),
+    ...(row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : {}),
+  };
   return {
     connection_id: trimmed(row.connection_id, `provider-${spec.provider_id}`),
     provider_id: spec.provider_id,
@@ -6365,6 +6436,18 @@ function renderProviderCallbackPage(provider, flow, message) {
   );
 }
 
+async function readJsonResponseSafe(response) {
+  const text = await response.text();
+  if (!text) {
+    return { text: "", json: null };
+  }
+  try {
+    return { text, json: JSON.parse(text) };
+  } catch (_) {
+    return { text, json: null };
+  }
+}
+
 async function handleProviderOauthCallback(request, env) {
   const sourceUrl = new URL(request.url);
   const callbackState = trimmed(sourceUrl.searchParams.get("state"));
@@ -6431,6 +6514,48 @@ async function handleProviderOauthCallback(request, env) {
   await upsertProviderAuthFlow(env, updatedFlow);
   const existing = (await supabaseSelectOne(env, "provider_connections", { provider_id: `eq.${resolvedProviderId}` })) || {};
   const record = buildProviderRecord(env, resolvedProviderId, existing);
+  const persistTokenExchangeFailure = async ({ errorCode = "", httpStatus = 0, descriptionSafe = "", message = "" } = {}) => {
+    const normalizedError = trimmed(errorCode, "unknown");
+    const failureReason = normalizedError === "unknown" ? "oauth_token_exchange_failed" : normalizedError;
+    const failureMetadata = {
+      ...(record.metadata && typeof record.metadata === "object" ? record.metadata : {}),
+      oauth_callback_received_at: nowIso(),
+      oauth_authorization_code_received: true,
+      oauth_token_storage_supported: true,
+      oauth_token_exchange_error: normalizedError,
+      oauth_token_exchange_http_status: Number.isFinite(Number(httpStatus)) && Number(httpStatus) > 0 ? Number(httpStatus) : 0,
+      oauth_token_exchange_error_description_safe: trimmed(descriptionSafe),
+    };
+    const failedFlow = {
+      ...updatedFlow,
+      status: "failed",
+      failure_reason: failureReason,
+      metadata: {
+        ...(updatedFlow.metadata && typeof updatedFlow.metadata === "object" ? updatedFlow.metadata : {}),
+        oauth_token_exchange_error: normalizedError,
+        oauth_token_exchange_http_status: Number.isFinite(Number(httpStatus)) && Number(httpStatus) > 0 ? Number(httpStatus) : 0,
+        oauth_token_exchange_error_description_safe: trimmed(descriptionSafe),
+      },
+      updated_at: nowIso(),
+    };
+    await upsertProviderAuthFlow(env, failedFlow);
+    const failedConnection = await upsertProviderConnection(env, record, {
+      auth_method: "oauth",
+      status: "auth_failed",
+      failure_reason: failureReason,
+      metadata: failureMetadata,
+      last_verified_at: nowIso(),
+    });
+    const provider = buildProviderRecord(env, resolvedProviderId, failedConnection);
+    return htmlResponse(
+      renderProviderCallbackPage(
+        provider,
+        publicProviderFlow(failedFlow),
+        message || oauthTokenExchangeFailureMessage(normalizedError, descriptionSafe),
+      ),
+      400,
+    );
+  };
   if (callbackError) {
     const failedConnection = await upsertProviderConnection(env, record, {
       auth_method: "oauth",
@@ -6531,62 +6656,38 @@ async function handleProviderOauthCallback(request, env) {
       },
       body: tokenRequestBody.toString(),
     });
+    const tokenResponsePayload = await readJsonResponseSafe(tokenResponse);
     if (!tokenResponse.ok) {
-      throw new Error(`token_exchange_http_${tokenResponse.status}`);
+      const safeDescription = redactSensitiveOAuthText(
+        trimmed(tokenResponsePayload.json?.error_description, tokenResponsePayload.text),
+      );
+      return persistTokenExchangeFailure({
+        errorCode: mapOauthTokenExchangeError(tokenResponsePayload.json?.error, safeDescription, tokenResponse.status),
+        httpStatus: tokenResponse.status,
+        descriptionSafe: safeDescription,
+      });
     }
-    tokenPayload = await tokenResponse.json();
-  } catch (_) {
-    const failedFlow = {
-      ...updatedFlow,
-      status: "failed",
-      failure_reason: "oauth_token_exchange_failed",
-      updated_at: nowIso(),
-    };
-    await upsertProviderAuthFlow(env, failedFlow);
-    const failedConnection = await upsertProviderConnection(env, record, {
-      auth_method: "oauth",
-      status: "auth_failed",
-      failure_reason: "oauth_token_exchange_failed",
-      metadata: {
-        ...(record.metadata && typeof record.metadata === "object" ? record.metadata : {}),
-        oauth_callback_received_at: nowIso(),
-        oauth_authorization_code_received: true,
-        oauth_token_storage_supported: true,
-      },
-      last_verified_at: nowIso(),
+    tokenPayload = tokenResponsePayload.json && typeof tokenResponsePayload.json === "object" ? tokenResponsePayload.json : null;
+  } catch (error) {
+    return persistTokenExchangeFailure({
+      errorCode: "unknown",
+      httpStatus: 0,
+      descriptionSafe: redactSensitiveOAuthText(String(error?.message || error || "")),
     });
-    const provider = buildProviderRecord(env, resolvedProviderId, failedConnection);
-    return htmlResponse(
-      renderProviderCallbackPage(provider, publicProviderFlow(failedFlow), "OAuth token exchange failed. Reconnect the provider and retry."),
-      400,
-    );
   }
   const accessToken = trimmed(tokenPayload && tokenPayload.access_token);
   if (!accessToken) {
-    const failedFlow = {
-      ...updatedFlow,
-      status: "failed",
-      failure_reason: "oauth_token_exchange_failed",
-      updated_at: nowIso(),
-    };
-    await upsertProviderAuthFlow(env, failedFlow);
-    const failedConnection = await upsertProviderConnection(env, record, {
-      auth_method: "oauth",
-      status: "auth_failed",
-      failure_reason: "oauth_token_exchange_failed",
-      metadata: {
-        ...(record.metadata && typeof record.metadata === "object" ? record.metadata : {}),
-        oauth_callback_received_at: nowIso(),
-        oauth_authorization_code_received: true,
-        oauth_token_storage_supported: true,
-      },
-      last_verified_at: nowIso(),
+    const safeDescription = redactSensitiveOAuthText(trimmed(tokenPayload?.error_description));
+    const mappedError = mapOauthTokenExchangeError(tokenPayload?.error, safeDescription, 200);
+    return persistTokenExchangeFailure({
+      errorCode: mappedError,
+      httpStatus: 200,
+      descriptionSafe: safeDescription,
+      message: oauthTokenExchangeFailureMessage(
+        mappedError,
+        safeDescription || "OAuth token exchange did not return an access token.",
+      ),
     });
-    const provider = buildProviderRecord(env, resolvedProviderId, failedConnection);
-    return htmlResponse(
-      renderProviderCallbackPage(provider, publicProviderFlow(failedFlow), "OAuth token exchange did not return an access token."),
-      400,
-    );
   }
 
   const callbackReceivedConnection = await upsertProviderConnection(env, record, {
@@ -6598,6 +6699,9 @@ async function handleProviderOauthCallback(request, env) {
       oauth_callback_received_at: nowIso(),
       oauth_authorization_code_received: true,
       oauth_token_storage_supported: true,
+      oauth_token_exchange_error: "",
+      oauth_token_exchange_http_status: 0,
+      oauth_token_exchange_error_description_safe: "",
     },
     last_verified_at: nowIso(),
   });
@@ -6683,6 +6787,9 @@ async function handleProviderOauthCallback(request, env) {
       oauth_token_storage_supported: true,
       oauth_token_recorded: true,
       oauth_token_status: "connected",
+      oauth_token_exchange_error: "",
+      oauth_token_exchange_http_status: 0,
+      oauth_token_exchange_error_description_safe: "",
       oauth_token_metadata_safe:
         oauthTokenRow.metadata_safe && typeof oauthTokenRow.metadata_safe === "object" ? oauthTokenRow.metadata_safe : {},
     },

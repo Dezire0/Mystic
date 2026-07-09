@@ -350,6 +350,7 @@ Current Provider Connect boundary:
 - `google_vertex_ai` now also returns a short `user_action` login link plus top-level `flow_id` from `provider_connect_start`, while still exposing `authorization_url` for tooling/debugging
 - `google_vertex_ai` now completes OAuth callback handling only when `MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY` is configured
 - OAuth access, refresh, and ID tokens are stored only as encrypted server-side records
+- `google_vertex_ai` provider status now exposes only safe token-exchange diagnostics such as error code, HTTP status, sanitized description, config booleans, and the exact queryless redirect URI
 - `google_vertex_ai` model-call routing is still deferred after connection, so connected token storage does not yet enable real Vertex inference in this issue
 
 ### Deploy and verify

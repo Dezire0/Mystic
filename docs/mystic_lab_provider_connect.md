@@ -224,6 +224,7 @@ Current behavior:
 - raw authorization codes are never displayed back to the user
 - if `MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY` is missing, callback completion fails closed with `token_storage_required`
 - if the encryption key is present, Mystic exchanges the authorization code and stores only encrypted OAuth token records
+- if Google token exchange fails, provider status stores only safe diagnostics such as `oauth_token_exchange_error`, HTTP status, sanitized error description, and config booleans like `client_id_configured`, `client_secret_configured`, `project_id_configured`, `location_configured`, and the exact queryless `redirect_uri`
 - provider pages and MCP outputs expose only safe token metadata such as presence flags and sanitized scope data
 - `google_vertex_ai` model-call routing is still intentionally deferred after connection, so connected token storage does not yet imply live Vertex inference
 
