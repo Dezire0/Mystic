@@ -1394,6 +1394,15 @@ async function supabaseUpsertRows(env, table, rows, onConflict) {
   });
 }
 
+function isSupabaseTableUnavailableError(error, table) {
+  const message = String(error && error.message ? error.message : error || "");
+  return (
+    message.includes(`Supabase GET ${table} failed with 404`) ||
+    message.includes(`Supabase POST ${table} failed with 404`) ||
+    (message.includes(table) && message.includes("PGRST205"))
+  );
+}
+
 async function loadCloudBundle(env, sessionId) {
   const sessionRow = await supabaseSelectOne(env, "lab_sessions", { session_id: `eq.${sessionId}` });
   if (!sessionRow) {
@@ -6168,6 +6177,25 @@ async function proxyRequest(request, env, sourceUrl, state) {
     return new Response(`Mystic origin unavailable: ${error.message}`, { status: 503 });
   }
 
+  if (origin === "worker://supabase") {
+    const responseHeaders = new Headers();
+    responseHeaders.set("x-mystic-public-origin", origin);
+    responseHeaders.set("x-mystic-public-url", sourceUrl.origin);
+    if (state.enabled) {
+      responseHeaders.set("cache-control", "no-store");
+    }
+    if (sourceUrl.pathname === "/favicon.ico") {
+      return new Response(null, {
+        status: 204,
+        headers: responseHeaders,
+      });
+    }
+    return new Response("Not Found", {
+      status: 404,
+      headers: responseHeaders,
+    });
+  }
+
   const targetUrl = new URL(origin);
   targetUrl.pathname = sourceUrl.pathname;
   targetUrl.search = sourceUrl.search;
@@ -6574,29 +6602,69 @@ async function handleProviderOauthCallback(request, env) {
     last_verified_at: nowIso(),
   });
   const scopeText = trimmed(tokenPayload.scope);
-  const oauthTokenRow = await upsertProviderOauthToken(env, {
-    token_id: trimmed((await loadProviderOauthToken(env, resolvedProviderId))?.token_id, `oauth-token-${resolvedProviderId}`),
-    provider_id: resolvedProviderId,
-    connection_id: callbackReceivedConnection.connection_id,
-    encrypted_access_token: await encryptProviderTokenValue(env, accessToken),
-    encrypted_refresh_token: trimmed(tokenPayload.refresh_token)
-      ? await encryptProviderTokenValue(env, trimmed(tokenPayload.refresh_token))
-      : "",
-    encrypted_id_token: trimmed(tokenPayload.id_token) ? await encryptProviderTokenValue(env, trimmed(tokenPayload.id_token)) : "",
-    token_type: trimmed(tokenPayload.token_type, "Bearer"),
-    scope_hash: scopeText ? await sha256Hex(scopeText) : "",
-    expires_at:
-      Number.isFinite(Number(tokenPayload.expires_in)) && Number(tokenPayload.expires_in) > 0
-        ? new Date(Date.now() + Number(tokenPayload.expires_in) * 1000).toISOString()
-        : null,
-    status: "connected",
-    metadata_safe: {
-      scopes: scopeText ? scopeText.split(/\s+/).filter(Boolean) : [],
-      refresh_token_present: Boolean(trimmed(tokenPayload.refresh_token)),
-      id_token_present: Boolean(trimmed(tokenPayload.id_token)),
-      expires_in_present: Number.isFinite(Number(tokenPayload.expires_in)) && Number(tokenPayload.expires_in) > 0,
-    },
-  });
+  let oauthTokenRow;
+  try {
+    oauthTokenRow = await upsertProviderOauthToken(env, {
+      token_id: trimmed((await loadProviderOauthToken(env, resolvedProviderId))?.token_id, `oauth-token-${resolvedProviderId}`),
+      provider_id: resolvedProviderId,
+      connection_id: callbackReceivedConnection.connection_id,
+      encrypted_access_token: await encryptProviderTokenValue(env, accessToken),
+      encrypted_refresh_token: trimmed(tokenPayload.refresh_token)
+        ? await encryptProviderTokenValue(env, trimmed(tokenPayload.refresh_token))
+        : "",
+      encrypted_id_token: trimmed(tokenPayload.id_token) ? await encryptProviderTokenValue(env, trimmed(tokenPayload.id_token)) : "",
+      token_type: trimmed(tokenPayload.token_type, "Bearer"),
+      scope_hash: scopeText ? await sha256Hex(scopeText) : "",
+      expires_at:
+        Number.isFinite(Number(tokenPayload.expires_in)) && Number(tokenPayload.expires_in) > 0
+          ? new Date(Date.now() + Number(tokenPayload.expires_in) * 1000).toISOString()
+          : null,
+      status: "connected",
+      metadata_safe: {
+        scopes: scopeText ? scopeText.split(/\s+/).filter(Boolean) : [],
+        refresh_token_present: Boolean(trimmed(tokenPayload.refresh_token)),
+        id_token_present: Boolean(trimmed(tokenPayload.id_token)),
+        expires_in_present: Number.isFinite(Number(tokenPayload.expires_in)) && Number(tokenPayload.expires_in) > 0,
+      },
+    });
+  } catch (error) {
+    if (!isSupabaseTableUnavailableError(error, "provider_oauth_tokens")) {
+      throw error;
+    }
+    const tokenStorageFlow = {
+      ...updatedFlow,
+      status: "callback_received",
+      failure_reason: "token_storage_required",
+      metadata: {
+        ...(updatedFlow.metadata && typeof updatedFlow.metadata === "object" ? updatedFlow.metadata : {}),
+        oauth_token_storage_error: "provider_oauth_tokens_unavailable",
+      },
+      updated_at: nowIso(),
+    };
+    await upsertProviderAuthFlow(env, tokenStorageFlow);
+    const waitingConnection = await upsertProviderConnection(env, record, {
+      auth_method: "oauth",
+      status: "token_storage_required",
+      failure_reason: "token_storage_required",
+      metadata: {
+        ...(record.metadata && typeof record.metadata === "object" ? record.metadata : {}),
+        oauth_callback_received_at: nowIso(),
+        oauth_authorization_code_received: true,
+        oauth_token_storage_supported: false,
+        oauth_token_storage_error: "provider_oauth_tokens_unavailable",
+      },
+      last_verified_at: nowIso(),
+    });
+    const provider = buildProviderRecord(env, resolvedProviderId, waitingConnection);
+    return htmlResponse(
+      renderProviderCallbackPage(
+        provider,
+        publicProviderFlow(tokenStorageFlow),
+        "Mystic LAB received the OAuth callback, but encrypted server-side token storage is not currently available. Apply the provider token storage schema and retry.",
+      ),
+      200,
+    );
+  }
   const completedFlow = {
     ...updatedFlow,
     status: "completed",

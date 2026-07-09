@@ -138,6 +138,42 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertEqual(result["headers"]["x-mystic-public-origin"], "worker://supabase")
         self.assertEqual(result["fetchCalls"], [])
 
+    def test_worker_supabase_favicon_returns_no_content_without_proxy_fetch(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": {**self.env, "MYSTIC_BACKEND_URL": "worker://supabase"},
+                "requestUrl": "https://mystic.dexproject.workers.dev/favicon.ico",
+                "method": "GET",
+            },
+        )
+        self.assertEqual(result["status"], 204)
+        self.assertEqual(result["headers"]["x-mystic-public-origin"], "worker://supabase")
+        self.assertEqual(result["headers"]["x-mystic-public-url"], "https://mystic.dexproject.workers.dev")
+        self.assertEqual(result["fetchCalls"], [])
+
+    def test_http_origin_proxy_still_proxies_unknown_route(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": {**self.env, "MYSTIC_BACKEND_URL": "https://origin.example"},
+                "requestUrl": "https://mystic.dexproject.workers.dev/favicon.ico",
+                "method": "GET",
+                "fetchResponses": [
+                    {
+                        "methodPrefix": "GET https://origin.example/favicon.ico",
+                        "status": 200,
+                        "body": {"proxied": True},
+                    }
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 200)
+        self.assertEqual(result["body"], {"proxied": True})
+        self.assertEqual(result["headers"]["x-mystic-public-origin"], "https://origin.example")
+        self.assertEqual(result["headers"]["x-mystic-public-url"], "https://mystic.dexproject.workers.dev")
+        self.assertEqual(len(result["fetchCalls"]), 1)
+
     def test_cloud_phase1_initialize_returns_mcp_server_capabilities(self) -> None:
         result = run_worker_helper(
             "simulateRequest",
@@ -815,6 +851,79 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         )
         self.assertEqual(result["status"], 200)
         self.assertIn("<code>connected</code>", result["body"])
+        self.assertNotIn("vertex-access-token", result["body"])
+        self.assertNotIn("vertex-refresh-token", result["body"])
+
+    def test_google_vertex_callback_returns_token_storage_required_when_oauth_token_table_is_unavailable(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": {
+                    **self.env,
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED": "true",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID": "google-client-id",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET": "google-client-secret",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
+                    "MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY": "provider-token-encryption-key",
+                },
+                "requestUrl": "https://mystic.dexproject.workers.dev/providers/oauth/callback?state=flow-4b.good-state&code=secret-code",
+                "method": "GET",
+                "fetchResponses": [
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_auth_flows",
+                        "status": 200,
+                        "body": [
+                            {
+                                "flow_id": "flow-4b",
+                                "provider_id": "google_vertex_ai",
+                                "auth_method": "oauth",
+                                "status": "oauth_required",
+                                "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?response_type=code",
+                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback",
+                                "state": "",
+                                "state_hash": "40db1ad79a75698531ae3ba84fab014d1e1edd463459c5493ebde2ab5ee4115e",
+                                "code_challenge": "challenge-1",
+                                "code_challenge_method": "S256",
+                                "callback_received_at": None,
+                                "failure_reason": "",
+                                "metadata": {"provider_id": "google_vertex_ai", "code_verifier": "verifier-123"},
+                                "created_at": "2026-07-06T01:01:01Z",
+                                "updated_at": "2026-07-06T01:01:01Z",
+                            }
+                        ],
+                    },
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_auth_flows", "status": 201, "body": [{}]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
+                    {
+                        "methodPrefix": "POST https://oauth2.googleapis.com/token",
+                        "status": 200,
+                        "body": {
+                            "access_token": "vertex-access-token",
+                            "refresh_token": "vertex-refresh-token",
+                            "id_token": "vertex-id-token",
+                            "token_type": "Bearer",
+                            "scope": "openid profile https://www.googleapis.com/auth/cloud-platform",
+                            "expires_in": 3600,
+                        },
+                    },
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens",
+                        "status": 404,
+                        "body": {
+                            "code": "PGRST205",
+                            "details": None,
+                            "hint": "Perhaps you meant the table 'public.provider_auth_flows'",
+                            "message": "Could not find the table 'public.provider_oauth_tokens' in the schema cache",
+                        },
+                    },
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 200)
+        self.assertIn("token_storage_required", result["body"])
+        self.assertNotIn("secret-code", result["body"])
         self.assertNotIn("vertex-access-token", result["body"])
         self.assertNotIn("vertex-refresh-token", result["body"])
 
