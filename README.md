@@ -68,6 +68,8 @@ Provider Connect routes exposed by the Worker:
 - `GET /providers/:provider_id/status`
 - `GET /providers/oauth/callback`
 
+When OAuth metadata is configured, `GET /providers/:provider_id/connect` now starts the Provider Connect flow inside the Worker and returns an immediate `302` redirect to the provider login page instead of showing a manual-start placeholder.
+
 The core lab objects are:
 
 - `LabSession`: top-level research workflow state

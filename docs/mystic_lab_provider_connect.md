@@ -104,6 +104,9 @@ They never show:
 
 - `google_vertex_ai` is the separate Google OAuth-backed provider for Vertex AI Gemini access.
 - When real OAuth metadata is configured, `provider_connect_start` returns a real Google `authorization_url`.
+- `GET /providers/google_vertex_ai/connect` also starts the same OAuth flow directly in the browser and returns an immediate `302` redirect to Google login.
+- The Google OAuth redirect URI must be exactly `https://mystic.dexproject.workers.dev/providers/oauth/callback`.
+- `provider_id` is recovered from the stored OAuth flow during callback; it is not encoded into the Google redirect URI.
 - Required configuration is:
   - `MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED`
   - `MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID`

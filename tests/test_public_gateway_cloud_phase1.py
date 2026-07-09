@@ -534,7 +534,42 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         payload = result["body"]["result"]["structuredContent"]
         self.assertEqual(payload["status"], "oauth_required")
         self.assertIn("accounts.google.com/o/oauth2/v2/auth", payload["authorization_url"])
+        self.assertIn(
+            "redirect_uri=https%3A%2F%2Fmystic.dexproject.workers.dev%2Fproviders%2Foauth%2Fcallback",
+            payload["authorization_url"],
+        )
+        self.assertNotIn("provider_id%3Dgoogle_vertex_ai", payload["authorization_url"])
         self.assertNotIn("google-client-secret", json.dumps(payload))
+
+    def test_google_vertex_connect_page_redirects_directly_to_google_oauth_when_metadata_exists(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": {
+                    **self.env,
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED": "true",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID": "google-client-id",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET": "google-client-secret",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
+                },
+                "requestUrl": "https://mystic.dexproject.workers.dev/providers/google_vertex_ai/connect",
+                "method": "GET",
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_auth_flows", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 302)
+        self.assertTrue(result["headers"]["location"].startswith("https://accounts.google.com/o/oauth2/v2/auth"))
+        self.assertIn(
+            "redirect_uri=https%3A%2F%2Fmystic.dexproject.workers.dev%2Fproviders%2Foauth%2Fcallback",
+            result["headers"]["location"],
+        )
+        self.assertNotIn("provider_id%3Dgoogle_vertex_ai", result["headers"]["location"])
 
     def test_provider_pages_and_secret_route_never_expose_secret_values(self) -> None:
         setup_result = run_worker_helper(
@@ -591,7 +626,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             "simulateRequest",
             {
                 "env": self.env,
-                "requestUrl": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai&flow_id=flow-1&state=wrong&code=secret-code",
+                "requestUrl": "https://mystic.dexproject.workers.dev/providers/oauth/callback?flow_id=flow-1&state=wrong&code=secret-code",
                 "method": "GET",
                 "fetchResponses": [
                     {
@@ -604,14 +639,14 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                                 "auth_method": "oauth",
                                 "status": "oauth_required",
                                 "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?response_type=code",
-                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai",
+                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback",
                                 "state": "",
                                 "state_hash": "60e0b9b14540af0cbeb5255ac71b2f842c5130f748e3ae2358145d6d8d005c76",
                                 "code_challenge": "challenge-1",
                                 "code_challenge_method": "S256",
                                 "callback_received_at": None,
                                 "failure_reason": "",
-                                "metadata": {},
+                                "metadata": {"provider_id": "google_vertex_ai"},
                                 "created_at": "2026-07-06T01:01:01Z",
                                 "updated_at": "2026-07-06T01:01:01Z",
                             }
@@ -625,7 +660,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             "simulateRequest",
             {
                 "env": self.env,
-                "requestUrl": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai&flow_id=flow-2&code=secret-code",
+                "requestUrl": "https://mystic.dexproject.workers.dev/providers/oauth/callback?flow_id=flow-2&code=secret-code",
                 "method": "GET",
                 "fetchResponses": [
                     {
@@ -638,14 +673,14 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                                 "auth_method": "oauth",
                                 "status": "oauth_required",
                                 "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?response_type=code",
-                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai",
+                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback",
                                 "state": "",
                                 "state_hash": "60e0b9b14540af0cbeb5255ac71b2f842c5130f748e3ae2358145d6d8d005c76",
                                 "code_challenge": "challenge-1",
                                 "code_challenge_method": "S256",
                                 "callback_received_at": None,
                                 "failure_reason": "",
-                                "metadata": {},
+                                "metadata": {"provider_id": "google_vertex_ai"},
                                 "created_at": "2026-07-06T01:01:01Z",
                                 "updated_at": "2026-07-06T01:01:01Z",
                             }
@@ -672,7 +707,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                     "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
                     "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
                 },
-                "requestUrl": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai&flow_id=flow-3&state=good-state&code=secret-code",
+                "requestUrl": "https://mystic.dexproject.workers.dev/providers/oauth/callback?flow_id=flow-3&state=good-state&code=secret-code",
                 "method": "GET",
                 "fetchResponses": [
                     {
@@ -685,14 +720,14 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                                 "auth_method": "oauth",
                                 "status": "oauth_required",
                                 "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?response_type=code",
-                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai",
+                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback",
                                 "state": "",
                                 "state_hash": "aab27fa344587b4fe185e55703daafbcf3934e06b04f920fdb13aa440c25468f",
                                 "code_challenge": "challenge-1",
                                 "code_challenge_method": "S256",
                                 "callback_received_at": None,
                                 "failure_reason": "",
-                                "metadata": {},
+                                "metadata": {"provider_id": "google_vertex_ai"},
                                 "created_at": "2026-07-06T01:01:01Z",
                                 "updated_at": "2026-07-06T01:01:01Z",
                             }
@@ -722,7 +757,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                     "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
                     "MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY": "provider-token-encryption-key",
                 },
-                "requestUrl": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai&flow_id=flow-4&state=good-state&code=secret-code",
+                "requestUrl": "https://mystic.dexproject.workers.dev/providers/oauth/callback?state=flow-4.good-state&code=secret-code",
                 "method": "GET",
                 "fetchResponses": [
                     {
@@ -735,14 +770,14 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                                 "auth_method": "oauth",
                                 "status": "oauth_required",
                                 "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?response_type=code",
-                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback?provider_id=google_vertex_ai",
+                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback",
                                 "state": "",
-                                "state_hash": "aab27fa344587b4fe185e55703daafbcf3934e06b04f920fdb13aa440c25468f",
+                                "state_hash": "784d23d57a9ac46c658bb11e1983f67b5818bf6b04f68ba1d860ee1cb63cab08",
                                 "code_challenge": "challenge-1",
                                 "code_challenge_method": "S256",
                                 "callback_received_at": None,
                                 "failure_reason": "",
-                                "metadata": {"code_verifier": "verifier-123"},
+                                "metadata": {"provider_id": "google_vertex_ai", "code_verifier": "verifier-123"},
                                 "created_at": "2026-07-06T01:01:01Z",
                                 "updated_at": "2026-07-06T01:01:01Z",
                             }
@@ -772,6 +807,69 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertIn("<code>connected</code>", result["body"])
         self.assertNotIn("vertex-access-token", result["body"])
         self.assertNotIn("vertex-refresh-token", result["body"])
+
+    def test_google_vertex_callback_recovers_provider_id_from_flow_without_query_parameter(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": {
+                    **self.env,
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED": "true",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID": "google-client-id",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET": "google-client-secret",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
+                    "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
+                    "MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY": "provider-token-encryption-key",
+                },
+                "requestUrl": "https://mystic.dexproject.workers.dev/providers/oauth/callback?state=flow-5.good-state&code=secret-code",
+                "method": "GET",
+                "fetchResponses": [
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_auth_flows",
+                        "status": 200,
+                        "body": [
+                            {
+                                "flow_id": "flow-5",
+                                "provider_id": "google_vertex_ai",
+                                "auth_method": "oauth",
+                                "status": "oauth_required",
+                                "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?response_type=code",
+                                "redirect_url": "https://mystic.dexproject.workers.dev/providers/oauth/callback",
+                                "state": "",
+                                "state_hash": "e1f0e5fcf2b64a3a974d2c86e5e3343e58f481a88d65c8dcad3d34efe2f47c2d",
+                                "code_challenge": "challenge-1",
+                                "code_challenge_method": "S256",
+                                "callback_received_at": None,
+                                "failure_reason": "",
+                                "metadata": {"provider_id": "google_vertex_ai", "code_verifier": "verifier-123"},
+                                "created_at": "2026-07-06T01:01:01Z",
+                                "updated_at": "2026-07-06T01:01:01Z",
+                            }
+                        ],
+                    },
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_auth_flows", "status": 201, "body": [{}]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_connections", "status": 201, "body": [{}]},
+                    {
+                        "methodPrefix": "POST https://oauth2.googleapis.com/token",
+                        "status": 200,
+                        "body": {
+                            "access_token": "vertex-access-token",
+                            "refresh_token": "vertex-refresh-token",
+                            "id_token": "vertex-id-token",
+                            "token_type": "Bearer",
+                            "scope": "openid profile https://www.googleapis.com/auth/cloud-platform",
+                            "expires_in": 3600,
+                        },
+                    },
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 200)
+        self.assertIn("google_vertex_ai", result["body"])
+        self.assertNotIn("secret-code", result["body"])
 
     def test_cloud_gemini_remains_api_key_only_even_when_google_oauth_metadata_exists(self) -> None:
         result = run_worker_helper(

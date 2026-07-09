@@ -2729,7 +2729,7 @@ function providerRouteUrls(env, providerId) {
     connect_url: `${baseUrl}/providers/${providerId}/connect`,
     setup_url: `${baseUrl}/providers/${providerId}/setup`,
     status_url: `${baseUrl}/providers/${providerId}/status`,
-    callback_url: `${baseUrl}/providers/oauth/callback?provider_id=${providerId}`,
+    callback_url: `${baseUrl}/providers/oauth/callback`,
   };
 }
 
@@ -2944,7 +2944,7 @@ function providerOauthMetadata(env, spec) {
   const clientSecret = trimmed(env[`${prefix}_CLIENT_SECRET`]);
   const redirectUri = trimmed(
     env[`${prefix}_REDIRECT_URI`],
-    `${providerRouteBaseUrl(env)}/providers/oauth/callback?provider_id=${spec.provider_id}`,
+    `${providerRouteBaseUrl(env)}/providers/oauth/callback`,
   );
   const scopes = trimmed(env[`${prefix}_SCOPES`])
     ? trimmed(env[`${prefix}_SCOPES`])
@@ -3384,7 +3384,6 @@ function buildProviderAuthorizationUrl(env, spec, oauthMetadata, { flowId, state
   params.set("client_id", oauthMetadata.client_id);
   params.set("redirect_uri", oauthMetadata.redirect_uri);
   params.set("state", stateValue);
-  params.set("flow_id", flowId);
   if (oauthMetadata.scopes.length) {
     params.set("scope", oauthMetadata.scopes.join(" "));
   }
@@ -3401,6 +3400,118 @@ function buildProviderAuthorizationUrl(env, spec, oauthMetadata, { flowId, state
 
 function providerRegistryMap(registry) {
   return new Map(registry.providers.map((item) => [item.provider_id, item]));
+}
+
+async function startProviderConnect(env, providerId, authMethod) {
+  const spec = providerCatalogEntry(env, providerId);
+  const requestedAuthMethod = trimmed(authMethod, spec.default_auth_method);
+  const oauthMetadata = providerOauthMetadata(env, spec);
+  if (providerId === "mock" && requestedAuthMethod === "none/mock") {
+    const record = buildProviderRecord(env, "mock", { auth_method: "none/mock", status: "connected", model_list: ["mock-model"] });
+    await upsertProviderConnection(env, record);
+    return { ...record, message: "Mock provider connected for tests." };
+  }
+  if (["oauth", "bearer_token"].includes(requestedAuthMethod) && oauthMetadata.configured) {
+    const { verifier, challenge } = await buildPkcePair();
+    const flowId = `flow-${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const stateValue = `${flowId}.${base64UrlEncode(crypto.getRandomValues(new Uint8Array(18)))}`;
+    const authorizationUrl = buildProviderAuthorizationUrl(env, spec, oauthMetadata, {
+      flowId,
+      stateValue,
+      codeChallenge: challenge,
+    });
+    const flow = {
+      flow_id: flowId,
+      provider_id: spec.provider_id,
+      auth_method: "oauth",
+      status: "oauth_required",
+      authorization_url: authorizationUrl,
+      redirect_url: oauthMetadata.redirect_uri,
+      state: "",
+      state_hash: await sha256Hex(stateValue),
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+      callback_received_at: null,
+      failure_reason: "",
+      metadata: {
+        runtime_mode: "cloud_native_worker_lab_v0",
+        provider_id: spec.provider_id,
+        authorization_endpoint: oauthMetadata.authorization_endpoint,
+        token_endpoint: oauthMetadata.token_endpoint,
+        client_id: oauthMetadata.client_id,
+        scopes: oauthMetadata.scopes,
+        pkce_enabled: true,
+        code_verifier: verifier,
+        code_verifier_present: Boolean(verifier),
+        token_storage_supported: oauthMetadata.token_storage_supported,
+      },
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    };
+    await upsertProviderAuthFlow(env, flow);
+    const record = buildProviderRecord(env, providerId, { auth_method: "oauth", status: "oauth_required" });
+    const saved = await upsertProviderConnection(env, record, {
+      metadata: {
+        ...(record.metadata || {}),
+        oauth_enabled: true,
+        oauth_redirect_uri: oauthMetadata.redirect_uri,
+        oauth_client_id_configured: true,
+        oauth_client_secret_configured: oauthMetadata.client_secret_configured,
+        oauth_missing_config_names: oauthMetadata.missing_config_names,
+        oauth_token_storage_supported: oauthMetadata.token_storage_supported,
+      },
+    });
+    return {
+      ...buildProviderRecord(env, providerId, saved),
+      authorization_url: authorizationUrl,
+      flow: publicProviderFlow(flow),
+      message: "Provider connect start produced a real OAuth authorization URL.",
+    };
+  }
+  if (["oauth", "bearer_token"].includes(requestedAuthMethod) && spec.supports_api_key) {
+    const record = buildProviderRecord(env, providerId, {
+      auth_method: "api_key",
+      status: "api_key_required",
+      failure_reason: "oauth_not_configured",
+    });
+    const saved = await upsertProviderConnection(env, record);
+    return {
+      ...buildProviderRecord(env, providerId, saved),
+      auth_method: "api_key",
+      status: "api_key_required",
+      provider_status: "api_key_required",
+      message: "OAuth is not configured for this provider. Use the secure setup page and Cloudflare secret instructions.",
+    };
+  }
+  if (requestedAuthMethod === "oauth" || requestedAuthMethod === "bearer_token") {
+    const record = buildProviderRecord(env, providerId);
+    return {
+      ...record,
+      status: spec.oauth_missing_status || "provider_required",
+      provider_status: spec.oauth_missing_status || "provider_required",
+      failure_reason: providerDefaultFailureReason(spec, spec.oauth_missing_status || "provider_required", oauthMetadata, providerSecretState(env, spec)),
+      message: providerStatusMessage({
+        ...record,
+        status: spec.oauth_missing_status || "provider_required",
+        provider_status: spec.oauth_missing_status || "provider_required",
+        failure_reason: providerDefaultFailureReason(spec, spec.oauth_missing_status || "provider_required", oauthMetadata, providerSecretState(env, spec)),
+      }),
+    };
+  }
+  const record = buildProviderRecord(env, providerId, {
+    auth_method: requestedAuthMethod,
+    status: requestedAuthMethod === "api_key" && !buildProviderRecord(env, providerId).configured ? "api_key_required" : "",
+  });
+  const status = record.configured ? "connected" : "api_key_required";
+  const saved = await upsertProviderConnection(env, record, {
+    status,
+  });
+  return {
+    ...buildProviderRecord(env, providerId, saved),
+    status,
+    provider_status: status,
+    message: "Provider connect start returned the secure Mystic LAB setup page.",
+  };
 }
 
 function normalizeRequestedProvider(value) {
@@ -5045,113 +5156,7 @@ async function callCloudTool(name, args, env, state) {
   if (name === "provider_connect_start") {
     const providerId = normalizeProviderId(args.provider_id);
     const spec = providerCatalogEntry(env, providerId);
-    const requestedAuthMethod = trimmed(args.auth_method, spec.default_auth_method);
-    const oauthMetadata = providerOauthMetadata(env, spec);
-    if (providerId === "mock" && requestedAuthMethod === "none/mock") {
-      const record = buildProviderRecord(env, "mock", { auth_method: "none/mock", status: "connected", model_list: ["mock-model"] });
-      await upsertProviderConnection(env, record);
-      return { ...record, message: "Mock provider connected for tests." };
-    }
-    if (["oauth", "bearer_token"].includes(requestedAuthMethod) && oauthMetadata.configured) {
-      const { verifier, challenge } = await buildPkcePair();
-      const flowId = `flow-${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
-      const stateValue = `${flowId}.${base64UrlEncode(crypto.getRandomValues(new Uint8Array(18)))}`;
-      const authorizationUrl = buildProviderAuthorizationUrl(env, spec, oauthMetadata, {
-        flowId,
-        stateValue,
-        codeChallenge: challenge,
-      });
-      const flow = {
-        flow_id: flowId,
-        provider_id: spec.provider_id,
-        auth_method: "oauth",
-        status: "oauth_required",
-        authorization_url: authorizationUrl,
-        redirect_url: oauthMetadata.redirect_uri,
-        state: "",
-        state_hash: await sha256Hex(stateValue),
-        code_challenge: challenge,
-        code_challenge_method: "S256",
-        callback_received_at: null,
-        failure_reason: "",
-        metadata: {
-          runtime_mode: "cloud_native_worker_lab_v0",
-          authorization_endpoint: oauthMetadata.authorization_endpoint,
-          token_endpoint: oauthMetadata.token_endpoint,
-          client_id: oauthMetadata.client_id,
-          scopes: oauthMetadata.scopes,
-          pkce_enabled: true,
-          code_verifier: verifier,
-          code_verifier_present: Boolean(verifier),
-          token_storage_supported: oauthMetadata.token_storage_supported,
-        },
-        created_at: nowIso(),
-        updated_at: nowIso(),
-      };
-      await upsertProviderAuthFlow(env, flow);
-      const record = buildProviderRecord(env, providerId, { auth_method: "oauth", status: "oauth_required" });
-      const saved = await upsertProviderConnection(env, record, {
-        metadata: {
-          ...(record.metadata || {}),
-          oauth_enabled: true,
-          oauth_redirect_uri: oauthMetadata.redirect_uri,
-          oauth_client_id_configured: true,
-          oauth_client_secret_configured: oauthMetadata.client_secret_configured,
-          oauth_missing_config_names: oauthMetadata.missing_config_names,
-          oauth_token_storage_supported: oauthMetadata.token_storage_supported,
-        },
-      });
-      return {
-        ...buildProviderRecord(env, providerId, saved),
-        authorization_url: authorizationUrl,
-        flow: publicProviderFlow(flow),
-        message: "Provider connect start produced a real OAuth authorization URL.",
-      };
-    }
-    if (["oauth", "bearer_token"].includes(requestedAuthMethod) && spec.supports_api_key) {
-      const record = buildProviderRecord(env, providerId, {
-        auth_method: "api_key",
-        status: "api_key_required",
-        failure_reason: "oauth_not_configured",
-      });
-      const saved = await upsertProviderConnection(env, record);
-      return {
-        ...buildProviderRecord(env, providerId, saved),
-        auth_method: "api_key",
-        status: "api_key_required",
-        provider_status: "api_key_required",
-        message: "OAuth is not configured for this provider. Use the secure setup page and Cloudflare secret instructions.",
-      };
-    }
-    if (requestedAuthMethod === "oauth" || requestedAuthMethod === "bearer_token") {
-      const record = buildProviderRecord(env, providerId);
-      return {
-        ...record,
-        status: spec.oauth_missing_status || "provider_required",
-        provider_status: spec.oauth_missing_status || "provider_required",
-        failure_reason: providerDefaultFailureReason(spec, spec.oauth_missing_status || "provider_required", oauthMetadata, providerSecretState(env, spec)),
-        message: providerStatusMessage({
-          ...record,
-          status: spec.oauth_missing_status || "provider_required",
-          provider_status: spec.oauth_missing_status || "provider_required",
-          failure_reason: providerDefaultFailureReason(spec, spec.oauth_missing_status || "provider_required", oauthMetadata, providerSecretState(env, spec)),
-        }),
-      };
-    }
-    const record = buildProviderRecord(env, providerId, {
-      auth_method: requestedAuthMethod,
-      status: requestedAuthMethod === "api_key" && !buildProviderRecord(env, providerId).configured ? "api_key_required" : "",
-    });
-    const status = record.configured ? "connected" : "api_key_required";
-    const saved = await upsertProviderConnection(env, record, {
-      status,
-    });
-    return {
-      ...buildProviderRecord(env, providerId, saved),
-      status,
-      provider_status: status,
-      message: "Provider connect start returned the secure Mystic LAB setup page.",
-    };
+    return startProviderConnect(env, providerId, trimmed(args.auth_method, spec.default_auth_method));
   }
   if (name === "provider_connect_callback_status") {
     const providerId = normalizeProviderId(args.provider_id);
@@ -6317,9 +6322,10 @@ function renderProviderCallbackPage(provider, flow, message) {
 
 async function handleProviderOauthCallback(request, env) {
   const sourceUrl = new URL(request.url);
-  const flowId = trimmed(sourceUrl.searchParams.get("flow_id"));
-  const providerId = normalizeProviderId(trimmed(sourceUrl.searchParams.get("provider_id")));
   const callbackState = trimmed(sourceUrl.searchParams.get("state"));
+  const flowIdFromState = callbackState.includes(".") ? trimmed(callbackState.split(".", 1)[0]) : "";
+  const flowId = trimmed(sourceUrl.searchParams.get("flow_id"), flowIdFromState);
+  const providerId = normalizeProviderId(trimmed(sourceUrl.searchParams.get("provider_id")));
   const callbackError = trimmed(sourceUrl.searchParams.get("error"));
   const callbackCode = trimmed(sourceUrl.searchParams.get("code"));
   if (!flowId) {
@@ -6329,8 +6335,14 @@ async function handleProviderOauthCallback(request, env) {
   if (!flow) {
     return htmlResponse(providerPage("Provider callback error", "<h1>Provider callback error</h1><p class=\"warn\">Unknown provider auth flow.</p>"), 404);
   }
-  const resolvedProviderId = normalizeProviderId(providerId || flow.provider_id);
-  if (resolvedProviderId !== normalizeProviderId(flow.provider_id)) {
+  const storedProviderId = normalizeProviderId(
+    flow.provider_id || (flow.metadata && typeof flow.metadata === "object" ? trimmed(flow.metadata.provider_id) : ""),
+  );
+  if (!storedProviderId) {
+    return htmlResponse(providerPage("Provider callback error", "<h1>Provider callback error</h1><p class=\"warn\">Provider flow is incomplete.</p>"), 400);
+  }
+  const resolvedProviderId = storedProviderId;
+  if (providerId && providerId !== storedProviderId) {
     return htmlResponse(providerPage("Provider callback error", "<h1>Provider callback error</h1><p class=\"warn\">Provider mismatch.</p>"), 400);
   }
   if (!callbackState && trimmed(flow.state_hash)) {
@@ -6628,6 +6640,30 @@ async function handleProviderRoute(request, env) {
     return htmlResponse(renderProviderSetupPage(provider, spec));
   }
   if (action === "connect") {
+    if (request.method === "GET" && oauthMetadata.configured && spec.supports_oauth) {
+      const result = await startProviderConnect(env, providerId, "oauth");
+      if (result.authorization_url) {
+        return Response.redirect(result.authorization_url, 302);
+      }
+    }
+    if (request.method === "POST") {
+      const form = await request.formData();
+      const requestedAuthMethod = trimmed(form.get("auth_method"), spec.default_auth_method);
+      const result = await startProviderConnect(env, providerId, requestedAuthMethod);
+      if (result.authorization_url) {
+        return Response.redirect(result.authorization_url, 302);
+      }
+      if (!spec.supports_oauth || requestedAuthMethod === "api_key" || result.provider_status === "api_key_required") {
+        return htmlResponse(renderProviderSetupPage(result, spec));
+      }
+      return htmlResponse(renderProviderConnectPage(result, spec, oauthMetadata, result.flow || null));
+    }
+    if (request.method !== "GET") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+    if (!oauthMetadata.configured || !spec.supports_oauth) {
+      return htmlResponse(renderProviderSetupPage(provider, spec));
+    }
     const flowId = trimmed(sourceUrl.searchParams.get("flow_id"));
     const flow = flowId ? await loadProviderAuthFlow(env, flowId) : null;
     return htmlResponse(renderProviderConnectPage(provider, spec, oauthMetadata, flow ? publicProviderFlow(flow) : null));
