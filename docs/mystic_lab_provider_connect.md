@@ -123,7 +123,10 @@ They never show:
   - callback receipt is supported
   - token exchange only runs when the encryption key is configured
   - `provider_verify` reports `connected` only when an encrypted OAuth token record exists
-  - `provider_call_test` still fails closed after connection because real Vertex inference routing is intentionally separate
+  - `provider_call_test` decrypts the encrypted OAuth access credential only for a live Vertex AI request and returns normalized text plus safe diagnostics
+  - an expiring access credential is refreshed through the configured Google token endpoint only when an encrypted refresh credential exists; refreshed credentials are re-encrypted before persistence
+  - `lab_agent_run` and `lab_models_debate` route the `gemini` alias to a connected `google_vertex_ai` provider, while direct `gemini` calls remain API-key based
+  - Vertex requests use `https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{location}/publishers/google/models/{model}:generateContent`
   - if callback storage is unavailable, the safe status is `token_storage_required`
 
 ### Anthropic
@@ -226,7 +229,9 @@ Current behavior:
 - if the encryption key is present, Mystic exchanges the authorization code and stores only encrypted OAuth token records
 - if Google token exchange fails, provider status stores only safe diagnostics such as `oauth_token_exchange_error`, HTTP status, sanitized error description, and config booleans like `client_id_configured`, `client_secret_configured`, `project_id_configured`, `location_configured`, and the exact queryless `redirect_uri`
 - provider pages and MCP outputs expose only safe token metadata such as presence flags and sanitized scope data
-- `google_vertex_ai` model-call routing is still intentionally deferred after connection, so connected token storage does not yet imply live Vertex inference
+- `google_vertex_ai` uses encrypted server-side access credentials only to make a live Vertex AI request; plaintext credentials are never persisted, displayed, or included in MCP outputs
+- missing token rows return `reconnect_required`; invalid ciphertext returns `token_decrypt_failed`; refresh failures return `token_refresh_failed`
+- Vertex failures return safe structured statuses: `vertex_auth_failed`, `vertex_permission_denied`, `vertex_model_not_found`, `vertex_rate_limited`, `vertex_unavailable`, or `provider_response_invalid`
 
 ## Security Guardrail
 

@@ -293,7 +293,7 @@ Current cloud-native LAB tools exposed directly by the Worker:
 Cloud support levels:
 
 - fully cloud-backed via Supabase: `mystic_status`, `health_check`, `lab_session_create`, `lab_session_advance`, `lab_experiment_create`, `lab_memory_search`, `lab_memory_write`, `lab_session_get`, `lab_report_generate`
-- exposed with structured `deferred` responses until a worker-native executor exists: `lab_experiment_run`, `lab_models_debate` when `use_existing_research_table=false`, and `lab_referee_review` when no deterministic or explicit provider-backed referee path is selected
+- exposed with structured `deferred` responses until a worker-native executor exists: `lab_experiment_run`, and `lab_referee_review` when no deterministic or explicit provider-backed referee path is selected
 - exposed with structured `provider_required`, `api_key_required`, `provider_auth_failed`, `rate_limited`, or `provider_unavailable` responses when an external model provider cannot complete the requested call safely
 
 External model providers are never auto-logged-in by the Worker. Cloud-native model actions require explicit provider authorization through Cloudflare secrets or approved provider connection records.
@@ -351,7 +351,9 @@ Current Provider Connect boundary:
 - `google_vertex_ai` now completes OAuth callback handling only when `MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY` is configured
 - OAuth access, refresh, and ID tokens are stored only as encrypted server-side records
 - `google_vertex_ai` provider status now exposes only safe token-exchange diagnostics such as error code, HTTP status, sanitized description, config booleans, and the exact queryless redirect URI
-- `google_vertex_ai` model-call routing is still deferred after connection, so connected token storage does not yet enable real Vertex inference in this issue
+- `google_vertex_ai` decrypts encrypted server-side access credentials only for a live request, refreshes them near expiry when a refresh credential exists, and calls the configured Vertex AI `generateContent` endpoint
+- `provider_call_test` can execute a live `google_vertex_ai` call; `lab_agent_run` and `lab_models_debate` use a connected `google_vertex_ai` provider for the `gemini` alias while preserving direct API-key `gemini` behavior
+- Vertex failures return structured safe states such as `token_decrypt_failed`, `token_refresh_failed`, `vertex_auth_failed`, `vertex_permission_denied`, `vertex_model_not_found`, `vertex_rate_limited`, and `vertex_unavailable`
 
 ### Deploy and verify
 

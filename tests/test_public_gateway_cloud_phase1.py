@@ -140,6 +140,45 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             return None
         return json.loads(body)
 
+    def _google_vertex_env(self) -> dict[str, str]:
+        return {
+            **self.env,
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_OAUTH_ENABLED": "true",
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_ID": "google-client-id",
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET": "google-client-secret",
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID": "vertex-project",
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION": "us-central1",
+            "MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL": "gemini-3.5-flash",
+            "MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY": "provider-token-encryption-key",
+        }
+
+    def _google_vertex_token_row(self, *, expires_at: str = "2030-07-06T02:01:01Z") -> dict[str, object]:
+        env = self._google_vertex_env()
+        return {
+            "token_id": "oauth-token-google_vertex_ai",
+            "provider_id": "google_vertex_ai",
+            "connection_id": "provider-google_vertex_ai",
+            "encrypted_access_token": run_worker_helper(
+                "encryptProviderToken", {"env": env, "value": "vertex-access-token-test"}
+            ),
+            "encrypted_refresh_token": run_worker_helper(
+                "encryptProviderToken", {"env": env, "value": "vertex-refresh-token-test"}
+            ),
+            "encrypted_id_token": "",
+            "token_type": "Bearer",
+            "scope_hash": "scope-hash",
+            "expires_at": expires_at,
+            "status": "connected",
+            "metadata_safe": {"refresh_token_present": True},
+            "created_at": "2026-07-06T01:01:01Z",
+            "updated_at": "2026-07-06T01:01:01Z",
+        }
+
+    def _google_vertex_connection_row(self) -> dict[str, object]:
+        row = self._provider_connection_row("google_vertex_ai", status="connected")
+        row["model_list"] = ["gemini-3.5-flash"]
+        return row
+
     def test_cloud_phase1_health_returns_ok_without_backend_proxy(self) -> None:
         result = run_worker_helper(
             "simulateRequest",
@@ -1575,6 +1614,159 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertEqual(payload["status"], "api_key_required")
         self.assertIn("/providers/gemini/setup", payload["setup_url"])
 
+    def test_cloud_google_vertex_provider_call_test_executes_vertex_with_encrypted_token(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self._google_vertex_env(),
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 160,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "provider_call_test",
+                        "arguments": {"provider_id": "google_vertex_ai", "prompt": "Reply with exactly: mystic-gemini-ok"},
+                    },
+                },
+                "fetchResponses": [
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections",
+                        "status": 200,
+                        "body": [self._google_vertex_connection_row()],
+                    },
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens",
+                        "status": 200,
+                        "body": [self._google_vertex_token_row()],
+                    },
+                    {
+                        "methodPrefix": "POST https://us-central1-aiplatform.googleapis.com/v1/projects/vertex-project/locations/us-central1/publishers/google/models/gemini-3.5-flash:generateContent",
+                        "status": 200,
+                        "body": {
+                            "candidates": [{"content": {"parts": [{"text": "mystic-gemini-ok"}]}}],
+                            "usageMetadata": {"promptTokenCount": 4, "candidatesTokenCount": 2},
+                        },
+                    },
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["output_text"], "mystic-gemini-ok")
+        self.assertEqual(payload["model"], "gemini-3.5-flash")
+        self.assertEqual(payload["diagnostics"]["vertex_http_status"], 200)
+        vertex_call = self._fetch_call(result["fetchCalls"], "POST https://us-central1-aiplatform.googleapis.com")
+        self.assertEqual(vertex_call["headers"]["authorization"], "Bearer vertex-access-token-test")
+        self.assertEqual(self._json_body(vertex_call)["contents"][0]["parts"][0]["text"], "Reply with exactly: mystic-gemini-ok")
+        model_call = self._fetch_call(result["fetchCalls"], "POST https://example.supabase.co/rest/v1/model_calls")
+        self.assertNotIn("vertex-access-token-test", json.dumps(self._json_body(model_call)))
+        self.assertNotIn("vertex-access-token-test", json.dumps(payload))
+        self.assertNotIn("vertex-refresh-token-test", json.dumps(payload))
+
+    def test_cloud_google_vertex_refreshes_expired_token_without_persisting_plaintext(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self._google_vertex_env(),
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 161,
+                    "method": "tools/call",
+                    "params": {"name": "provider_call_test", "arguments": {"provider_id": "google_vertex_ai", "prompt": "ping"}},
+                },
+                "fetchResponses": [
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections",
+                        "status": 200,
+                        "body": [self._google_vertex_connection_row()],
+                    },
+                    {
+                        "methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens",
+                        "status": 200,
+                        "body": [self._google_vertex_token_row(expires_at="2020-07-06T02:01:01Z")],
+                    },
+                    {
+                        "methodPrefix": "POST https://oauth2.googleapis.com/token",
+                        "status": 200,
+                        "body": {"access_token": "vertex-refreshed-token-test", "expires_in": 3600, "token_type": "Bearer"},
+                    },
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 201, "body": [{}]},
+                    {
+                        "methodPrefix": "POST https://us-central1-aiplatform.googleapis.com/v1/projects/vertex-project/locations/us-central1/publishers/google/models/gemini-3.5-flash:generateContent",
+                        "status": 200,
+                        "body": {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]},
+                    },
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["status"], "completed")
+        self.assertTrue(payload["diagnostics"]["refresh_attempted"])
+        self.assertTrue(payload["diagnostics"]["refresh_succeeded"])
+        token_store = self._fetch_call(result["fetchCalls"], "POST https://example.supabase.co/rest/v1/provider_oauth_tokens")
+        stored = self._json_body(token_store)[0]
+        self.assertNotIn("vertex-refreshed-token-test", json.dumps(stored))
+        self.assertTrue(stored["encrypted_access_token"].startswith("mlabtok_v1:"))
+
+    def test_cloud_google_vertex_maps_vertex_errors_without_leaking_credentials(self) -> None:
+        for status, error_type in [(401, "vertex_auth_failed"), (403, "vertex_permission_denied"), (404, "vertex_model_not_found"), (429, "vertex_rate_limited"), (500, "vertex_unavailable")]:
+            with self.subTest(status=status):
+                result = run_worker_helper(
+                    "simulateRequest",
+                    {
+                        "env": self._google_vertex_env(),
+                        "requestUrl": self.request_url,
+                        "headers": self.auth_headers,
+                        "body": {
+                            "jsonrpc": "2.0",
+                            "id": 162,
+                            "method": "tools/call",
+                            "params": {"name": "provider_call_test", "arguments": {"provider_id": "google_vertex_ai", "prompt": "ping"}},
+                        },
+                        "fetchResponses": [
+                            {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": [self._google_vertex_connection_row()]},
+                            {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": [self._google_vertex_token_row()]},
+                            {
+                                "methodPrefix": "POST https://us-central1-aiplatform.googleapis.com/",
+                                "status": status,
+                                "body": {"error": {"status": "PERMISSION_DENIED", "message": "credential vertex-access-token-test"}},
+                            },
+                            {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                        ],
+                    },
+                )
+                payload = result["body"]["result"]["structuredContent"]
+                self.assertEqual(payload["error_type"], error_type)
+                self.assertEqual(payload["diagnostics"]["vertex_http_status"], status)
+                self.assertNotIn("vertex-access-token-test", json.dumps(payload))
+
+    def test_cloud_google_vertex_rejects_invalid_ciphertext_and_expired_token_without_refresh(self) -> None:
+        token_row = self._google_vertex_token_row(expires_at="2020-07-06T02:01:01Z")
+        token_row["encrypted_access_token"] = "mlabtok_v1:invalid:invalid:invalid"
+        token_row["encrypted_refresh_token"] = ""
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self._google_vertex_env(),
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {"jsonrpc": "2.0", "id": 163, "method": "tools/call", "params": {"name": "provider_call_test", "arguments": {"provider_id": "google_vertex_ai", "prompt": "ping"}}},
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": [self._google_vertex_connection_row()]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": [token_row]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["error_type"], "token_decrypt_failed")
+
     def test_cloud_phase1_lab_session_create_writes_supabase(self) -> None:
         result = run_worker_helper(
             "simulateRequest",
@@ -1844,6 +2036,52 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         payload = result["body"]["result"]["structuredContent"]
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["provider_result"]["status"], "completed")
+
+    def test_cloud_phase1_lab_agent_run_gemini_alias_uses_connected_google_vertex(self) -> None:
+        session_id = "lab-agent-vertex"
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self._google_vertex_env(),
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 164,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "lab_agent_run",
+                        "arguments": {"session_id": session_id, "agent_role": "Theorist", "provider": "gemini", "task": "Reply with exactly: mystic-lab-agent-gemini-ok", "context_ids": []},
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [self._session_row(session_id)]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": [self._google_vertex_connection_row()]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": [self._google_vertex_token_row()]},
+                    {"methodPrefix": "POST https://us-central1-aiplatform.googleapis.com/", "status": 200, "body": {"candidates": [{"content": {"parts": [{"text": "mystic-lab-agent-gemini-ok"}]}}]}},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/memory_edges", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/reports", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/claims", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["provider_result"]["provider_id"], "google_vertex_ai")
+        self.assertEqual(payload["provider_result"]["output_text"], "mystic-lab-agent-gemini-ok")
+        vertex_body = self._json_body(self._fetch_call(result["fetchCalls"], "POST https://us-central1-aiplatform.googleapis.com"))
+        self.assertIn("You are Mystic LAB agent Theorist", vertex_body["contents"][0]["parts"][0]["text"])
 
     def test_cloud_phase1_lab_referee_review_can_use_mock_provider(self) -> None:
         session_id = "lab-referee-mock"
@@ -2236,6 +2474,56 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertEqual(payload["research_table_session_id"], "")
         self.assertEqual(len(payload["transcript"]), 2)
         self.assertTrue(payload["final_synthesis"])
+
+    def test_cloud_phase1_lab_models_debate_gemini_alias_uses_google_vertex_without_research_table(self) -> None:
+        session_id = "lab-debate-vertex"
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self._google_vertex_env(),
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 165,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "lab_models_debate",
+                        "arguments": {
+                            "session_id": session_id,
+                            "question": "Reply with exactly: mystic-debate-gemini-ok",
+                            "participants": ["gemini"],
+                            "rounds": ["independent_discovery"],
+                            "use_existing_research_table": False,
+                        },
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [self._session_row(session_id)]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": [self._google_vertex_connection_row()]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": [self._google_vertex_token_row()]},
+                    {"methodPrefix": "POST https://us-central1-aiplatform.googleapis.com/", "status": 200, "body": {"candidates": [{"content": {"parts": [{"text": "mystic-debate-gemini-ok"}]}}]}},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/memory_edges", "status": 204},
+                    {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/reports", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/claims", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertFalse(payload["used_existing_research_table"])
+        self.assertEqual(payload["transcript"][0]["provider_id"], "google_vertex_ai")
+        self.assertEqual(payload["final_synthesis"], "mystic-debate-gemini-ok")
 
     def test_cloud_phase1_scene_crud_tools_use_supabase(self) -> None:
         session_id = "lab-scene"

@@ -3443,6 +3443,48 @@ async function encryptProviderTokenValue(env, value) {
   return `mlabtok_v1:${base64UrlEncode(nonce)}:${base64UrlEncode(encrypted)}:${base64UrlEncode(tag)}`;
 }
 
+async function decryptProviderTokenValue(env, value) {
+  const [version, nonceValue, encryptedValue, tagValue, ...extra] = String(value || "").trim().split(":");
+  if (version !== "mlabtok_v1" || !nonceValue || !encryptedValue || !tagValue || extra.length) {
+    throw new Error("Encrypted provider token format is invalid.");
+  }
+  let nonce;
+  let encrypted;
+  let tag;
+  try {
+    nonce = base64UrlDecode(nonceValue);
+    encrypted = base64UrlDecode(encryptedValue);
+    tag = base64UrlDecode(tagValue);
+  } catch (_) {
+    throw new Error("Encrypted provider token encoding is invalid.");
+  }
+  if (nonce.length !== 16 || !encrypted.length || !tag.length) {
+    throw new Error("Encrypted provider token payload is invalid.");
+  }
+  const key = await tokenEncryptionKeyBytes(env);
+  const payload = concatUint8Arrays([textEncoder.encode("mlabtok_v1"), nonce, encrypted]);
+  const hmacKey = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+  const valid = await crypto.subtle.verify("HMAC", hmacKey, tag, payload);
+  if (!valid) {
+    throw new Error("Encrypted provider token integrity check failed.");
+  }
+  const plaintext = new Uint8Array(encrypted.length);
+  let offset = 0;
+  let counter = 0;
+  while (offset < encrypted.length) {
+    const counterBytes = new Uint8Array(4);
+    new DataView(counterBytes.buffer).setUint32(0, counter);
+    const digest = await crypto.subtle.digest("SHA-256", concatUint8Arrays([key, nonce, counterBytes]));
+    const block = new Uint8Array(digest);
+    for (let index = 0; index < block.length && offset < encrypted.length; index += 1) {
+      plaintext[offset] = encrypted[offset] ^ block[index];
+      offset += 1;
+    }
+    counter += 1;
+  }
+  return textDecoder.decode(plaintext);
+}
+
 async function sha256Hex(value) {
   const digest = await crypto.subtle.digest("SHA-256", textEncoder.encode(String(value)));
   return Array.from(new Uint8Array(digest))
@@ -3810,6 +3852,17 @@ async function saveCloudModelCall(env, record) {
   return `supabase://${supabaseState(env).schema}/model_calls/${record.call_id}`;
 }
 
+function resolveCloudProviderRecord(env, providerMap, requestedProvider) {
+  const normalized = normalizeRequestedProvider(requestedProvider);
+  if (normalized === "gemini") {
+    const vertexProvider = providerMap.get("google_vertex_ai");
+    if (vertexProvider?.ready) {
+      return vertexProvider;
+    }
+  }
+  return providerMap.get(normalized) || (normalized === "mock" ? buildProviderRecord(env, "mock") : null);
+}
+
 function selectCloudProvider(env, registry, requestedProvider) {
   const normalized = normalizeRequestedProvider(requestedProvider);
   if (normalized === "local_backend") {
@@ -3817,7 +3870,7 @@ function selectCloudProvider(env, registry, requestedProvider) {
   }
   const providerMap = providerRegistryMap(registry);
   if (normalized && normalized !== "auto") {
-    const selected = providerMap.get(normalized) || (normalized === "mock" ? buildProviderRecord(env, "mock") : null);
+    const selected = resolveCloudProviderRecord(env, providerMap, normalized);
     if (!selected) {
       return { selection: null, deferred: deferredResult(`Unknown provider: ${requestedProvider}`) };
     }
@@ -3897,6 +3950,239 @@ function extractAnthropicText(payload) {
   return normalizeTextOutput(Array.isArray(payload?.content) ? payload.content.map((item) => item?.text || "") : []);
 }
 
+function googleVertexConfig(env, providerRecord, requestedModel = "") {
+  const projectId = trimmed(env.MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID);
+  const location = trimmed(env.MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION);
+  const modelName = firstNonEmpty(env.MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL, providerRecord.model_name, requestedModel);
+  const validIdentifier = (value) => /^[A-Za-z0-9._-]+$/.test(value);
+  if (!projectId || !location || !modelName || !validIdentifier(projectId) || !validIdentifier(location) || !validIdentifier(modelName)) {
+    throw {
+      error_type: "model_config_invalid",
+      safe_message: "Google Vertex AI project, location, or model configuration is invalid or incomplete.",
+      diagnostics_safe: {
+        project_configured: Boolean(projectId),
+        location_configured: Boolean(location),
+        model_configured: Boolean(modelName),
+      },
+    };
+  }
+  return { project_id: projectId, location, model_name: modelName };
+}
+
+function googleVertexPrompt(messages) {
+  return (Array.isArray(messages) ? messages : [])
+    .map((item) => {
+      const content = trimmed(item?.content);
+      if (!content) {
+        return "";
+      }
+      return item?.role === "system" ? `System instructions:\n${content}` : content;
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function googleVertexDiagnostics(value = {}) {
+  return {
+    project_configured: Boolean(value.project_configured),
+    location_configured: Boolean(value.location_configured),
+    model_configured: Boolean(value.model_configured),
+    refresh_attempted: Boolean(value.refresh_attempted),
+    refresh_succeeded: Boolean(value.refresh_succeeded),
+    refresh_http_status: Number.isFinite(Number(value.refresh_http_status)) ? Number(value.refresh_http_status) : 0,
+    refresh_error_code: safeExternalErrorCode(value.refresh_error_code),
+    vertex_http_status: Number.isFinite(Number(value.vertex_http_status)) ? Number(value.vertex_http_status) : 0,
+    vertex_error_code: safeExternalErrorCode(value.vertex_error_code),
+  };
+}
+
+function tokenExpiresSoon(expiresAt) {
+  const timestamp = Date.parse(String(expiresAt || ""));
+  return !Number.isFinite(timestamp) || timestamp <= Date.now() + 120000;
+}
+
+function safeExternalErrorCode(value) {
+  const code = trimmed(value).slice(0, 80);
+  return /^[A-Za-z][A-Za-z0-9_]*$/.test(code) ? code : "";
+}
+
+function vertexErrorDetails(status, payload) {
+  const googleError = payload && typeof payload === "object" && !Array.isArray(payload) ? payload.error : null;
+  const googleCode = trimmed(
+    typeof googleError === "object" ? googleError.status || googleError.code : typeof googleError === "string" ? googleError : "",
+  );
+  const safeGoogleCode = safeExternalErrorCode(googleCode);
+  if (status === 401) {
+    return { error_type: "vertex_auth_failed", safe_message: "Google Vertex AI authentication failed.", vertex_error_code: safeGoogleCode };
+  }
+  if (status === 403) {
+    return {
+      error_type: "vertex_permission_denied",
+      safe_message: "Google Vertex AI denied permission for the configured project, location, or model.",
+      vertex_error_code: safeGoogleCode,
+    };
+  }
+  if (status === 404) {
+    return {
+      error_type: "vertex_model_not_found",
+      safe_message: "Google Vertex AI could not find the configured project, location, model, or endpoint.",
+      vertex_error_code: safeGoogleCode,
+    };
+  }
+  if (status === 429) {
+    return { error_type: "vertex_rate_limited", safe_message: "Google Vertex AI rate limited the request.", vertex_error_code: safeGoogleCode };
+  }
+  if (status >= 500) {
+    return { error_type: "vertex_unavailable", safe_message: "Google Vertex AI is temporarily unavailable.", vertex_error_code: safeGoogleCode };
+  }
+  return { error_type: "provider_error", safe_message: `Google Vertex AI request failed with HTTP ${status}.`, vertex_error_code: safeGoogleCode };
+}
+
+async function refreshGoogleVertexAccessToken(env, providerRecord, tokenRow, refreshToken, diagnostics) {
+  const spec = providerCatalogEntry(env, "google_vertex_ai");
+  const oauthMetadata = providerOauthMetadata(env, spec);
+  if (!oauthMetadata.configured || !oauthMetadata.token_endpoint) {
+    throw {
+      error_type: "model_config_invalid",
+      safe_message: "Google Vertex AI OAuth configuration is incomplete.",
+      diagnostics_safe: diagnostics,
+    };
+  }
+  const requestBody = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: oauthMetadata.client_id,
+  });
+  const clientSecret = trimmed(env.MYSTIC_PROVIDER_GOOGLE_VERTEX_CLIENT_SECRET);
+  if (clientSecret) {
+    requestBody.set("client_secret", clientSecret);
+  }
+  let response;
+  try {
+    response = await fetch(oauthMetadata.token_endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: requestBody.toString(),
+    });
+  } catch (_) {
+    throw {
+      error_type: "token_refresh_failed",
+      safe_message: "Google OAuth token refresh could not reach the provider.",
+      diagnostics_safe: diagnostics,
+    };
+  }
+  const { json } = await readJsonResponseSafe(response);
+  if (!response.ok || !trimmed(json?.access_token)) {
+    const errorCode = safeExternalErrorCode(json?.error);
+    throw {
+      error_type: "token_refresh_failed",
+      safe_message: "Google OAuth token refresh failed. Reconnect the provider and retry.",
+      diagnostics_safe: { ...diagnostics, refresh_http_status: response.status, refresh_error_code: errorCode },
+    };
+  }
+  const expiresIn = Number(json.expires_in);
+  const expiresAt = Number.isFinite(expiresIn) && expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
+  const refreshValue = trimmed(json.refresh_token) || refreshToken;
+  await upsertProviderOauthToken(env, {
+    ...tokenRow,
+    encrypted_access_token: await encryptProviderTokenValue(env, json.access_token),
+    encrypted_refresh_token: await encryptProviderTokenValue(env, refreshValue),
+    encrypted_id_token: trimmed(json.id_token) ? await encryptProviderTokenValue(env, json.id_token) : tokenRow.encrypted_id_token,
+    token_type: trimmed(json.token_type, tokenRow.token_type || "Bearer"),
+    expires_at: expiresAt,
+    status: "connected",
+    metadata_safe: {
+      ...(tokenRow.metadata_safe && typeof tokenRow.metadata_safe === "object" ? tokenRow.metadata_safe : {}),
+      refresh_token_present: true,
+      token_refreshed_at: nowIso(),
+    },
+  });
+  return { access_token: trimmed(json.access_token), expires_at: expiresAt };
+}
+
+async function googleVertexAccessToken(env, providerRecord) {
+  const tokenRow = await loadProviderOauthToken(env, "google_vertex_ai");
+  const diagnostics = googleVertexDiagnostics({
+    project_configured: Boolean(trimmed(env.MYSTIC_PROVIDER_GOOGLE_VERTEX_PROJECT_ID)),
+    location_configured: Boolean(trimmed(env.MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION)),
+    model_configured: Boolean(firstNonEmpty(env.MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL, providerRecord.model_name)),
+  });
+  if (!tokenRow || trimmed(tokenRow.status) !== "connected" || !trimmed(tokenRow.encrypted_access_token)) {
+    throw { error_type: "reconnect_required", safe_message: "Google Vertex AI needs a fresh OAuth connection.", diagnostics_safe: diagnostics };
+  }
+  let accessToken = "";
+  let refreshToken = "";
+  try {
+    accessToken = await decryptProviderTokenValue(env, tokenRow.encrypted_access_token);
+    if (trimmed(tokenRow.encrypted_refresh_token)) {
+      refreshToken = await decryptProviderTokenValue(env, tokenRow.encrypted_refresh_token);
+    }
+  } catch (_) {
+    throw {
+      error_type: "token_decrypt_failed",
+      safe_message: "Stored Google Vertex AI credentials could not be decrypted. Reconnect the provider.",
+      diagnostics_safe: diagnostics,
+    };
+  }
+  if (!accessToken || tokenExpiresSoon(tokenRow.expires_at)) {
+    if (!refreshToken) {
+      throw {
+        error_type: "reconnect_required",
+        safe_message: "Google Vertex AI access has expired and no refresh credential is available. Reconnect the provider.",
+        diagnostics_safe: diagnostics,
+      };
+    }
+    diagnostics.refresh_attempted = true;
+    const refreshed = await refreshGoogleVertexAccessToken(env, providerRecord, tokenRow, refreshToken, diagnostics);
+    diagnostics.refresh_succeeded = true;
+    accessToken = refreshed.access_token;
+  }
+  return { access_token: accessToken, diagnostics };
+}
+
+async function invokeGoogleVertexProvider(env, providerRecord, messages, options) {
+  const config = googleVertexConfig(env, providerRecord, options.model);
+  const { access_token: accessToken, diagnostics } = await googleVertexAccessToken(env, providerRecord);
+  const endpoint = `https://${config.location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(config.project_id)}/locations/${encodeURIComponent(config.location)}/publishers/google/models/${encodeURIComponent(config.model_name)}:generateContent`;
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: googleVertexPrompt(messages) }] }] }),
+    });
+  } catch (_) {
+    throw {
+      error_type: "vertex_unavailable",
+      safe_message: "Google Vertex AI could not be reached.",
+      diagnostics_safe: diagnostics,
+    };
+  }
+  const { json } = await readJsonResponseSafe(response);
+  if (!response.ok) {
+    const mapped = vertexErrorDetails(response.status, json);
+    throw {
+      ...mapped,
+      diagnostics_safe: { ...diagnostics, vertex_http_status: response.status, vertex_error_code: mapped.vertex_error_code },
+    };
+  }
+  const outputText = extractGeminiText(json);
+  if (!outputText) {
+    throw {
+      error_type: "provider_response_invalid",
+      safe_message: "Google Vertex AI returned no usable text output.",
+      diagnostics_safe: { ...diagnostics, vertex_http_status: response.status },
+    };
+  }
+  return {
+    provider: providerRecord.provider_id,
+    model_name: config.model_name,
+    output_text: outputText,
+    raw_usage_safe: safeUsagePayload(json?.usageMetadata),
+    diagnostics_safe: { ...diagnostics, vertex_http_status: response.status },
+  };
+}
+
 async function invokeCloudProvider(env, providerRecord, options = {}) {
   const messages = providerMessageList({
     prompt: options.prompt || "",
@@ -3915,11 +4201,7 @@ async function invokeCloudProvider(env, providerRecord, options = {}) {
     };
   }
   if (providerRecord.provider_id === "google_vertex_ai") {
-    throw {
-      error_type: "provider_required",
-      safe_message:
-        "Google Vertex AI token storage is connected, but model-call routing is still deferred to the next provider-routing issue.",
-    };
+    return invokeGoogleVertexProvider(env, providerRecord, messages, options);
   }
   if (providerRecord.provider_id === "openai_compatible") {
     const baseUrl = normalizeBaseUrl(env.MYSTIC_PROVIDER_OPENAI_COMPAT_BASE_URL || "");
@@ -4088,6 +4370,7 @@ async function runCloudProviderCall({
       maxTokens,
     });
     const latencyMs = Date.now() - startedAt;
+    const diagnostics = googleVertexDiagnostics(response.diagnostics_safe || {});
     const record = {
       call_id: callId,
       session_id: trimmed(sessionId),
@@ -4102,7 +4385,7 @@ async function runCloudProviderCall({
       error_type: "",
       latency_ms: latencyMs,
       usage_json: response.raw_usage_safe || {},
-      metadata: safeMetadata,
+      metadata: { ...safeMetadata, vertex_diagnostics: diagnostics },
       created_at: nowIso(),
     };
     const storageRef = await saveCloudModelCall(env, record);
@@ -4115,6 +4398,7 @@ async function runCloudProviderCall({
       latency_ms: latencyMs,
       error_type: "",
       error_message_safe: "",
+      diagnostics,
       call_id: callId,
       storage_ref: storageRef,
     };
@@ -4122,6 +4406,7 @@ async function runCloudProviderCall({
     const latencyMs = Date.now() - startedAt;
     const errorType = trimmed(error?.error_type, "provider_error");
     const safeMessage = trimmed(error?.safe_message, "Provider request failed.");
+    const diagnostics = googleVertexDiagnostics(error?.diagnostics_safe || {});
     const record = {
       call_id: callId,
       session_id: trimmed(sessionId),
@@ -4136,7 +4421,7 @@ async function runCloudProviderCall({
       error_type: errorType,
       latency_ms: latencyMs,
       usage_json: {},
-      metadata: safeMetadata,
+      metadata: { ...safeMetadata, vertex_diagnostics: diagnostics },
       created_at: nowIso(),
     };
     const storageRef = await saveCloudModelCall(env, record);
@@ -4149,6 +4434,7 @@ async function runCloudProviderCall({
       latency_ms: latencyMs,
       error_type: errorType,
       error_message_safe: safeMessage,
+      diagnostics,
       call_id: callId,
       storage_ref: storageRef,
     };
@@ -5026,13 +5312,6 @@ async function callCloudTool(name, args, env, state) {
     if (!bundle) {
       throw new Error(`Unknown session_id: ${args.session_id}`);
     }
-    if (args.use_existing_research_table !== true) {
-      const deferred = deferredResult(
-        "Cloud-native Model Arena currently requires use_existing_research_table=true semantics, but executes through direct provider calls instead of the local Research Table backend.",
-        { required_capability: "cloud_model_arena" },
-      );
-      return { debate_session_id: "", research_table_session_id: "", imported_claims: 0, imported_failures: 0, summary: deferred.message, deferred };
-    }
     const registry = await loadProviderRegistry(env);
     const selectedProviders = asStringArray(args.participants)
       .map((item) => parseProviderParticipantAlias(item))
@@ -5052,7 +5331,7 @@ async function callCloudTool(name, args, env, state) {
     }
     const providerMap = providerRegistryMap(registry);
     const missing = selectedProviders
-      .map((item) => providerMap.get(item.provider_id) || buildProviderRecord(env, item.provider_id))
+      .map((item) => resolveCloudProviderRecord(env, providerMap, item.provider_id) || buildProviderRecord(env, item.provider_id))
       .find((record) => record && providerCallStatusFromRecord(record) !== "connected");
     if (missing) {
       const requiredStatus = providerCallStatusFromRecord(missing);
@@ -5099,7 +5378,7 @@ async function callCloudTool(name, args, env, state) {
       selectedProviders.length > 0
         ? selectedProviders
             .map((item) => ({
-              record: providerMap.get(item.provider_id) || buildProviderRecord(env, item.provider_id),
+              record: resolveCloudProviderRecord(env, providerMap, item.provider_id) || buildProviderRecord(env, item.provider_id),
               requested_model: item.model,
             }))
             .filter((item) => item.record)
@@ -5206,6 +5485,7 @@ async function callCloudTool(name, args, env, state) {
     return {
       debate_session_id: debateSessionId,
       research_table_session_id: "",
+      used_existing_research_table: Boolean(args.use_existing_research_table),
       imported_claims: importedClaims,
       imported_failures: 0,
       summary: summaryTurn.output,
@@ -5384,6 +5664,7 @@ async function callCloudTool(name, args, env, state) {
       output_text: result.output_text,
       latency_ms: result.latency_ms,
       usage: result.raw_usage_safe,
+      diagnostics: result.diagnostics || {},
       error_type: result.error_type,
       message: result.error_message_safe,
       error_message_safe: result.error_message_safe,
@@ -7032,6 +7313,12 @@ async function simulateWorkerRequest(input) {
 }
 
 export const __test = {
+  async encryptProviderToken(input) {
+    return encryptProviderTokenValue(input.env || {}, input.value || "");
+  },
+  async decryptProviderToken(input) {
+    return decryptProviderTokenValue(input.env || {}, input.value || "");
+  },
   describeOAuth(input) {
     const state = oauthState(input.env || {}, input.requestUrl || "https://mystic.dexproject.workers.dev/mcp");
     return {
