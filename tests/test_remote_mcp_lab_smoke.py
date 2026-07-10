@@ -32,8 +32,8 @@ def _success_responses(persisted: dict[str, str], session_id: str) -> dict[int, 
             {
                 "structuredContent": {
                     "turn_id": "turn-1",
-                    "status": "blocked",
-                    "provider_result": {"status": "deferred"},
+                    "status": "LOCAL_BACKEND_REQUIRED",
+                    "provider_result": {"status": "local_backend_required"},
                 }
             },
         ),

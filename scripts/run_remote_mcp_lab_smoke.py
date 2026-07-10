@@ -449,7 +449,8 @@ def run_remote_mcp_lab_smoke(
         agent_payload = extract_structured_content(agent_response)
         provider_result = agent_payload.get("provider_result")
         summary["tool_calls"]["lab_agent_run"] = {
-            "ok": bool(agent_payload.get("turn_id")) and tool_status(provider_result) in {"completed", "provider_required", "deferred"},
+            "ok": bool(agent_payload.get("turn_id"))
+            and tool_status(provider_result) in {"completed", "provider_required", "local_backend_required", "deferred"},
             "status": str(agent_payload.get("status", "")),
             "provider_status": tool_status(provider_result),
         }
