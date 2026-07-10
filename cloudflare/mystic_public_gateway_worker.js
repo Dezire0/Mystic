@@ -7333,6 +7333,17 @@ async function simulateWorkerRequest(input) {
 }
 
 export const __test = {
+  resolveCloudProviderSelection(input) {
+    const registry = { providers: Array.isArray(input.providers) ? input.providers : [] };
+    const decision = selectCloudProvider(input.env || {}, registry, input.requestedProvider || "auto");
+    const selection = decision.selection || null;
+    return {
+      provider_id: selection?.provider_id || "",
+      ready: Boolean(selection?.ready),
+      provider_required: Boolean(decision.providerRequired),
+      deferred: Boolean(decision.deferred),
+    };
+  },
   async encryptProviderToken(input) {
     return encryptProviderTokenValue(input.env || {}, input.value || "");
   },

@@ -324,6 +324,34 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         for summary in summaries:
             self.assertEqual(summary["blockers"], [], msg=json.dumps(summary, indent=2))
 
+    def test_cloud_provider_selection_prefers_ready_vertex_for_public_gemini_aliases(self) -> None:
+        providers = [
+            {
+                "provider_id": "gemini",
+                "provider_type": "gemini",
+                "auth_method": "api_key",
+                "ready": False,
+                "status": "api_key_required",
+            },
+            {
+                "provider_id": "google_vertex_ai",
+                "provider_type": "google_vertex_ai",
+                "auth_method": "oauth",
+                "ready": True,
+                "status": "connected",
+            },
+        ]
+        for requested_provider in ("gemini", "auto", "google_vertex_ai"):
+            with self.subTest(requested_provider=requested_provider):
+                selection = run_worker_helper(
+                    "resolveCloudProviderSelection",
+                    {"providers": providers, "requestedProvider": requested_provider},
+                )
+                self.assertEqual(selection["provider_id"], "google_vertex_ai")
+                self.assertTrue(selection["ready"])
+                self.assertFalse(selection["provider_required"])
+                self.assertFalse(selection["deferred"])
+
     def test_cloud_phase1_mystic_status_reports_supabase_mode(self) -> None:
         result = run_worker_helper(
             "simulateRequest",
