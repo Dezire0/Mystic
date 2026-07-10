@@ -1745,6 +1745,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 self.assertEqual(payload["error_type"], error_type)
                 self.assertEqual(payload["diagnostics"]["vertex_http_status"], status)
                 self.assertNotIn("vertex-access-token-test", json.dumps(payload))
+                self.assertIn("[redacted]", payload["diagnostics"]["vertex_error_message_safe"])
 
     def test_cloud_google_vertex_rejects_invalid_ciphertext_and_expired_token_without_refresh(self) -> None:
         token_row = self._google_vertex_token_row(expires_at="2020-07-06T02:01:01Z")
@@ -1766,6 +1767,70 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         )
         payload = result["body"]["result"]["structuredContent"]
         self.assertEqual(payload["error_type"], "token_decrypt_failed")
+
+    def test_cloud_google_vertex_expired_token_without_refresh_requires_reconnect(self) -> None:
+        token_row = self._google_vertex_token_row(expires_at="2020-07-06T02:01:01Z")
+        token_row["encrypted_refresh_token"] = ""
+        token_row["metadata_safe"] = {"refresh_token_present": False}
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self._google_vertex_env(),
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {"jsonrpc": "2.0", "id": 166, "method": "tools/call", "params": {"name": "provider_call_test", "arguments": {"provider_id": "google_vertex_ai", "prompt": "ping"}}},
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": [self._google_vertex_connection_row()]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": [token_row]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["error_type"], "reconnect_required")
+        self.assertFalse(payload["diagnostics"]["refresh_attempted"])
+
+    def test_cloud_google_vertex_refresh_invalid_grant_maps_safe_failure(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self._google_vertex_env(),
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {"jsonrpc": "2.0", "id": 167, "method": "tools/call", "params": {"name": "provider_call_test", "arguments": {"provider_id": "google_vertex_ai", "prompt": "ping"}}},
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": [self._google_vertex_connection_row()]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": [self._google_vertex_token_row(expires_at="2020-07-06T02:01:01Z")]},
+                    {"methodPrefix": "POST https://oauth2.googleapis.com/token", "status": 400, "body": {"error": "invalid_grant", "error_description": "credential vertex-refresh-token-test"}},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["error_type"], "token_refresh_failed")
+        self.assertEqual(payload["diagnostics"]["refresh_http_status"], 400)
+        self.assertEqual(payload["diagnostics"]["refresh_error_code"], "invalid_grant")
+        self.assertNotIn("vertex-refresh-token-test", json.dumps(payload))
+
+    def test_cloud_google_vertex_invalid_response_maps_provider_response_invalid(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self._google_vertex_env(),
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {"jsonrpc": "2.0", "id": 168, "method": "tools/call", "params": {"name": "provider_call_test", "arguments": {"provider_id": "google_vertex_ai", "prompt": "ping"}}},
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": [self._google_vertex_connection_row()]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": [self._google_vertex_token_row()]},
+                    {"methodPrefix": "POST https://us-central1-aiplatform.googleapis.com/", "status": 200, "body": {"candidates": []}},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/model_calls", "status": 201, "body": [{}]},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["error_type"], "provider_response_invalid")
+        self.assertEqual(payload["diagnostics"]["vertex_http_status"], 200)
 
     def test_cloud_phase1_lab_session_create_writes_supabase(self) -> None:
         result = run_worker_helper(

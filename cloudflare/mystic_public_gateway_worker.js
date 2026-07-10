@@ -3993,6 +3993,7 @@ function googleVertexDiagnostics(value = {}) {
     refresh_error_code: safeExternalErrorCode(value.refresh_error_code),
     vertex_http_status: Number.isFinite(Number(value.vertex_http_status)) ? Number(value.vertex_http_status) : 0,
     vertex_error_code: safeExternalErrorCode(value.vertex_error_code),
+    vertex_error_message_safe: trimmed(value.vertex_error_message_safe).slice(0, 300),
   };
 }
 
@@ -4006,20 +4007,33 @@ function safeExternalErrorCode(value) {
   return /^[A-Za-z][A-Za-z0-9_]*$/.test(code) ? code : "";
 }
 
-function vertexErrorDetails(status, payload) {
+function safeVertexErrorMessage(payload, sensitiveValues = []) {
+  const googleError = payload && typeof payload === "object" && !Array.isArray(payload) ? payload.error : null;
+  let message = trimmed(googleError && typeof googleError === "object" ? googleError.message : "");
+  for (const sensitiveValue of sensitiveValues) {
+    if (trimmed(sensitiveValue)) {
+      message = message.split(trimmed(sensitiveValue)).join("[redacted]");
+    }
+  }
+  return redactSensitiveOAuthText(message).replace(/Bearer\s+\S+/gi, "Bearer [redacted]").slice(0, 300);
+}
+
+function vertexErrorDetails(status, payload, sensitiveValues = []) {
   const googleError = payload && typeof payload === "object" && !Array.isArray(payload) ? payload.error : null;
   const googleCode = trimmed(
     typeof googleError === "object" ? googleError.status || googleError.code : typeof googleError === "string" ? googleError : "",
   );
   const safeGoogleCode = safeExternalErrorCode(googleCode);
+  const safeGoogleMessage = safeVertexErrorMessage(payload, sensitiveValues);
   if (status === 401) {
-    return { error_type: "vertex_auth_failed", safe_message: "Google Vertex AI authentication failed.", vertex_error_code: safeGoogleCode };
+    return { error_type: "vertex_auth_failed", safe_message: "Google Vertex AI authentication failed.", vertex_error_code: safeGoogleCode, vertex_error_message_safe: safeGoogleMessage };
   }
   if (status === 403) {
     return {
       error_type: "vertex_permission_denied",
       safe_message: "Google Vertex AI denied permission for the configured project, location, or model.",
       vertex_error_code: safeGoogleCode,
+      vertex_error_message_safe: safeGoogleMessage,
     };
   }
   if (status === 404) {
@@ -4027,15 +4041,16 @@ function vertexErrorDetails(status, payload) {
       error_type: "vertex_model_not_found",
       safe_message: "Google Vertex AI could not find the configured project, location, model, or endpoint.",
       vertex_error_code: safeGoogleCode,
+      vertex_error_message_safe: safeGoogleMessage,
     };
   }
   if (status === 429) {
-    return { error_type: "vertex_rate_limited", safe_message: "Google Vertex AI rate limited the request.", vertex_error_code: safeGoogleCode };
+    return { error_type: "vertex_rate_limited", safe_message: "Google Vertex AI rate limited the request.", vertex_error_code: safeGoogleCode, vertex_error_message_safe: safeGoogleMessage };
   }
   if (status >= 500) {
-    return { error_type: "vertex_unavailable", safe_message: "Google Vertex AI is temporarily unavailable.", vertex_error_code: safeGoogleCode };
+    return { error_type: "vertex_unavailable", safe_message: "Google Vertex AI is temporarily unavailable.", vertex_error_code: safeGoogleCode, vertex_error_message_safe: safeGoogleMessage };
   }
-  return { error_type: "provider_error", safe_message: `Google Vertex AI request failed with HTTP ${status}.`, vertex_error_code: safeGoogleCode };
+  return { error_type: "provider_error", safe_message: `Google Vertex AI request failed with HTTP ${status}.`, vertex_error_code: safeGoogleCode, vertex_error_message_safe: safeGoogleMessage };
 }
 
 async function refreshGoogleVertexAccessToken(env, providerRecord, tokenRow, refreshToken, diagnostics) {
@@ -4160,10 +4175,15 @@ async function invokeGoogleVertexProvider(env, providerRecord, messages, options
   }
   const { json } = await readJsonResponseSafe(response);
   if (!response.ok) {
-    const mapped = vertexErrorDetails(response.status, json);
+    const mapped = vertexErrorDetails(response.status, json, [accessToken]);
     throw {
       ...mapped,
-      diagnostics_safe: { ...diagnostics, vertex_http_status: response.status, vertex_error_code: mapped.vertex_error_code },
+      diagnostics_safe: {
+        ...diagnostics,
+        vertex_http_status: response.status,
+        vertex_error_code: mapped.vertex_error_code,
+        vertex_error_message_safe: mapped.vertex_error_message_safe,
+      },
     };
   }
   const outputText = extractGeminiText(json);

@@ -231,7 +231,7 @@ Current behavior:
 - provider pages and MCP outputs expose only safe token metadata such as presence flags and sanitized scope data
 - `google_vertex_ai` uses encrypted server-side access credentials only to make a live Vertex AI request; plaintext credentials are never persisted, displayed, or included in MCP outputs
 - missing token rows return `reconnect_required`; invalid ciphertext returns `token_decrypt_failed`; refresh failures return `token_refresh_failed`
-- Vertex failures return safe structured statuses: `vertex_auth_failed`, `vertex_permission_denied`, `vertex_model_not_found`, `vertex_rate_limited`, `vertex_unavailable`, or `provider_response_invalid`
+- Vertex failures return safe structured statuses: `vertex_auth_failed`, `vertex_permission_denied`, `vertex_model_not_found`, `vertex_rate_limited`, `vertex_unavailable`, or `provider_response_invalid`; allow-listed diagnostics include HTTP status, provider error code, and a credential-redacted `vertex_error_message_safe`
 
 ## Security Guardrail
 
