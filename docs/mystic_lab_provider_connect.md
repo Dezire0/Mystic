@@ -129,6 +129,15 @@ They never show:
   - Vertex requests use `https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{location}/publishers/google/models/{model}:generateContent`
   - if callback storage is unavailable, the safe status is `token_storage_required`
 
+### Local Gemini CLI
+
+- `gemini_cli` is a separate local-only provider with `provider_type=local_cli`, `auth_method=local_session`, and `execution_location=user_machine`.
+- It does not use Vertex AI, Gemini API keys, Cloudflare secrets, or public inbound networking.
+- Run `python scripts/mystic_gemini_cli_bridge.py --self-test` on the Mac after completing the Gemini CLI login flow.
+- The bridge discovers a supported non-interactive invocation from `gemini --help`, supports `MYSTIC_GEMINI_CLI_BIN` and `MYSTIC_GEMINI_CLI_ARGS_TEMPLATE`, enforces a timeout/output limit, and runs in an empty temporary workspace.
+- Cloud Worker calls using `provider=gemini_cli` or `provider=local_backend`, and Model Arena participant `gemini_cli`, return `local_backend_required` with the local setup action. The Worker never executes Gemini CLI or accesses its credentials.
+- `gemini` remains API-key or explicitly configured Vertex routing; it never silently selects the local CLI provider.
+
 ### Anthropic
 
 - Mystic does not pretend Anthropic OAuth exists by default.

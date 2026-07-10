@@ -482,6 +482,11 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         instructions = instructions_result["body"]["result"]["structuredContent"]
         self.assertEqual(listing["providers"][0]["provider_id"], "openai_compatible")
         self.assertIn("google_vertex_ai", [item["provider_id"] for item in listing["providers"]])
+        gemini_cli = next(item for item in listing["providers"] if item["provider_id"] == "gemini_cli")
+        self.assertEqual(gemini_cli["provider_type"], "local_cli")
+        self.assertEqual(gemini_cli["auth_method"], "local_session")
+        self.assertEqual(gemini_cli["status"], "local_required")
+        self.assertTrue(gemini_cli["metadata"]["local_bridge_required"])
         self.assertIn(status["status"], {"not_configured", "api_key_required"})
         self.assertIn("/providers/openai_compatible/setup", status["setup_url"])
         self.assertIn("/providers/openai_compatible/connect", status["connect_url"])
@@ -489,6 +494,86 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertIn("MYSTIC_PROVIDER_OPENAI_COMPAT_API_KEY", instructions["secret_names"])
         self.assertNotIn("service-role-key", json.dumps(instructions))
         self.assertFalse(instructions["direct_secret_write_supported"])
+
+    def test_cloud_local_gemini_cli_agent_requests_local_bridge_without_shell_execution(self) -> None:
+        session_id = "lab-local-gemini-cli"
+        common_fetch = [
+            {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [self._session_row(session_id)]},
+            {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+            {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": []},
+            {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+            {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+            {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+            {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+            {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
+            {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_sessions", "status": 201, "body": [{}]},
+            {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_turns", "status": 204},
+            {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/claims", "status": 204},
+            {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/failures", "status": 204},
+            {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/memory_edges", "status": 204},
+            {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/reports", "status": 204},
+            {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_turns", "status": 201, "body": [{}]},
+        ]
+        for provider in ("local_backend", "gemini_cli"):
+            with self.subTest(provider=provider):
+                result = run_worker_helper(
+                    "simulateRequest",
+                    {
+                        "env": self.env,
+                        "requestUrl": self.request_url,
+                        "headers": self.auth_headers,
+                        "body": {
+                            "jsonrpc": "2.0",
+                            "id": 169,
+                            "method": "tools/call",
+                            "params": {
+                                "name": "lab_agent_run",
+                                "arguments": {"session_id": session_id, "agent_role": "Theorist", "provider": provider, "task": "Explicit local CLI task", "context_ids": []},
+                            },
+                        },
+                        "fetchResponses": common_fetch,
+                    },
+                )
+                payload = result["body"]["result"]["structuredContent"]
+                self.assertEqual(payload["status"], "LOCAL_BACKEND_REQUIRED")
+                self.assertEqual(payload["provider_result"]["status"], "local_backend_required")
+                self.assertEqual(payload["provider_result"]["provider_id"], "gemini_cli")
+                self.assertEqual(payload["provider_result"]["execution_location"], "user_machine")
+                self.assertNotIn("token", json.dumps(payload).lower())
+
+    def test_cloud_local_gemini_cli_debate_returns_local_bridge_requirement(self) -> None:
+        session_id = "lab-local-gemini-debate"
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 170,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "lab_models_debate",
+                        "arguments": {"session_id": session_id, "question": "Explicit local CLI debate", "participants": ["gemini_cli"], "rounds": ["opening"], "use_existing_research_table": False},
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_sessions", "status": 200, "body": [self._session_row(session_id)]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_turns", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/claims", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/failures", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/memory_edges", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/reports", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_connections", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/provider_oauth_tokens", "status": 200, "body": []},
+                ],
+            },
+        )
+        payload = result["body"]["result"]["structuredContent"]
+        self.assertEqual(payload["provider_result"]["status"], "local_backend_required")
+        self.assertEqual(payload["provider_result"]["provider_id"], "gemini_cli")
+        self.assertNotIn("token", json.dumps(payload).lower())
 
     def test_cloud_provider_connect_start_and_callback_status_record_oauth_metadata_flow(self) -> None:
         connect_result = run_worker_helper(

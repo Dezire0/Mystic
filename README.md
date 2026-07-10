@@ -354,6 +354,16 @@ Current Provider Connect boundary:
 - `google_vertex_ai` decrypts encrypted server-side access credentials only for a live request, refreshes them near expiry when a refresh credential exists, and calls the configured Vertex AI `generateContent` endpoint
 - `provider_call_test` can execute a live `google_vertex_ai` call; `lab_agent_run` and `lab_models_debate` use a connected `google_vertex_ai` provider for the `gemini` alias while preserving direct API-key `gemini` behavior
 - Vertex failures return structured safe states such as `token_decrypt_failed`, `token_refresh_failed`, `vertex_auth_failed`, `vertex_permission_denied`, `vertex_model_not_found`, `vertex_rate_limited`, and `vertex_unavailable`
+- `gemini_cli` is a separate local-only provider that uses the logged-in Gemini CLI session on the user machine; cloud mode returns `local_backend_required` and never attempts to execute shell commands
+
+Run the local bridge without opening an inbound network port:
+
+```bash
+python scripts/mystic_gemini_cli_bridge.py --self-test
+python scripts/test_gemini_cli_provider.py
+```
+
+The bridge sends only the explicit prompt, uses a temporary empty working directory, and never reads or uploads Gemini CLI auth files.
 
 ### Deploy and verify
 

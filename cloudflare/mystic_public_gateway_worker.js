@@ -4,7 +4,7 @@ const DEFAULT_TOKEN_TTL_SECONDS = 3600;
 const MANUAL_IMPORT_VERIFICATION_PATH = "/mystic_data/e2e/remote_mcp_lab_smoke/chatgpt_import_verified.json";
 const MANUAL_IMPORT_VERIFICATION_ENV = "MYSTIC_CHATGPT_IMPORT_VERIFICATION_JSON";
 const DEFAULT_SUPABASE_SCHEMA = "public";
-const PUBLIC_PROVIDER_IDS = ["openai_compatible", "gemini", "google_vertex_ai", "anthropic", "future_custom"];
+const PUBLIC_PROVIDER_IDS = ["openai_compatible", "gemini", "google_vertex_ai", "gemini_cli", "anthropic", "future_custom"];
 const CLOUD_REQUIRED_TOOL_NAMES = [
   "mystic_status",
   "health_check",
@@ -2713,6 +2713,9 @@ function normalizeProviderId(value) {
   if (normalized === "google") {
     return "gemini";
   }
+  if (["gemini-cli", "gemini_cli", "local_cli"].includes(normalized)) {
+    return "gemini_cli";
+  }
   if (["google-vertex-ai", "google_vertex", "vertex", "vertex_ai"].includes(normalized)) {
     return "google_vertex_ai";
   }
@@ -2836,6 +2839,27 @@ function providerCatalogEntry(env, providerId) {
         "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION",
       ],
       oauth_token_storage_supported: false,
+    };
+  }
+  if (normalized === "gemini_cli") {
+    return {
+      provider_id: normalized,
+      provider_type: "local_cli",
+      default_auth_method: "local_session",
+      supported_auth_methods: ["local_session"],
+      supports_api_key: false,
+      supports_oauth: false,
+      local_only: true,
+      execution_location: "user_machine",
+      secret_names: [],
+      required_secret_names: [],
+      optional_secret_names: [],
+      model_env_names: [],
+      external_setup_url: "",
+      setup_instructions:
+        "Install Gemini CLI, complete its local Google login, then run python scripts/mystic_gemini_cli_bridge.py --self-test on the user machine. Cloudflare Worker cannot access local CLI sessions.",
+      scopes: ["model:generate"],
+      default_models: ["gemini_cli"],
     };
   }
   if (normalized === "anthropic") {
@@ -3025,6 +3049,10 @@ function providerSafeConfigMetadata(env, spec, oauthMetadata) {
     metadata.model_configured = Boolean(trimmed(env.MYSTIC_PROVIDER_GOOGLE_VERTEX_MODEL));
     metadata.oauth_client_type_required = "web_application";
   }
+  if (spec.local_only) {
+    metadata.execution_location = "user_machine";
+    metadata.local_bridge_required = true;
+  }
   return metadata;
 }
 
@@ -3107,6 +3135,9 @@ function providerDefaultFailureReason(spec, status, oauthMetadata, secretState) 
 
 function resolveProviderStatus(spec, row, secretState, oauthMetadata) {
   const storedStatus = trimmed(row.status);
+  if (spec.local_only) {
+    return "local_required";
+  }
   if (["provider_required", "disconnected", "token_storage_required", "oauth_callback_received", "auth_failed", "rate_limited", "provider_unavailable"].includes(storedStatus)) {
     return storedStatus;
   }
@@ -3214,6 +3245,9 @@ function providerStatusMessage(record) {
   }
   if (status === "provider_required") {
     return "Provider configuration is incomplete. Add the required OAuth metadata and retry.";
+  }
+  if (status === "local_required") {
+    return "This provider runs only through the local Mystic Gemini CLI bridge on the user machine.";
   }
   if (status === "auth_failed") {
     return "Provider authentication failed. Reconnect the provider and retry.";
@@ -3548,6 +3582,16 @@ async function startProviderConnect(env, providerId, authMethod) {
     await upsertProviderConnection(env, record);
     return { ...record, message: "Mock provider connected for tests." };
   }
+  if (spec.local_only) {
+    const record = buildProviderRecord(env, providerId, { auth_method: "local_session", status: "local_required" });
+    return {
+      ...record,
+      status: "local_required",
+      provider_status: "local_required",
+      execution_location: "user_machine",
+      message: "This provider is available only through the local Mystic Gemini CLI bridge.",
+    };
+  }
   if (["oauth", "bearer_token"].includes(requestedAuthMethod) && oauthMetadata.configured) {
     const { verifier, challenge } = await buildPkcePair();
     const flowId = `flow-${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
@@ -3684,6 +3728,25 @@ function localBackendDeferredResult() {
   };
 }
 
+function localGeminiCliRequiredResult() {
+  return {
+    status: "local_backend_required",
+    deferred: false,
+    provider_required: true,
+    provider: "gemini_cli",
+    provider_id: "gemini_cli",
+    provider_type: "local_cli",
+    required_auth_method: "local_session",
+    execution_location: "user_machine",
+    setup_url: "",
+    setup_instructions:
+      "Install Gemini CLI, complete its local Google login, and run python scripts/mystic_gemini_cli_bridge.py --self-test on the user machine. No public inbound bridge port is required.",
+    message:
+      "gemini_cli runs only on the user machine. Cloudflare Worker cannot access local Gemini CLI credentials or execute shell commands.",
+    supported_in_cloud_mode: false,
+  };
+}
+
 function providerRequiredResult(providerRecord, message) {
   return {
     status: "provider_required",
@@ -3716,6 +3779,9 @@ function providerCallStatusFromRecord(providerRecord) {
   if (providerRecord.ready) {
     return "connected";
   }
+  if (providerRecord.status === "local_required") {
+    return "local_backend_required";
+  }
   if (providerRecord.status === "oauth_required") {
     return "oauth_required";
   }
@@ -3744,6 +3810,9 @@ function providerCallStatusFromRecord(providerRecord) {
 }
 
 function providerCallErrorMessage(providerRecord, status) {
+  if (status === "local_backend_required") {
+    return "This provider requires the local Mystic Gemini CLI bridge on the user machine.";
+  }
   if (status === "oauth_required") {
     return "Provider OAuth connection is required. Start the secure OAuth flow and retry.";
   }
@@ -3865,8 +3934,8 @@ function resolveCloudProviderRecord(env, providerMap, requestedProvider) {
 
 function selectCloudProvider(env, registry, requestedProvider) {
   const normalized = normalizeRequestedProvider(requestedProvider);
-  if (normalized === "local_backend") {
-    return { selection: null, deferred: localBackendDeferredResult() };
+  if (["local_backend", "gemini_cli"].includes(normalized)) {
+    return { selection: null, localBackendRequired: localGeminiCliRequiredResult() };
   }
   const providerMap = providerRegistryMap(registry);
   if (normalized && normalized !== "auto") {
@@ -4683,6 +4752,26 @@ async function runCloudAgentTurn({
     bundle.session.next_actions = [providerDecision.deferred.setup_instructions || providerDecision.deferred.message];
     return { turn, claims: [], response: providerDecision.deferred };
   }
+  if (providerDecision.localBackendRequired) {
+    const required = providerDecision.localBackendRequired;
+    const turn = makeCloudTurn({
+      sessionId: bundle.session.session_id,
+      phase,
+      agentRole,
+      provider: required.provider,
+      modelName: "gemini_cli",
+      inputSummary: task.slice(0, 200),
+      output: required.message,
+      status: "LOCAL_BACKEND_REQUIRED",
+      requestedTools: [],
+      toolResults: [required],
+      replyTo,
+    });
+    bundle.turns.push(turn);
+    bundle.session.status = "waiting_for_user";
+    bundle.session.next_actions = [required.setup_instructions];
+    return { turn, claims: [], response: required };
+  }
   if (providerDecision.providerRequired) {
     const turn = makeCloudTurn({
       sessionId: bundle.session.session_id,
@@ -5336,15 +5425,15 @@ async function callCloudTool(name, args, env, state) {
     const selectedProviders = asStringArray(args.participants)
       .map((item) => parseProviderParticipantAlias(item))
       .filter((item) => item.provider_id && item.provider_id !== "auto");
-    if (selectedProviders.some((item) => item.provider_id === "local_backend")) {
-      const deferred = localBackendDeferredResult();
+    if (selectedProviders.some((item) => ["local_backend", "gemini_cli"].includes(item.provider_id))) {
+      const required = localGeminiCliRequiredResult();
       return {
         debate_session_id: "",
         research_table_session_id: "",
         imported_claims: 0,
         imported_failures: 0,
-        summary: deferred.message,
-        deferred,
+        summary: required.message,
+        provider_result: required,
         transcript: [],
         final_synthesis: "",
       };
