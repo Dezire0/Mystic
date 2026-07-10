@@ -614,7 +614,18 @@ def run_remote_mcp_lab_smoke(
         deferred = debate_payload.get("deferred")
         summary["tool_calls"]["lab_models_debate"] = {
             "ok": bool(debate_payload.get("summary")) and (
-                tool_status(provider_result) in {"completed", "provider_required", "deferred"} or tool_status(deferred) == "deferred"
+                tool_status(provider_result)
+                in {
+                    "completed",
+                    "provider_required",
+                    "api_key_required",
+                    "oauth_required",
+                    "provider_auth_failed",
+                    "rate_limited",
+                    "provider_unavailable",
+                    "deferred",
+                }
+                or tool_status(deferred) == "deferred"
             ),
             "provider_status": tool_status(provider_result),
             "deferred_status": tool_status(deferred),

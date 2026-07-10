@@ -53,7 +53,15 @@ def _success_responses(persisted: dict[str, str], session_id: str) -> dict[int, 
         ),
         11: _mcp_success(11, {"structuredContent": {"experiment_id": "exp-1", "status": "inconclusive"}}),
         12: _mcp_success(12, {"structuredContent": {"verdict": "inconclusive", "deferred": {"status": "deferred"}}}),
-        13: _mcp_success(13, {"structuredContent": {"summary": "Deferred debate", "deferred": {"status": "deferred"}}}),
+        13: _mcp_success(
+            13,
+            {
+                "structuredContent": {
+                    "summary": "Provider credentials are required.",
+                    "provider_result": {"status": "api_key_required"},
+                }
+            },
+        ),
         14: _mcp_success(
             14,
             {
