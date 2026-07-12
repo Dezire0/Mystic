@@ -4,7 +4,7 @@ const DEFAULT_TOKEN_TTL_SECONDS = 3600;
 const MANUAL_IMPORT_VERIFICATION_PATH = "/mystic_data/e2e/remote_mcp_lab_smoke/chatgpt_import_verified.json";
 const MANUAL_IMPORT_VERIFICATION_ENV = "MYSTIC_CHATGPT_IMPORT_VERIFICATION_JSON";
 const DEFAULT_SUPABASE_SCHEMA = "public";
-const PUBLIC_PROVIDER_IDS = ["openai_compatible", "gemini", "google_vertex_ai", "anthropic", "future_custom"];
+const PUBLIC_PROVIDER_IDS = ["openai_compatible", "gemini", "google_vertex_ai", "gemini_app_ui_bridge", "anthropic", "future_custom"];
 const CLOUD_REQUIRED_TOOL_NAMES = [
   "mystic_status",
   "health_check",
@@ -591,6 +591,36 @@ const CLOUD_TOOL_DEFINITIONS = [
     },
     securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
   },
+  {
+    name: "lab_orchestrated_run_start", title: "Start GPT-Controlled Manual Relay Run",
+    description: "ChatGPT remains the controller: state the plan, start a Gemini App Manual Relay job, tell the user to complete the manual action, then use wait/get to retrieve every transcript page before critiquing it.",
+    inputSchema: { type: "object", properties: { session_id: { type: "string", minLength: 1 }, question: { type: "string", minLength: 1 }, providers: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 1 }, rounds: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 5 }, include_full_outputs: { type: "boolean" } }, required: ["session_id", "question", "providers", "rounds", "include_full_outputs"], additionalProperties: false }, securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "lab_orchestrated_run_wait", title: "Wait For Manual Relay Event",
+    description: "Poll a GPT-controlled run after the user imports a visible Gemini response. Do not imply an unsolicited ChatGPT push; retrieve all pages with lab_orchestrated_run_get.",
+    inputSchema: { type: "object", properties: { run_id: { type: "string", minLength: 1 }, after_sequence: { type: "integer", minimum: 0 }, timeout_seconds: { type: "integer", minimum: 0, maximum: 30 } }, required: ["run_id", "after_sequence", "timeout_seconds"], additionalProperties: false }, securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }], annotations: { readOnlyHint: true },
+  },
+  {
+    name: "lab_orchestrated_run_get", title: "Get Complete Manual Relay Transcript",
+    description: "Retrieve ordered transcript pages. ChatGPT must retrieve each next_cursor page and display the complete imported visible Gemini response without silently truncating it.",
+    inputSchema: { type: "object", properties: { run_id: { type: "string", minLength: 1 }, cursor: { type: "integer", minimum: 0 }, page_size: { type: "integer", minimum: 1, maximum: 25 }, include_full_outputs: { type: "boolean" } }, required: ["run_id", "cursor", "page_size", "include_full_outputs"], additionalProperties: false }, securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }], annotations: { readOnlyHint: true },
+  },
+  {
+    name: "lab_orchestrated_run_continue", title: "Continue GPT-Controlled Manual Relay Run",
+    description: "Persist ChatGPT's visible critique/referee/final synthesis as an event. For a Gemini rebuttal, this creates another manual relay job; ChatGPT remains the controller and final synthesizer.",
+    inputSchema: { type: "object", properties: { run_id: { type: "string", minLength: 1 }, round: { type: "string", enum: ["gpt_critique", "rebuttal", "gpt_referee", "final_synthesis"] }, instruction: { type: "string", minLength: 1 }, target_providers: { type: "array", items: { type: "string" }, maxItems: 1 }, controller_output: { type: "string" } }, required: ["run_id", "round", "instruction", "target_providers", "controller_output"], additionalProperties: false }, securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "lab_orchestrated_run_cancel", title: "Cancel GPT-Controlled Manual Relay Run",
+    description: "Cancel a run and pending manual relay jobs. It never deletes existing transcript events.",
+    inputSchema: { type: "object", properties: { run_id: { type: "string", minLength: 1 } }, required: ["run_id"], additionalProperties: false }, securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "lab_local_relay_job_status", title: "Get Manual Relay Job Status",
+    description: "Read the safe status of a local Gemini App Manual Relay job. No browser, cookie, credential, or hidden Gemini data is available.",
+    inputSchema: { type: "object", properties: { job_id: { type: "string", minLength: 1 } }, required: ["job_id"], additionalProperties: false }, securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }], annotations: { readOnlyHint: true },
+  },
 ];
 const CLOUD_TOOL_NAMES = new Set(CLOUD_TOOL_DEFINITIONS.map((tool) => tool.name));
 const textEncoder = new TextEncoder();
@@ -1174,6 +1204,32 @@ function validateCloudToolArguments(name, args) {
       errors.push("prompt is required");
     }
   }
+  if (name === "lab_orchestrated_run_start") {
+    if (typeof args.session_id !== "string" || !args.session_id.trim()) errors.push("session_id is required");
+    if (typeof args.question !== "string" || !args.question.trim()) errors.push("question is required");
+    if (!Array.isArray(args.providers) || args.providers.length !== 1 || normalizeProviderId(args.providers[0]) !== "gemini_app_ui_bridge") errors.push("providers must contain only gemini_app_ui_bridge");
+    if (!Array.isArray(args.rounds) || !args.rounds.length) errors.push("rounds is required");
+    if (typeof args.include_full_outputs !== "boolean") errors.push("include_full_outputs must be boolean");
+  }
+  if (name === "lab_orchestrated_run_wait" || name === "lab_orchestrated_run_get" || name === "lab_orchestrated_run_continue" || name === "lab_orchestrated_run_cancel") {
+    if (typeof args.run_id !== "string" || !args.run_id.trim()) errors.push("run_id is required");
+  }
+  if (name === "lab_orchestrated_run_wait") {
+    if (!Number.isInteger(args.after_sequence) || args.after_sequence < 0) errors.push("after_sequence must be a non-negative integer");
+    if (!Number.isInteger(args.timeout_seconds) || args.timeout_seconds < 0 || args.timeout_seconds > 30) errors.push("timeout_seconds must be an integer between 0 and 30");
+  }
+  if (name === "lab_orchestrated_run_get") {
+    if (!Number.isInteger(args.cursor) || args.cursor < 0) errors.push("cursor must be a non-negative integer");
+    if (!Number.isInteger(args.page_size) || args.page_size < 1 || args.page_size > 25) errors.push("page_size must be 1 through 25");
+    if (typeof args.include_full_outputs !== "boolean") errors.push("include_full_outputs must be boolean");
+  }
+  if (name === "lab_orchestrated_run_continue") {
+    if (!["gpt_critique", "rebuttal", "gpt_referee", "final_synthesis"].includes(args.round)) errors.push("round is invalid");
+    if (typeof args.instruction !== "string" || !args.instruction.trim()) errors.push("instruction is required");
+    if (!Array.isArray(args.target_providers) || args.target_providers.some((item) => normalizeProviderId(item) !== "gemini_app_ui_bridge")) errors.push("target_providers must contain only gemini_app_ui_bridge");
+    if (typeof args.controller_output !== "string") errors.push("controller_output must be a string");
+  }
+  if (name === "lab_local_relay_job_status" && (typeof args.job_id !== "string" || !args.job_id.trim())) errors.push("job_id is required");
   return errors;
 }
 
@@ -1368,6 +1424,9 @@ async function supabaseSelectRows(env, table, filters = {}, options = {}) {
   if (options.order) {
     params.order = options.order;
   }
+  if (options.limit) {
+    params.limit = String(options.limit);
+  }
   const payload = await supabaseRequest(env, "GET", table, { params });
   return Array.isArray(payload) ? payload : [];
 }
@@ -1391,6 +1450,79 @@ async function supabaseUpsertRows(env, table, rows, onConflict) {
     body: rows,
     prefer: "resolution=merge-duplicates,return=representation",
   });
+}
+
+async function supabaseUpdateRows(env, table, changes, filters) {
+  const payload = await supabaseRequest(env, "PATCH", table, { params: filters, body: changes, prefer: "return=representation" });
+  return Array.isArray(payload) ? payload : [];
+}
+
+function makeRelayId(prefix) {
+  return `${prefix}-${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
+}
+
+function safeRelayText(value, limit = 120000) {
+  if (typeof value !== "string" || value.includes("\u0000")) return null;
+  const normalized = value.replace(/\r\n/g, "\n");
+  return normalized.length <= limit ? normalized : null;
+}
+
+function relayProviderIdentity(visibleModelLabel = "") {
+  return { provider_id: "gemini_app_ui_bridge", provider_type: "local_human_relay", quota_source: "gemini_consumer_app", model_identity_verified: false, visible_model_label: String(visibleModelLabel || "").slice(0, 120), automation_mode: "manual_send" };
+}
+
+async function nextRelaySequence(env, runId) {
+  const rows = await supabaseSelectRows(env, "lab_orchestration_events", { run_id: `eq.${runId}` }, { select: "sequence", order: "sequence.desc" });
+  return Number(rows[0]?.sequence || 0) + 1;
+}
+
+async function addRelayEvent(env, { runId, sessionId, agentRole, round, eventType, output = "", structuredOutput = {}, status = "completed", visibleModelLabel = "" }) {
+  const event = { event_id: makeRelayId("event"), run_id: runId, sequence: await nextRelaySequence(env, runId), session_id: sessionId, provider_id: eventType === "controller_output" ? "gpt_controller" : "gemini_app_ui_bridge", provider_type: eventType === "controller_output" ? "controller" : "local_human_relay", agent_role: agentRole, round, event_type: eventType, full_visible_output: output, structured_output: structuredOutput, status, metadata_safe: eventType === "controller_output" ? { controller: "chatgpt" } : relayProviderIdentity(visibleModelLabel) };
+  await supabaseInsertRows(env, "lab_orchestration_events", [event]);
+  return event;
+}
+
+async function createRelayJob(env, { runId, sessionId, question, agentRole = "ExternalCandidate", round = "independent_answer", instruction = "" }) {
+  const job = { job_id: makeRelayId("relay"), run_id: runId, session_id: sessionId, provider_id: "gemini_app_ui_bridge", agent_role: agentRole, round, prompt_text: `${instruction ? `${instruction}\n\n` : ""}Question: ${question}\n\nReply with visible, user-facing content only. Do not provide hidden reasoning. Include: position, claims/evidence, assumptions, criticisms or objections, uncertainty, confidence, and a final verdict.`, context_safe: { automation_mode: "manual_send", requested_output: ["position", "claims", "evidence", "assumptions", "criticisms", "uncertainty", "confidence", "final_verdict"] }, status: "pending", response_text: "", safe_error: "", claimed_by: "", expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(), metadata_safe: relayProviderIdentity() };
+  await supabaseInsertRows(env, "lab_local_relay_jobs", [job]);
+  return job;
+}
+
+function publicRelayJob(row) {
+  if (!row) return null;
+  const { response_text, claimed_by, ...safe } = row;
+  return { ...safe, response_available: Boolean(response_text), provider: relayProviderIdentity(row.metadata_safe?.visible_model_label || "") };
+}
+
+async function expireRelayJobs(env) {
+  await supabaseUpdateRows(env, "lab_local_relay_jobs", { status: "expired", safe_error: "relay_job_expired" }, { status: "in.(pending,claimed,awaiting_user_submission)", expires_at: `lt.${new Date().toISOString()}` });
+}
+
+async function claimRelayJob(env, runnerId) {
+  await expireRelayJobs(env);
+  const owned = await supabaseSelectOne(env, "lab_local_relay_jobs", { claimed_by: `eq.${runnerId}`, status: "in.(claimed,awaiting_user_submission)" }, { order: "claimed_at.asc" });
+  if (owned) return { job: owned, queue_count: 0 };
+  const pending = await supabaseSelectOne(env, "lab_local_relay_jobs", { status: "eq.pending" }, { order: "created_at.asc" });
+  if (!pending) return { job: null, queue_count: 0 };
+  const claimed = await supabaseUpdateRows(env, "lab_local_relay_jobs", { status: "claimed", claimed_by: runnerId, claimed_at: new Date().toISOString() }, { job_id: `eq.${pending.job_id}`, status: "eq.pending" });
+  if (!claimed.length) return { job: null, queue_count: 0, status: "claim_contended" };
+  const count = (await supabaseSelectRows(env, "lab_local_relay_jobs", { status: "eq.pending" }, { select: "job_id" })).length;
+  return { job: claimed[0], queue_count: count };
+}
+
+async function completeRelayJob(env, jobId, runnerId, responseText, visibleModelLabel) {
+  const normalized = safeRelayText(responseText);
+  if (!normalized || !String(runnerId || "").match(/^relay-[a-f0-9-]{10,64}$/)) return { status: "invalid_response" };
+  const job = await supabaseSelectOne(env, "lab_local_relay_jobs", { job_id: `eq.${jobId}` });
+  if (!job) return { status: "job_not_found" };
+  if (job.status === "completed") return { status: "duplicate_submission", job: publicRelayJob(job) };
+  if (job.claimed_by !== runnerId) return { status: "claim_owner_required" };
+  if (!["claimed", "awaiting_user_submission"].includes(job.status)) return { status: "job_not_submittable" };
+  const completed = await supabaseUpdateRows(env, "lab_local_relay_jobs", { status: "completed", response_text: normalized, completed_at: new Date().toISOString(), metadata_safe: relayProviderIdentity(visibleModelLabel) }, { job_id: `eq.${jobId}`, claimed_by: `eq.${runnerId}`, status: "in.(claimed,awaiting_user_submission)" });
+  if (!completed.length) return { status: "duplicate_submission" };
+  const event = await addRelayEvent(env, { runId: job.run_id, sessionId: job.session_id, agentRole: job.agent_role, round: job.round, eventType: "external_response", output: normalized, structuredOutput: { response_format: "user_visible_import", provider: relayProviderIdentity(visibleModelLabel) }, visibleModelLabel });
+  await supabaseUpdateRows(env, "lab_orchestration_runs", { status: job.round === "rebuttal" ? "gpt_referee_required" : "gpt_critique_required", current_round: job.round, updated_at: new Date().toISOString() }, { run_id: `eq.${job.run_id}` });
+  return { status: "completed", job: publicRelayJob(completed[0]), event: { ...event, full_visible_output: normalized } };
 }
 
 async function loadCloudBundle(env, sessionId) {
@@ -2703,6 +2835,9 @@ function normalizeProviderId(value) {
   if (normalized === "google") {
     return "gemini";
   }
+  if (["gemini-app-ui-bridge", "gemini_app_ui_bridge", "gemini_manual_relay", "gemini_manual"].includes(normalized)) {
+    return "gemini_app_ui_bridge";
+  }
   if (["google-vertex-ai", "google_vertex", "vertex", "vertex_ai"].includes(normalized)) {
     return "google_vertex_ai";
   }
@@ -2826,6 +2961,24 @@ function providerCatalogEntry(env, providerId) {
         "MYSTIC_PROVIDER_GOOGLE_VERTEX_LOCATION",
       ],
       oauth_token_storage_supported: false,
+    };
+  }
+  if (normalized === "gemini_app_ui_bridge") {
+    return {
+      provider_id: normalized,
+      provider_type: "local_human_relay",
+      display_name: "Gemini App Manual Relay",
+      default_auth_method: "user_managed_app_session",
+      supported_auth_methods: ["user_managed_app_session"],
+      supports_api_key: false,
+      supports_oauth: false,
+      local_only: true,
+      execution_location: "user_machine",
+      automation_mode: "manual_send",
+      quota_source: "gemini_consumer_app",
+      secret_names: [], required_secret_names: [], optional_secret_names: [], model_env_names: [], external_setup_url: "",
+      setup_instructions: "Install the Mystic Gemini App Manual Relay extension and local runner. The user manually sends each prompt in Gemini and explicitly pastes the visible response back into Mystic.",
+      scopes: [], default_models: [],
     };
   }
   if (normalized === "anthropic") {
@@ -3023,6 +3176,9 @@ function providerDefaultFailureReason(spec, status, oauthMetadata, secretState) 
 
 function resolveProviderStatus(spec, row, secretState, oauthMetadata) {
   const storedStatus = trimmed(row.status);
+  if (spec.local_only) {
+    return "local_runner_offline";
+  }
   if (["provider_required", "disconnected", "token_storage_required", "oauth_callback_received", "auth_failed", "rate_limited", "provider_unavailable"].includes(storedStatus)) {
     return storedStatus;
   }
@@ -3084,6 +3240,7 @@ function buildProviderRecord(env, providerId, row = {}) {
   return {
     connection_id: trimmed(row.connection_id, `provider-${spec.provider_id}`),
     provider_id: spec.provider_id,
+    display_name: trimmed(row.display_name, spec.display_name || spec.provider_id),
     provider_type: trimmed(row.provider_type, spec.provider_type),
     auth_method: authMethod,
     auth_mode: oauthMetadata.configured ? "oauth" : spec.supports_api_key ? "api_key" : authMethod,
@@ -3133,6 +3290,9 @@ function providerStatusMessage(record) {
   }
   if (status === "provider_required") {
     return "Provider configuration is incomplete. Add the required OAuth metadata and retry.";
+  }
+  if (status === "local_runner_offline") {
+    return "Start the local Gemini App Manual Relay extension and runner. Gemini prompts and visible responses remain user-controlled.";
   }
   if (status === "auth_failed") {
     return "Provider authentication failed. Reconnect the provider and retry.";
@@ -3985,6 +4145,12 @@ async function cloudMysticStatus(state, supabase, env) {
     provider_disconnect: supabase.configured ? "ready" : "blocked",
     provider_model_list: "ready",
     provider_call_test: "ready",
+    lab_orchestrated_run_start: supabase.configured ? "ready" : "blocked",
+    lab_orchestrated_run_wait: supabase.configured ? "ready" : "blocked",
+    lab_orchestrated_run_get: supabase.configured ? "ready" : "blocked",
+    lab_orchestrated_run_continue: supabase.configured ? "ready" : "blocked",
+    lab_orchestrated_run_cancel: supabase.configured ? "ready" : "blocked",
+    lab_local_relay_job_status: supabase.configured ? "ready" : "blocked",
   };
   const blockers = [];
   if (!state.enabled) {
@@ -4314,6 +4480,55 @@ async function callCloudTool(name, args, env, state) {
   }
   if (!supabase.configured) {
     throw new Error("Supabase storage is not configured for cloud-native LAB mode.");
+  }
+  if (name === "lab_orchestrated_run_start") {
+    const session = await supabaseSelectOne(env, "lab_sessions", { session_id: `eq.${args.session_id}` });
+    if (!session) throw new Error(`Unknown session_id: ${args.session_id}`);
+    const run = { run_id: makeRelayId("run"), session_id: args.session_id, controller: "chatgpt", question: args.question.trim(), status: "awaiting_external_answer", current_round: "independent_answer", provider_order: ["gemini_app_ui_bridge"], metadata_safe: { controller_immutable: true, automation_mode: "manual_send", rounds: args.rounds } };
+    await supabaseInsertRows(env, "lab_orchestration_runs", [run]);
+    const job = await createRelayJob(env, { runId: run.run_id, sessionId: run.session_id, question: run.question });
+    await addRelayEvent(env, { runId: run.run_id, sessionId: run.session_id, agentRole: "Director", round: "planning", eventType: "controller_output", output: "ChatGPT created a manual relay job and remains the controller, referee, and final synthesizer.", structuredOutput: { next_action: "Tell the user to complete the manual Gemini relay job." }, status: "completed" });
+    return { run_id: run.run_id, status: run.status, current_round: run.current_round, jobs: [publicRelayJob(job)], next_action: "User action required: open the Gemini App Manual Relay extension, copy the prompt, manually send it in Gemini, then paste and submit the complete visible response.", polling_interval_seconds: 3 };
+  }
+  if (name === "lab_orchestrated_run_get" || name === "lab_orchestrated_run_wait") {
+    const run = await supabaseSelectOne(env, "lab_orchestration_runs", { run_id: `eq.${args.run_id}` });
+    if (!run) throw new Error(`Unknown run_id: ${args.run_id}`);
+    const cursor = name === "lab_orchestrated_run_wait" ? args.after_sequence : args.cursor;
+    const pageSize = name === "lab_orchestrated_run_wait" ? 25 : args.page_size;
+    const events = await supabaseSelectRows(env, "lab_orchestration_events", { run_id: `eq.${args.run_id}`, sequence: `gt.${cursor}` }, { order: "sequence.asc", limit: pageSize + 1 });
+    const hasMore = events.length > pageSize;
+    const page = events.slice(0, pageSize).map((event) => args.include_full_outputs === false ? { ...event, full_visible_output: event.full_visible_output ? "[retrieve with include_full_outputs=true]" : "" } : event);
+    const pending = await supabaseSelectRows(env, "lab_local_relay_jobs", { run_id: `eq.${args.run_id}`, status: "in.(pending,claimed,awaiting_user_submission)" }, { select: "job_id" });
+    const lastSequence = page.length ? page[page.length - 1].sequence : cursor;
+    return name === "lab_orchestrated_run_wait" ? { run_id: run.run_id, status: run.status, new_events: page, pending_job_count: pending.length, next_sequence: lastSequence, next_action: pending.length ? "Wait for the user to submit the visible Gemini response, then poll again." : "ChatGPT should inspect the returned event and continue the state machine." } : { run, events: page, next_cursor: hasMore ? lastSequence : null, transcript_complete: !hasMore, truncated: hasMore };
+  }
+  if (name === "lab_orchestrated_run_continue") {
+    const run = await supabaseSelectOne(env, "lab_orchestration_runs", { run_id: `eq.${args.run_id}` });
+    if (!run) throw new Error(`Unknown run_id: ${args.run_id}`);
+    if (run.controller !== "chatgpt") throw new Error("ChatGPT controller is immutable.");
+    const output = safeRelayText(args.controller_output, 120000);
+    if (output === null) throw new Error("controller_output contains invalid text or exceeds the limit.");
+    await addRelayEvent(env, { runId: run.run_id, sessionId: run.session_id, agentRole: "GPT Controller", round: args.round, eventType: "controller_output", output, structuredOutput: { instruction: args.instruction }, status: "completed" });
+    if (args.round === "gpt_critique" && args.target_providers.includes("gemini_app_ui_bridge")) {
+      const job = await createRelayJob(env, { runId: run.run_id, sessionId: run.session_id, question: run.question, agentRole: "ExternalRebuttal", round: "rebuttal", instruction: args.instruction });
+      await supabaseUpdateRows(env, "lab_orchestration_runs", { status: "awaiting_external_rebuttal", current_round: "rebuttal", updated_at: new Date().toISOString() }, { run_id: `eq.${run.run_id}` });
+      return { run_id: run.run_id, status: "awaiting_external_rebuttal", jobs: [publicRelayJob(job)], next_action: "User action required: submit the rebuttal prompt manually in Gemini and import the complete visible response." };
+    }
+    const next = args.round === "rebuttal" ? "awaiting_external_rebuttal" : args.round === "gpt_referee" ? "final_synthesis_required" : args.round === "final_synthesis" ? "completed" : "gpt_referee_required";
+    await supabaseUpdateRows(env, "lab_orchestration_runs", { status: next, current_round: args.round, updated_at: new Date().toISOString(), ...(next === "completed" ? { completed_at: new Date().toISOString() } : {}) }, { run_id: `eq.${run.run_id}` });
+    return { run_id: run.run_id, status: next, next_action: next === "completed" ? "ChatGPT can present the final synthesis." : "ChatGPT controls the next visible orchestration step." };
+  }
+  if (name === "lab_orchestrated_run_cancel") {
+    const run = await supabaseSelectOne(env, "lab_orchestration_runs", { run_id: `eq.${args.run_id}` });
+    if (!run) throw new Error(`Unknown run_id: ${args.run_id}`);
+    await supabaseUpdateRows(env, "lab_orchestration_runs", { status: "cancelled", completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }, { run_id: `eq.${args.run_id}` });
+    await supabaseUpdateRows(env, "lab_local_relay_jobs", { status: "cancelled", safe_error: "run_cancelled" }, { run_id: `eq.${args.run_id}`, status: "in.(pending,claimed,awaiting_user_submission)" });
+    return { run_id: args.run_id, status: "cancelled" };
+  }
+  if (name === "lab_local_relay_job_status") {
+    const job = await supabaseSelectOne(env, "lab_local_relay_jobs", { job_id: `eq.${args.job_id}` });
+    if (!job) throw new Error(`Unknown job_id: ${args.job_id}`);
+    return publicRelayJob(job);
   }
   if (name === "lab_session_create") {
     const sessionId = makeCloudSessionId();
@@ -6656,6 +6871,42 @@ async function handleProviderRoute(request, env) {
   return null;
 }
 
+async function handleLocalRelayRoute(request, env) {
+  const url = new URL(request.url);
+  const pathname = url.pathname;
+  const readBody = async () => {
+    const length = Number(request.headers.get("content-length") || 0);
+    if (length > 1024 * 1024) throw new Error("request_too_large");
+    const body = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("invalid_request");
+    return body;
+  };
+  try {
+    if (pathname === "/local-relay/jobs/claim" && request.method === "POST") {
+      const body = await readBody();
+      const runnerId = String(body.runner_id || "");
+      if (!/^relay-[a-f0-9-]{10,64}$/.test(runnerId)) return jsonResponse({ status: "invalid_runner_id" }, 400);
+      const claimed = await claimRelayJob(env, runnerId);
+      return jsonResponse({ status: claimed.status || (claimed.job ? "claimed" : "pending"), job: publicRelayJob(claimed.job), queue_count: claimed.queue_count || 0 }, 200, { "cache-control": "no-store" });
+    }
+    const completion = pathname.match(/^\/local-relay\/jobs\/([^/]+)\/complete$/);
+    if (completion && request.method === "POST") {
+      const body = await readBody();
+      const result = await completeRelayJob(env, decodeURIComponent(completion[1]), String(body.runner_id || ""), body.response_text, body.visible_model_label || "");
+      return jsonResponse(result, result.status === "completed" || result.status === "duplicate_submission" ? 200 : 409, { "cache-control": "no-store" });
+    }
+    if (pathname === "/local-relay/queue-count" && request.method === "GET") {
+      await expireRelayJobs(env);
+      const jobs = await supabaseSelectRows(env, "lab_local_relay_jobs", { status: "eq.pending" }, { select: "job_id" });
+      return jsonResponse({ status: "ok", queue_count: jobs.length }, 200, { "cache-control": "no-store" });
+    }
+    return errorResponse("Not Found", 404);
+  } catch (error) {
+    const code = String(error.message || error).replace(/[^a-z_]/g, "").slice(0, 80) || "relay_error";
+    return jsonResponse({ status: code }, 400, { "cache-control": "no-store" });
+  }
+}
+
 async function routeRequest(request, env) {
   const sourceUrl = new URL(request.url);
   const state = oauthState(env, request.url);
@@ -6689,6 +6940,12 @@ async function routeRequest(request, env) {
       return errorResponse("Dynamic client registration is not enabled.", 404);
     }
     return errorResponse("Dynamic client registration is not implemented.", 501);
+  }
+
+  if (phase1CloudMode && pathname.startsWith("/local-relay/")) {
+    const authorization = await authorizeMcpRequest(request, state);
+    if (!authorization.ok) return authorization.response;
+    return handleLocalRelayRoute(request, env);
   }
 
   if (phase1CloudMode && pathname.startsWith("/providers")) {

@@ -121,6 +121,14 @@ They never show:
   - `provider_call_test` still fails closed after connection because real Vertex inference routing is intentionally separate
   - if callback storage is unavailable, the safe status is `token_storage_required`
 
+### Gemini App Manual Relay
+
+- `gemini_app_ui_bridge` is displayed as **Gemini App Manual Relay** and has `provider_type=local_human_relay`, `auth_method=user_managed_app_session`, `execution_location=user_machine`, and `automation_mode=manual_send`.
+- It is not a provider login, API-key integration, or automated browser bridge. The Worker starts an authenticated queue job, then the user explicitly copies the prompt into the official Gemini UI and explicitly imports the visible response.
+- The Chrome extension has only `nativeMessaging` and `storage` permissions. It has no Gemini host permission, no content script, and no cookie, debugger, history, or webRequest access.
+- The local runner owns the existing Mystic bearer token and sends it only to authenticated `/local-relay/*` Worker endpoints. The extension and Native Messaging manifest never receive the token.
+- ChatGPT remains the controller. It uses `lab_orchestrated_run_start`, `lab_orchestrated_run_wait`, `lab_orchestrated_run_get`, `lab_orchestrated_run_continue`, and `lab_orchestrated_run_cancel` to retrieve complete paginated transcripts, critique imported output, request an optional rebuttal, and synthesize the final answer.
+
 ### Anthropic
 
 - Mystic does not pretend Anthropic OAuth exists by default.

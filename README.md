@@ -341,6 +341,12 @@ If these provider secrets are absent, the Worker still exposes the tool and retu
 
 Current Provider Connect boundary:
 
+### Gemini App Manual Relay
+
+`gemini_app_ui_bridge` is a separate **Gemini App Manual Relay** provider. It is a user-controlled `manual_send` integration, not Gemini page automation: Mystic queues a prompt, the extension displays it, the user copies and manually sends it in Gemini, and the user explicitly pastes the visible answer back into the extension. ChatGPT remains the controller and retrieves complete transcript pages through the new `lab_orchestrated_run_*` MCP tools.
+
+Install the unpacked extension from `local/gemini_app_bridge_extension`, then register the native host with `python scripts/install_mystic_gemini_native_host.py --extension-id <EXTENSION_ID>` and run `python scripts/mystic_gemini_app_relay.py --start` with `MYSTIC_RUNNER_BEARER_TOKEN` set in the local shell. No token is stored in the extension or Native Messaging manifest.
+
 - `gemini` does not use OAuth in Mystic LAB and stays API-key based
 - `google_vertex_ai` can generate a real Google OAuth authorization URL when metadata is configured
 - `google_vertex_ai` now completes OAuth callback handling only when `MYSTIC_PROVIDER_TOKEN_ENCRYPTION_KEY` is configured

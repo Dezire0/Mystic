@@ -213,8 +213,25 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "provider_disconnect",
                 "provider_model_list",
                 "provider_call_test",
+                "lab_orchestrated_run_start",
+                "lab_orchestrated_run_wait",
+                "lab_orchestrated_run_get",
+                "lab_orchestrated_run_continue",
+                "lab_orchestrated_run_cancel",
+                "lab_local_relay_job_status",
             ],
         )
+
+    def test_local_relay_queue_requires_bearer_authentication(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": "https://mystic.dexproject.workers.dev/local-relay/queue-count",
+                "method": "GET",
+            },
+        )
+        self.assertEqual(result["status"], 401)
 
     def test_cloud_phase1_tools_list_passes_chatgpt_action_discovery_rules(self) -> None:
         result = run_worker_helper(
