@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Mystic Gemini App Bridge",
+  "version": "0.1.0",
+  "description": "Session-scoped visible Gemini UI bridge for Mystic LAB.",
+  "permissions": ["nativeMessaging", "storage"],
+  "background": {"service_worker": "background.js", "type": "module"},
+  "action": {"default_popup": "popup.html"},
+  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'self'"}
+}
