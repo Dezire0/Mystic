@@ -10,7 +10,8 @@ The current repository state includes:
 - ChatGPT remote MCP import support with `import_ready=true`
 - the original 13 LAB tools preserved in cloud-native mode, plus the 10 new Phase 1 scene/simulation tools
 - the 9 Provider Connect foundation tools for safe external provider setup metadata and verification
-- 32 public MCP tools visible in the current cloud-native Worker import surface
+- the Mystic LAB Control Center at `https://mystic-console.dexproject.workers.dev`, with server-side session auth and MCP-only data access
+- authoritative session, scene, and audit list tools plus revision-protected scene mutations
 
 Reference docs:
 

@@ -349,9 +349,10 @@ const CLOUD_TOOL_DEFINITIONS = [
       type: "object",
       properties: {
         scene_id: { type: "string", minLength: 1 },
+        expected_revision: { type: "integer", minimum: 1 },
         object: SCENE_OBJECT_SCHEMA,
       },
-      required: ["scene_id", "object"],
+      required: ["scene_id", "expected_revision", "object"],
       additionalProperties: false,
     },
     securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
@@ -364,10 +365,11 @@ const CLOUD_TOOL_DEFINITIONS = [
       type: "object",
       properties: {
         scene_id: { type: "string", minLength: 1 },
+        expected_revision: { type: "integer", minimum: 1 },
         object_id: { type: "string", minLength: 1 },
         patch: { type: "object" },
       },
-      required: ["scene_id", "object_id", "patch"],
+      required: ["scene_id", "expected_revision", "object_id", "patch"],
       additionalProperties: false,
     },
     securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
@@ -380,9 +382,10 @@ const CLOUD_TOOL_DEFINITIONS = [
       type: "object",
       properties: {
         scene_id: { type: "string", minLength: 1 },
+        expected_revision: { type: "integer", minimum: 1 },
         object_id: { type: "string", minLength: 1 },
       },
-      required: ["scene_id", "object_id"],
+      required: ["scene_id", "expected_revision", "object_id"],
       additionalProperties: false,
     },
     securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
@@ -395,11 +398,12 @@ const CLOUD_TOOL_DEFINITIONS = [
       type: "object",
       properties: {
         scene_id: { type: "string", minLength: 1 },
+        expected_revision: { type: "integer", minimum: 1 },
         parameters: { type: "object" },
         units: { type: "object" },
         metadata: { type: "object" },
       },
-      required: ["scene_id", "parameters"],
+      required: ["scene_id", "expected_revision", "parameters"],
       additionalProperties: false,
     },
     securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
@@ -412,10 +416,11 @@ const CLOUD_TOOL_DEFINITIONS = [
       type: "object",
       properties: {
         scene_id: { type: "string", minLength: 1 },
+        expected_revision: { type: "integer", minimum: 1 },
         adapter_id: { type: "string", enum: ["math.sympy", "physics.simple_projectile", "physics.simple_collision"] },
         inputs: { type: "object" },
       },
-      required: ["scene_id", "adapter_id", "inputs"],
+      required: ["scene_id", "expected_revision", "adapter_id", "inputs"],
       additionalProperties: false,
     },
     securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
@@ -428,13 +433,14 @@ const CLOUD_TOOL_DEFINITIONS = [
       type: "object",
       properties: {
         scene_id: { type: "string", minLength: 1 },
+        expected_revision: { type: "integer", minimum: 1 },
         simulation_id: { type: "string", minLength: 1 },
         object_ids: { type: "array", items: { type: "string" }, maxItems: 32 },
         evidence_refs: { type: "array", items: { type: "string" }, maxItems: 32 },
         report_refs: { type: "array", items: { type: "string" }, maxItems: 32 },
         apply_object_updates: { type: "boolean" },
       },
-      required: ["scene_id", "simulation_id", "apply_object_updates"],
+      required: ["scene_id", "expected_revision", "simulation_id", "apply_object_updates"],
       additionalProperties: false,
     },
     securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
@@ -447,10 +453,11 @@ const CLOUD_TOOL_DEFINITIONS = [
       type: "object",
       properties: {
         scene_id: { type: "string", minLength: 1 },
+        expected_revision: { type: "integer", minimum: 1 },
         adapter_id: { type: "string", enum: ["scene.three_json"] },
         include_simulations: { type: "boolean" },
       },
-      required: ["scene_id", "adapter_id", "include_simulations"],
+      required: ["scene_id", "expected_revision", "adapter_id", "include_simulations"],
       additionalProperties: false,
     },
     securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
@@ -464,11 +471,12 @@ const CLOUD_TOOL_DEFINITIONS = [
       type: "object",
       properties: {
         scene_id: { type: "string", minLength: 1 },
+        expected_revision: { type: "integer", minimum: 1 },
         format: { type: "string", enum: ["markdown"] },
         include_objects: { type: "boolean" },
         include_simulations: { type: "boolean" },
       },
-      required: ["scene_id", "format", "include_objects", "include_simulations"],
+      required: ["scene_id", "expected_revision", "format", "include_objects", "include_simulations"],
       additionalProperties: false,
     },
     securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
@@ -590,6 +598,30 @@ const CLOUD_TOOL_DEFINITIONS = [
       additionalProperties: false,
     },
     securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+  },
+  {
+    name: "lab_session_list",
+    title: "List Lab Sessions",
+    description: "List persisted Mystic LAB sessions with safe summaries.",
+    inputSchema: { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 100 }, status_filter: { type: "string" }, domain_filter: { type: "string" }, updated_after: { type: "string" } }, additionalProperties: false },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "lab_scene_list",
+    title: "List Lab Scenes",
+    description: "List persisted Mystic LAB scenes with authoritative counts and revisions.",
+    inputSchema: { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 100 }, session_id: { type: "string" }, updated_after: { type: "string" } }, additionalProperties: false },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "lab_activity_list",
+    title: "List Lab Activity",
+    description: "List safe persisted Mystic LAB audit events.",
+    inputSchema: { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 100 }, session_id: { type: "string" }, updated_after: { type: "string" } }, additionalProperties: false },
+    securitySchemes: [{ type: "oauth2", scopes: ["tools:read", "tools:execute"] }],
+    annotations: { readOnlyHint: true },
   },
 ];
 const CLOUD_TOOL_NAMES = new Set(CLOUD_TOOL_DEFINITIONS.map((tool) => tool.name));
@@ -818,6 +850,7 @@ function parseCloudSceneBundle(sceneRow, objectRows, simulationRows) {
       artifact_paths: objectMapping(sceneRow.artifact_paths),
       exports_json: objectMapping(sceneRow.exports_json),
       report_markdown: trimmed(sceneRow.report_markdown),
+      revision: Number(sceneRow.revision || 1),
       created_at: trimmed(sceneRow.created_at),
       updated_at: trimmed(sceneRow.updated_at),
     },
@@ -855,9 +888,30 @@ async function loadCloudSceneBundle(env, sceneId) {
   return parseCloudSceneBundle(sceneRow, objectRows, simulationRows);
 }
 
-async function saveCloudSceneBundle(env, bundle) {
+async function saveCloudSceneBundle(env, bundle, expectedRevision, activity) {
   const schema = supabaseState(env).schema;
   bundle.scene.artifact_paths = cloudSceneArtifactPaths(schema, bundle.scene.scene_id);
+  const guardedRevision = Number.isInteger(Number(expectedRevision)) ? Number(expectedRevision) : Number(bundle.scene.revision || 0);
+  if (guardedRevision > 0) {
+    const result = await supabaseRpc(env, "mystic_mutate_lab_scene", {
+      p_scene_id: bundle.scene.scene_id,
+      p_expected_revision: guardedRevision,
+      p_scene: bundle.scene,
+      p_objects: bundle.objects,
+      p_simulations: bundle.simulations,
+      p_activity: activity || null,
+    });
+    if (result && result.error) {
+      const error = new Error(result.safe_message || result.error);
+      error.code = result.error;
+      error.expected_revision = result.expected_revision;
+      error.current_revision = result.current_revision;
+      throw error;
+    }
+    bundle.scene.revision = Number(result?.revision || guardedRevision + 1);
+    bundle.scene.updated_at = String(result?.updated_at || nowIso());
+    return bundle.scene.artifact_paths;
+  }
   bundle.scene.updated_at = nowIso();
   await supabaseUpsertRows(env, "lab_scenes", [bundle.scene], "scene_id");
   await Promise.all([
@@ -870,7 +924,30 @@ async function saveCloudSceneBundle(env, bundle) {
   if (Array.isArray(bundle.simulations) && bundle.simulations.length) {
     await supabaseInsertRows(env, "lab_simulations", bundle.simulations);
   }
+  if (activity) {
+    await supabaseInsertRows(env, "lab_activity_events", [{
+      event_id: activity.event_id || cloudId("event"),
+      event_type: activity.event_type || "scene_mutation",
+      session_id: activity.session_id || bundle.scene.session_id,
+      scene_id: bundle.scene.scene_id,
+      tool_name: activity.tool_name || "scene_mutation",
+      status: activity.status || "completed",
+      safe_summary: activity.safe_summary || "Scene changed.",
+      metadata_safe: objectMapping(activity.metadata_safe),
+    }]);
+  }
   return bundle.scene.artifact_paths;
+}
+
+function cloudSceneMutationActivity(toolName, sceneBundle) {
+  return {
+    event_id: cloudId("event"),
+    event_type: "scene_mutation",
+    session_id: sceneBundle.scene.session_id,
+    tool_name: toolName,
+    status: "completed",
+    safe_summary: `Scene changed by ${toolName}.`,
+  };
 }
 
 function cloudScenePayload(bundle) {
@@ -909,6 +986,12 @@ function validateCloudToolArguments(name, args) {
     return ["arguments must be a JSON object"];
   }
   const errors = [];
+  if (["lab_session_list", "lab_scene_list", "lab_activity_list"].includes(name) && args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 100)) {
+    errors.push("limit must be an integer between 1 and 100");
+  }
+  if (["add_lab_object", "update_lab_object", "remove_lab_object", "set_lab_parameters", "run_lab_simulation", "attach_simulation_to_scene", "export_lab_snapshot", "generate_lab_report"].includes(name) && (!Number.isInteger(args.expected_revision) || args.expected_revision < 1)) {
+    errors.push("expected_revision must be a positive integer");
+  }
   if (name === "lab_session_create") {
     if (typeof args.problem !== "string" || !args.problem.trim()) {
       errors.push("problem is required");
@@ -1364,7 +1447,7 @@ async function supabaseRequest(env, method, table, options = {}) {
 }
 
 async function supabaseSelectRows(env, table, filters = {}, options = {}) {
-  const params = { select: options.select || "*", ...filters };
+  const params = { select: options.select || "*", ...filters, ...(options.params || {}) };
   if (options.order) {
     params.order = options.order;
   }
@@ -1391,6 +1474,10 @@ async function supabaseUpsertRows(env, table, rows, onConflict) {
     body: rows,
     prefer: "resolution=merge-duplicates,return=representation",
   });
+}
+
+async function supabaseRpc(env, functionName, body) {
+  return supabaseRequest(env, "POST", `rpc/${functionName}`, { body });
 }
 
 async function loadCloudBundle(env, sessionId) {
@@ -3957,6 +4044,9 @@ async function cloudMysticStatus(state, supabase, env) {
     health_check: "ready",
     lab_session_create: supabase.configured ? "ready" : "blocked",
     lab_session_get: supabase.configured ? "ready" : "blocked",
+    lab_session_list: supabase.configured ? "ready" : "blocked",
+    lab_scene_list: supabase.configured ? "ready" : "blocked",
+    lab_activity_list: supabase.configured ? "ready" : "blocked",
     lab_session_advance: supabase.configured ? "ready" : "blocked",
     lab_agent_run: registry.providers.some((item) => item.ready) ? "ready" : "provider_required",
     lab_referee_review: supabase.configured ? (registry.providers.some((item) => item.ready) ? "ready" : "deferred") : "blocked",
@@ -4314,6 +4404,21 @@ async function callCloudTool(name, args, env, state) {
   }
   if (!supabase.configured) {
     throw new Error("Supabase storage is not configured for cloud-native LAB mode.");
+  }
+  const limit = Math.min(100, Math.max(1, Number.isInteger(args.limit) ? args.limit : 50));
+  if (name === "lab_session_list") {
+    const filters = { ...(trimmed(args.status_filter) ? { status: `eq.${trimmed(args.status_filter)}` } : {}), ...(trimmed(args.domain_filter) ? { domain: `eq.${trimmed(args.domain_filter)}` } : {}), ...(trimmed(args.updated_after) ? { updated_at: `gt.${trimmed(args.updated_after)}` } : {}) };
+    const rows = await supabaseSelectRows(env, "lab_sessions", filters, { order: "updated_at.desc", params: { limit: String(limit) } });
+    return { records: rows.map((row) => ({ session_id: row.session_id, problem: row.problem, domain: row.domain, goal: row.goal, mode: row.mode, phase: row.current_phase, status: row.status, participants: asStringArray(row.participants), created_at: row.created_at, updated_at: row.updated_at })), next_cursor: "" };
+  }
+  if (name === "lab_scene_list") {
+    const rows = await supabaseRpc(env, "mystic_list_lab_scenes", { p_limit: limit, p_session_id: trimmed(args.session_id) || null, p_updated_after: trimmed(args.updated_after) || null });
+    const records = (Array.isArray(rows) ? rows : []).map((row) => ({ scene_id: row.scene_id, session_id: row.session_id, title: row.title, description: row.description, object_count: Number(row.object_count || 0), simulation_count: Number(row.simulation_count || 0), revision: Number(row.revision || 1), status: "ready", created_at: row.created_at, updated_at: row.updated_at }));
+    return { records, next_cursor: "" };
+  }
+  if (name === "lab_activity_list") {
+    const rows = await supabaseSelectRows(env, "lab_activity_events", { ...(trimmed(args.session_id) ? { session_id: `eq.${trimmed(args.session_id)}` } : {}), ...(trimmed(args.updated_after) ? { created_at: `gt.${trimmed(args.updated_after)}` } : {}) }, { order: "created_at.desc", params: { limit: String(limit) } });
+    return { records: rows.map((row) => ({ event_id: row.event_id, event_type: row.event_type, session_id: row.session_id, scene_id: row.scene_id, tool_name: row.tool_name, status: row.status, safe_summary: row.safe_summary, created_at: row.created_at, metadata_safe: objectMapping(row.metadata_safe) })), next_cursor: "" };
   }
   if (name === "lab_session_create") {
     const sessionId = makeCloudSessionId();
@@ -5318,7 +5423,7 @@ async function callCloudTool(name, args, env, state) {
       updated_at: nowIso(),
     };
     const sceneBundle = { scene, objects: [], simulations: [] };
-    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    const paths = await saveCloudSceneBundle(env, sceneBundle, undefined, cloudSceneMutationActivity(name, sceneBundle));
     return { scene_id: sceneId, session_id: scene.session_id, paths, scene };
   }
   if (name === "get_lab_scene") {
@@ -5336,7 +5441,7 @@ async function callCloudTool(name, args, env, state) {
     const sceneObject = normalizeSceneObjectPayload(sceneBundle.scene.scene_id, args.object);
     sceneBundle.objects.push(sceneObject);
     sceneBundle.scene.updated_at = nowIso();
-    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    const paths = await saveCloudSceneBundle(env, sceneBundle, args.expected_revision, cloudSceneMutationActivity(name, sceneBundle));
     return { scene_id: sceneBundle.scene.scene_id, object_id: sceneObject.id, object: sceneObject, paths };
   }
   if (name === "update_lab_object") {
@@ -5351,7 +5456,7 @@ async function callCloudTool(name, args, env, state) {
     const updated = normalizeSceneObjectPayload(sceneBundle.scene.scene_id, args.patch, sceneBundle.objects[index]);
     sceneBundle.objects[index] = updated;
     sceneBundle.scene.updated_at = nowIso();
-    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    const paths = await saveCloudSceneBundle(env, sceneBundle, args.expected_revision, cloudSceneMutationActivity(name, sceneBundle));
     return { scene_id: sceneBundle.scene.scene_id, object_id: updated.id, object: updated, paths };
   }
   if (name === "remove_lab_object") {
@@ -5371,7 +5476,7 @@ async function callCloudTool(name, args, env, state) {
       updated_at: nowIso(),
     }));
     sceneBundle.scene.updated_at = nowIso();
-    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    const paths = await saveCloudSceneBundle(env, sceneBundle, args.expected_revision, cloudSceneMutationActivity(name, sceneBundle));
     return { scene_id: sceneBundle.scene.scene_id, removed_object_id: objectId, paths };
   }
   if (name === "set_lab_parameters") {
@@ -5387,7 +5492,7 @@ async function callCloudTool(name, args, env, state) {
       sceneBundle.scene.metadata = { ...sceneBundle.scene.metadata, ...objectMapping(args.metadata) };
     }
     sceneBundle.scene.updated_at = nowIso();
-    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    const paths = await saveCloudSceneBundle(env, sceneBundle, args.expected_revision, cloudSceneMutationActivity(name, sceneBundle));
     return {
       scene_id: sceneBundle.scene.scene_id,
       parameters: sceneBundle.scene.parameters,
@@ -5428,7 +5533,7 @@ async function callCloudTool(name, args, env, state) {
       sceneBundle.scene.evidence_refs.push(simulationRef);
     }
     sceneBundle.scene.updated_at = nowIso();
-    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    const paths = await saveCloudSceneBundle(env, sceneBundle, args.expected_revision, cloudSceneMutationActivity(name, sceneBundle));
     return {
       scene_id: sceneBundle.scene.scene_id,
       simulation_id: simulation.simulation_id,
@@ -5466,7 +5571,7 @@ async function callCloudTool(name, args, env, state) {
     }
     simulation.updated_at = nowIso();
     sceneBundle.scene.updated_at = nowIso();
-    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    const paths = await saveCloudSceneBundle(env, sceneBundle, args.expected_revision, cloudSceneMutationActivity(name, sceneBundle));
     return {
       scene_id: sceneBundle.scene.scene_id,
       simulation_id: simulation.simulation_id,
@@ -5485,7 +5590,7 @@ async function callCloudTool(name, args, env, state) {
     if (exportResult.status === "completed") {
       sceneBundle.scene.exports_json[args.adapter_id.trim()] = exportResult.outputs.snapshot;
       sceneBundle.scene.updated_at = nowIso();
-      paths = await saveCloudSceneBundle(env, sceneBundle);
+      paths = await saveCloudSceneBundle(env, sceneBundle, args.expected_revision, cloudSceneMutationActivity(name, sceneBundle));
     }
     return {
       scene_id: sceneBundle.scene.scene_id,
@@ -5517,7 +5622,7 @@ async function callCloudTool(name, args, env, state) {
       };
     });
     sceneBundle.scene.updated_at = nowIso();
-    const paths = await saveCloudSceneBundle(env, sceneBundle);
+    const paths = await saveCloudSceneBundle(env, sceneBundle, args.expected_revision, cloudSceneMutationActivity(name, sceneBundle));
     return {
       scene_id: sceneBundle.scene.scene_id,
       report_path: paths.report,
@@ -5917,7 +6022,7 @@ async function deleteAuthorizationCode(code, state) {
   authorizationCodeMemoryStore.delete(cacheKey);
 }
 
-async function authorizeMcpRequest(request, state) {
+async function authorizeMcpRequest(request, state, env = {}) {
   if (!state.enabled) {
     return { ok: true, auth: null };
   }
@@ -5933,6 +6038,10 @@ async function authorizeMcpRequest(request, state) {
   const token = extractBearerToken(request);
   if (!token) {
     return { ok: false, response: unauthorizedMcpResponse(state) };
+  }
+  const consoleServiceToken = String(env.MYSTIC_CONSOLE_SERVICE_TOKEN || "").trim();
+  if (consoleServiceToken && constantTimeEqual(token, consoleServiceToken)) {
+    return { ok: true, auth: { type: "console_service", scope: DEFAULT_SCOPES, sub: "mystic-console" } };
   }
   const validated = await validateAccessToken(token, state);
   if (!validated.valid) {
@@ -6722,7 +6831,7 @@ async function routeRequest(request, env) {
   }
 
   if (pathname === "/mcp") {
-    const authorization = await authorizeMcpRequest(request, state);
+    const authorization = await authorizeMcpRequest(request, state, env);
     if (!authorization.ok) {
       return authorization.response;
     }
@@ -6833,7 +6942,7 @@ export const __test = {
     const state = oauthState(input.env || {}, requestUrl);
     const headers = new Headers(input.headers || {});
     const request = new Request(requestUrl, { method: "POST", headers, body: "{}" });
-    const decision = await authorizeMcpRequest(request, state);
+    const decision = await authorizeMcpRequest(request, state, input.env || {});
     if (decision.ok) {
       return { ok: true, auth: decision.auth || null };
     }
