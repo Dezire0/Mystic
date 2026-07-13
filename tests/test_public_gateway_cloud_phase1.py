@@ -96,8 +96,17 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             },
             "exports_json": {},
             "report_markdown": "",
+            "revision": 1,
             "created_at": "2026-07-06T01:01:01Z",
             "updated_at": "2026-07-06T01:01:01Z",
+        }
+
+    @staticmethod
+    def _scene_mutation_response(revision: int = 2) -> dict[str, object]:
+        return {
+            "methodPrefix": "POST https://example.supabase.co/rest/v1/rpc/mystic_mutate_lab_scene",
+            "status": 200,
+            "body": {"revision": revision, "updated_at": "2026-07-06T01:01:02Z"},
         }
 
     @staticmethod
@@ -213,6 +222,9 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "provider_disconnect",
                 "provider_model_list",
                 "provider_call_test",
+                "lab_session_list",
+                "lab_scene_list",
+                "lab_activity_list",
             ],
         )
 
@@ -1736,6 +1748,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_activity_events", "status": 201, "body": [{}]},
                 ],
             },
         )
@@ -1755,6 +1768,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                         "name": "add_lab_object",
                         "arguments": {
                             "scene_id": created_scene_id,
+                            "expected_revision": 1,
                             "object": {
                                 "id": "ball-1",
                                 "type": "rigid_body",
@@ -1774,6 +1788,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": []},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": []},
+                    self._scene_mutation_response(),
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
@@ -1808,13 +1823,14 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                     "method": "tools/call",
                     "params": {
                         "name": "update_lab_object",
-                        "arguments": {"scene_id": created_scene_id, "object_id": "ball-1", "patch": {"label": "Projectile A"}},
+                        "arguments": {"scene_id": created_scene_id, "expected_revision": 1, "object_id": "ball-1", "patch": {"label": "Projectile A"}},
                     },
                 },
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": []},
+                    self._scene_mutation_response(),
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
@@ -1850,12 +1866,13 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                     "jsonrpc": "2.0",
                     "id": 23,
                     "method": "tools/call",
-                    "params": {"name": "remove_lab_object", "arguments": {"scene_id": created_scene_id, "object_id": "ball-1"}},
+                    "params": {"name": "remove_lab_object", "arguments": {"scene_id": created_scene_id, "expected_revision": 1, "object_id": "ball-1"}},
                 },
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": []},
+                    self._scene_mutation_response(),
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
@@ -1892,6 +1909,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
             {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
             {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
             {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": []},
+            self._scene_mutation_response(),
             {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
             {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
             {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
@@ -1910,7 +1928,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                     "method": "tools/call",
                     "params": {
                         "name": "run_lab_simulation",
-                        "arguments": {"scene_id": scene_id, "adapter_id": "math.sympy", "inputs": {"operation": "evaluate", "expression": "2^3 + 1"}},
+                        "arguments": {"scene_id": scene_id, "expected_revision": 1, "adapter_id": "math.sympy", "inputs": {"operation": "evaluate", "expression": "2^3 + 1"}},
                     },
                 },
                 "fetchResponses": math_fetch_responses,
@@ -1930,6 +1948,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                         "name": "run_lab_simulation",
                         "arguments": {
                             "scene_id": scene_id,
+                            "expected_revision": 1,
                             "adapter_id": "math.sympy",
                             "inputs": {"operation": "substitute", "expression": "2*x + y", "variables": {"x": 3, "y": 4}},
                         },
@@ -1952,6 +1971,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                         "name": "run_lab_simulation",
                         "arguments": {
                             "scene_id": scene_id,
+                            "expected_revision": 1,
                             "adapter_id": "math.sympy",
                             "inputs": {"operation": "solve_linear", "equation": "2*x + 3 = 7", "variable": "x"},
                         },
@@ -1974,6 +1994,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                         "name": "run_lab_simulation",
                         "arguments": {
                             "scene_id": scene_id,
+                            "expected_revision": 1,
                             "adapter_id": "math.sympy",
                             "inputs": {"operation": "evaluate", "expression": "sqrt(9)"},
                         },
@@ -1996,6 +2017,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                         "name": "run_lab_simulation",
                         "arguments": {
                             "scene_id": scene_id,
+                            "expected_revision": 1,
                             "adapter_id": "physics.simple_projectile",
                             "inputs": {"object_id": "ball-1", "duration": 1.0, "time_step": 0.25},
                         },
@@ -2005,6 +2027,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": []},
+                    self._scene_mutation_response(),
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
@@ -2051,6 +2074,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                         "name": "attach_simulation_to_scene",
                         "arguments": {
                             "scene_id": scene_id,
+                            "expected_revision": 1,
                             "simulation_id": simulation_id,
                             "object_ids": ["ball-1"],
                             "evidence_refs": [],
@@ -2063,6 +2087,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": [simulation_row]},
+                    self._scene_mutation_response(),
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
@@ -2083,13 +2108,14 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                     "method": "tools/call",
                     "params": {
                         "name": "export_lab_snapshot",
-                        "arguments": {"scene_id": scene_id, "adapter_id": "scene.three_json", "include_simulations": True},
+                        "arguments": {"scene_id": scene_id, "expected_revision": 1, "adapter_id": "scene.three_json", "include_simulations": True},
                     },
                 },
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": [simulation_row]},
+                    self._scene_mutation_response(),
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},
@@ -2112,6 +2138,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                         "name": "generate_lab_report",
                         "arguments": {
                             "scene_id": scene_id,
+                            "expected_revision": 1,
                             "format": "markdown",
                             "include_objects": True,
                             "include_simulations": True,
@@ -2122,6 +2149,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scenes", "status": 200, "body": [scene_row]},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_scene_objects", "status": 200, "body": [object_row]},
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_simulations", "status": 200, "body": [simulation_row]},
+                    self._scene_mutation_response(),
                     {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_scenes", "status": 201, "body": [{}]},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_scene_objects", "status": 204},
                     {"methodPrefix": "DELETE https://example.supabase.co/rest/v1/lab_simulations", "status": 204},

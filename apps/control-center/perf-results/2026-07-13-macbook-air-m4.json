@@ -1,0 +1,24 @@
+{
+  "protocol": "headed Chromium; 3 second warm-up; 10 second measurement; deterministic 100 primitive scene; foreground window",
+  "hardware": {
+    "model": "MacBook Air (Mac16,12)",
+    "chip": "Apple M4",
+    "memory": "16 GB",
+    "macos": "26.2 (25C56)"
+  },
+  "browser": "Chrome 149.0.0.0",
+  "viewport": { "width": 1280, "height": 720 },
+  "devicePixelRatio": 1,
+  "objectCount": 100,
+  "triangleCount": 9242,
+  "drawCalls": 102,
+  "frameCount": 601,
+  "averageFrameMs": 16.6692,
+  "p50FrameMs": 16.7,
+  "p95FrameMs": 18.2,
+  "approximateFps": 59.99,
+  "initializationMs": 117.1,
+  "selectionLatencyMs": 14.7,
+  "memoryMetric": null,
+  "limitations": "This is one headed foreground run on the recorded MacBook Air. Browser-exposed GPU memory was unavailable, so no GPU memory claim is made."
+}

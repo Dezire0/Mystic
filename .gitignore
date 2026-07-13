@@ -3,6 +3,8 @@ __pycache__/
 .DS_Store
 .venv-training/
 .venv-discord/
+.venv/
+*.egg-info/
 
 data/*.sqlite3
 data/exports/*.jsonl
