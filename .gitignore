@@ -64,3 +64,7 @@ mystic_data/training/raven/
 !mystic_data/metadata/**
 .vercel
 .env*
+node_modules/
+dist/
+playwright-report/
+test-results/

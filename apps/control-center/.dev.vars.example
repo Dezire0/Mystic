@@ -1,0 +1,5 @@
+MYSTIC_CONSOLE_SESSION_SECRET=replace-with-a-long-random-value
+MYSTIC_CONSOLE_ADMIN_TOKEN=replace-with-an-admin-login-value
+MYSTIC_CONSOLE_ALLOWED_EMAILS=
+# Required for the current Mystic MCP OAuth boundary, including service bindings.
+MYSTIC_SERVICE_TOKEN=
