@@ -9,7 +9,7 @@ description = "Local-first multi-specialist research intelligence scaffold"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi>=0.115.0",
+  "fastapi>=0.115.0,<0.116.0",
   "requests>=2.32.0",
 ]
 
@@ -18,8 +18,8 @@ api = [
   "uvicorn>=0.30.0",
 ]
 dev = [
-  "pytest>=8.0.0",
-  "httpx>=0.28.0",
+  "pytest>=8.0.0,<9.0.0",
+  "httpx>=0.28.0,<0.29.0",
 ]
 discord = [
   "discord.py>=2.4.0",
@@ -28,8 +28,14 @@ discord = [
 [project.scripts]
 mystic = "mystic.cli.main:main"
 
+[dependency-groups]
+dev = [
+  "pytest>=8.0.0,<9.0.0",
+  "httpx>=0.28.0,<0.29.0",
+]
+
 [tool.vercel]
 entrypoint = "mystic.app.main:app"
 
 [tool.setuptools.packages.find]
-include = ["mystic*"]
+include = ["mystic*", "scripts*"]

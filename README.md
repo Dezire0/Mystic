@@ -205,6 +205,17 @@ Use the existing Python 3.11 environment in this repo:
 .venv-training/bin/python scripts/download_numina_sample.py --limit 100
 ```
 
+## Regression tests
+
+From the repository root, install the locked development environment and run the canonical backend suite:
+
+```bash
+uv sync
+uv run python -m unittest discover tests -v
+```
+
+The editable install includes reusable `mystic` and `scripts` modules. The lockfile pins the FastAPI/Starlette/httpx test-client compatibility range so this command does not depend on a shell `PYTHONPATH` override.
+
 ## Deployment
 
 Mystic's web UX is deployable on Vercel as a Python FastAPI app.

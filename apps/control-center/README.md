@@ -23,3 +23,14 @@ Apply `supabase/migrations/` before deploying a Mystic Worker that serves scene 
 ## Verification
 
 Run `npm run typecheck`, `npm run lint`, `npm run test`, `npm run build`, and `npm run test:e2e`. The Playwright workflow deliberately requires an explicitly supplied production-safe URL and administrator credential; it skips rather than manufacturing a live backend response when those values are absent.
+
+For a real hardware measurement, use the deterministic `/lab/benchmark` route. It renders a fixed 100-primitive mix, warms for three seconds, measures ten seconds of rendered frames, then records draw calls, triangles, p50/p95/average frame time, approximate FPS, initialization time, and selection latency. Run it only with an explicit target and credential:
+
+```bash
+MYSTIC_RUN_3D_PERF_BENCHMARK=1 \
+MYSTIC_CONSOLE_E2E_URL=https://mystic-console.dexproject.workers.dev \
+MYSTIC_CONSOLE_E2E_ADMIN_TOKEN='<local secret>' \
+npm run test:e2e -- --grep @performance
+```
+
+It records no GPU memory metric unless the browser exposes one reliably; its functional assertions intentionally avoid universal FPS thresholds.
