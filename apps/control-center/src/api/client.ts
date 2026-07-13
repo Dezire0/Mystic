@@ -17,6 +17,9 @@ export const api = {
   status: () => request("/api/status", z.record(z.string(), z.unknown())),
   mcp: () => request("/api/mcp", z.object({ health: z.record(z.string(), z.unknown()), status: z.record(z.string(), z.unknown()), tools: z.array(z.object({ name: z.string() })) })),
   providers: () => request("/api/providers", providerListSchema),
+  research: () => request("/api/research", z.record(z.string(), z.unknown())),
+  scenes: () => request("/api/scenes", z.record(z.string(), z.unknown())),
+  activity: () => request("/api/activity", z.record(z.string(), z.unknown())),
   getResearch: (sessionId: string) => request(`/api/research/${encodeURIComponent(sessionId)}`, z.record(z.string(), z.unknown())),
   advanceResearch: (sessionId: string) => request(`/api/research/${encodeURIComponent(sessionId)}/advance`, z.record(z.string(), z.unknown()), { method: "POST", body: "{}" }),
   reportResearch: (sessionId: string) => request(`/api/research/${encodeURIComponent(sessionId)}/report`, z.record(z.string(), z.unknown()), { method: "POST", body: "{}" }),
@@ -26,6 +29,6 @@ export const api = {
   addObject: (sceneId: string, object: unknown, revision: string) => request(`/api/scenes/${encodeURIComponent(sceneId)}/objects`, sceneEnvelopeSchema, { method: "POST", headers: { "if-match": revision }, body: JSON.stringify({ object }) }).then((data) => data.scene),
   updateObject: (sceneId: string, objectId: string, patch: unknown, revision: string) => request(`/api/scenes/${encodeURIComponent(sceneId)}/objects/${encodeURIComponent(objectId)}`, sceneEnvelopeSchema, { method: "PATCH", headers: { "if-match": revision }, body: JSON.stringify({ patch }) }).then((data) => data.scene),
   removeObject: (sceneId: string, objectId: string, revision: string) => request(`/api/scenes/${encodeURIComponent(sceneId)}/objects/${encodeURIComponent(objectId)}`, sceneEnvelopeSchema, { method: "DELETE", headers: { "if-match": revision } }).then((data) => data.scene),
-  runSimulation: (sceneId: string, adapterId: string, inputs: unknown) => request(`/api/scenes/${encodeURIComponent(sceneId)}/simulations`, z.object({ simulation: z.record(z.string(), z.unknown()) }), { method: "POST", body: JSON.stringify({ adapterId, inputs }) }),
-  attachSimulation: (sceneId: string, simulationId: string) => request(`/api/scenes/${encodeURIComponent(sceneId)}/simulations/${encodeURIComponent(simulationId)}/attach`, z.object({ scene: z.custom<SceneDocument>() }), { method: "POST", body: JSON.stringify({ applyObjectUpdates: true }) }),
+  runSimulation: (sceneId: string, adapterId: string, inputs: unknown, revision: string) => request(`/api/scenes/${encodeURIComponent(sceneId)}/simulations`, z.object({ simulation: z.record(z.string(), z.unknown()), scene: z.custom<SceneDocument>() }), { method: "POST", headers: { "if-match": revision }, body: JSON.stringify({ adapterId, inputs }) }),
+  attachSimulation: (sceneId: string, simulationId: string, revision: string) => request(`/api/scenes/${encodeURIComponent(sceneId)}/simulations/${encodeURIComponent(simulationId)}/attach`, z.custom<SceneDocument>(), { method: "POST", headers: { "if-match": revision }, body: JSON.stringify({ applyObjectUpdates: true }) }),
 };

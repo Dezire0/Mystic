@@ -13,6 +13,10 @@ run_worker_first = ["/api/*"]
 binding = "MYSTIC"
 service = "mystic"
 
+[[kv_namespaces]]
+binding = "MYSTIC_CONSOLE_RATE_LIMITS"
+id = "79bd1e2a6693409881514bc6faefeadf"
+
 [vars]
 MYSTIC_API_ORIGIN = "https://mystic.dexproject.workers.dev"
 MYSTIC_CONSOLE_SESSION_TTL_SECONDS = "28800"
