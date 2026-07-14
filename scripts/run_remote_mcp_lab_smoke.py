@@ -710,6 +710,7 @@ def run_remote_mcp_lab_smoke(
             "name": "add_lab_object",
             "arguments": {
                 "scene_id": scene_id or "smoke-scene",
+                "expected_revision": 1,
                 "object": {
                     "id": "ball-1",
                     "type": "rigid_body",
@@ -742,6 +743,7 @@ def run_remote_mcp_lab_smoke(
             "name": "update_lab_object",
             "arguments": {
                 "scene_id": scene_id or "smoke-scene",
+                "expected_revision": 2,
                 "object_id": "ball-1",
                 "patch": {"label": "Projectile A"},
             },
@@ -767,6 +769,7 @@ def run_remote_mcp_lab_smoke(
             "name": "set_lab_parameters",
             "arguments": {
                 "scene_id": scene_id or "smoke-scene",
+                "expected_revision": 3,
                 "parameters": {"gravity": 9.5, "air_resistance": False},
                 "metadata": {"updated_by": "remote_smoke"},
             },
@@ -791,6 +794,7 @@ def run_remote_mcp_lab_smoke(
             "name": "run_lab_simulation",
             "arguments": {
                 "scene_id": scene_id or "smoke-scene",
+                "expected_revision": 4,
                 "adapter_id": "physics.simple_projectile",
                 "inputs": {"object_id": "ball-1", "duration": 1.0, "time_step": 0.25},
             },
@@ -817,6 +821,7 @@ def run_remote_mcp_lab_smoke(
             "name": "attach_simulation_to_scene",
             "arguments": {
                 "scene_id": scene_id or "smoke-scene",
+                "expected_revision": 5,
                 "simulation_id": simulation_id or "smoke-sim",
                 "object_ids": ["ball-1"],
                 "evidence_refs": [],
@@ -845,6 +850,7 @@ def run_remote_mcp_lab_smoke(
             "name": "export_lab_snapshot",
             "arguments": {
                 "scene_id": scene_id or "smoke-scene",
+                "expected_revision": 6,
                 "adapter_id": "scene.three_json",
                 "include_simulations": True,
             },
@@ -891,6 +897,7 @@ def run_remote_mcp_lab_smoke(
             "name": "generate_lab_report",
             "arguments": {
                 "scene_id": scene_id or "smoke-scene",
+                "expected_revision": 7,
                 "format": "markdown",
                 "include_objects": True,
                 "include_simulations": True,
@@ -916,7 +923,7 @@ def run_remote_mcp_lab_smoke(
         method="tools/call",
         params={
             "name": "remove_lab_object",
-            "arguments": {"scene_id": scene_id or "smoke-scene", "object_id": "ball-1"},
+                "arguments": {"scene_id": scene_id or "smoke-scene", "object_id": "ball-1", "expected_revision": 8},
         },
         timeout_seconds=timeout_seconds,
         headers=request_headers,
