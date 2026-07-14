@@ -19,12 +19,17 @@ test.describe("Mystic 3D renderer @performance", () => {
     await expect(page.getByTestId("benchmark-metrics")).toBeVisible({ timeout: 20_000 });
     await page.getByRole("button", { name: "Select benchmark object" }).click();
     await expect.poll(async () => JSON.parse(await page.getByTestId("benchmark-metrics").textContent() || "{}").selectionLatencyMs).toBeGreaterThanOrEqual(0);
-    const metrics = JSON.parse(await page.getByTestId("benchmark-metrics").textContent() || "{}") as { objectCount: number; frameCount: number; p50FrameMs: number; p95FrameMs: number; approximateFps: number; selectionLatencyMs: number };
+    await page.getByRole("button", { name: "Hide result layers" }).click();
+    await expect.poll(async () => JSON.parse(await page.getByTestId("benchmark-metrics").textContent() || "{}").layerToggleLatencyMs).toBeGreaterThanOrEqual(0);
+    const metrics = JSON.parse(await page.getByTestId("benchmark-metrics").textContent() || "{}") as { objectCount: number; resultLayerCount: number; resultPointCount: number; frameCount: number; p50FrameMs: number; p95FrameMs: number; approximateFps: number; selectionLatencyMs: number; layerToggleLatencyMs: number };
     expect(metrics.objectCount).toBe(100);
+    expect(metrics.resultLayerCount).toBe(5);
+    expect(metrics.resultPointCount).toBe(359);
     expect(metrics.frameCount).toBeGreaterThan(100);
     expect(metrics.p50FrameMs).toBeGreaterThan(0);
     expect(metrics.p95FrameMs).toBeGreaterThanOrEqual(metrics.p50FrameMs);
     expect(metrics.approximateFps).toBeGreaterThan(0);
+    expect(metrics.layerToggleLatencyMs).toBeGreaterThanOrEqual(0);
     await testInfo.attach("benchmark-metrics.json", { body: JSON.stringify(metrics, null, 2), contentType: "application/json" });
     expect(errors).toEqual([]);
   });

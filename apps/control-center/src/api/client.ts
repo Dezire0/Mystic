@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { providerListSchema, safeErrorSchema, sceneEnvelopeSchema, type Provider } from "./contracts";
 import type { SceneDocument } from "../engine/scene-types";
+import { engineArtifactSchema, engineJobSchema, engineManifestSchema, engineRunSchema, type EngineArtifact, type EngineJob, type EngineManifest, type EngineRun } from "../engine-results/descriptor-schema";
 
 export class ApiError extends Error { constructor(public readonly code: string, message: string, public readonly diagnosticId?: string) { super(message); } }
 async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit): Promise<T> {
@@ -31,4 +32,19 @@ export const api = {
   removeObject: (sceneId: string, objectId: string, revision: string) => request(`/api/scenes/${encodeURIComponent(sceneId)}/objects/${encodeURIComponent(objectId)}`, sceneEnvelopeSchema, { method: "DELETE", headers: { "if-match": revision } }).then((data) => data.scene),
   runSimulation: (sceneId: string, adapterId: string, inputs: unknown, revision: string) => request(`/api/scenes/${encodeURIComponent(sceneId)}/simulations`, z.object({ simulation: z.record(z.string(), z.unknown()), scene: z.custom<SceneDocument>() }), { method: "POST", headers: { "if-match": revision }, body: JSON.stringify({ adapterId, inputs }) }),
   attachSimulation: (sceneId: string, simulationId: string, revision: string) => request(`/api/scenes/${encodeURIComponent(sceneId)}/simulations/${encodeURIComponent(simulationId)}/attach`, z.custom<SceneDocument>(), { method: "POST", headers: { "if-match": revision }, body: JSON.stringify({ applyObjectUpdates: true }) }),
+  engines: () => request("/api/engines", z.object({ engines: z.array(engineManifestSchema) })).then((data) => data.engines),
+  engine: (engineId: string) => request(`/api/engines/${encodeURIComponent(engineId)}`, engineManifestSchema),
+  matchEngines: (body: Record<string, unknown>) => request("/api/engines/match", z.record(z.string(), z.unknown()), { method: "POST", body: JSON.stringify(body) }),
+  engineJobs: () => request("/api/engine-jobs", z.object({ jobs: z.array(engineJobSchema) })).then((data) => data.jobs),
+  engineJob: (jobId: string) => request(`/api/engine-jobs/${encodeURIComponent(jobId)}`, engineJobSchema),
+  createEngineJob: (body: Record<string, unknown>) => request("/api/engine-jobs", engineJobSchema, { method: "POST", body: JSON.stringify(body) }),
+  waitEngineJob: (jobId: string) => request(`/api/engine-jobs/${encodeURIComponent(jobId)}/wait`, engineJobSchema, { method: "POST", body: "{}" }),
+  cancelEngineJob: (jobId: string) => request(`/api/engine-jobs/${encodeURIComponent(jobId)}/cancel`, engineJobSchema, { method: "POST", body: "{}" }),
+  engineRuns: () => request("/api/engine-runs", z.object({ runs: z.array(engineRunSchema) })).then((data) => data.runs),
+  engineRun: (runId: string) => request(`/api/engine-runs/${encodeURIComponent(runId)}`, engineRunSchema),
+  engineArtifacts: (runId: string) => request(`/api/engine-runs/${encodeURIComponent(runId)}/artifacts`, z.object({ artifacts: z.array(engineArtifactSchema) })).then((data) => data.artifacts),
+  attachEngineRun: (runId: string, body: Record<string, unknown>) => request(`/api/engine-runs/${encodeURIComponent(runId)}/attach`, z.record(z.string(), z.unknown()), { method: "POST", body: JSON.stringify(body) }),
+  refereeEngineRun: (runId: string) => request(`/api/engine-runs/${encodeURIComponent(runId)}/referee-review`, z.record(z.string(), z.unknown()), { method: "POST", body: "{}" }),
+  reportEngineRun: (runId: string) => request(`/api/engine-runs/${encodeURIComponent(runId)}/report`, z.record(z.string(), z.unknown()), { method: "POST", body: "{}" }),
 };
+export type { EngineArtifact, EngineJob, EngineManifest, EngineRun };

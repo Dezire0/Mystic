@@ -11,6 +11,9 @@ test.describe("Mystic Control Center live workflow", () => {
     await expect(page.getByRole("heading", { name: "Operations overview" })).toBeVisible();
     await page.getByRole("link", { name: "MCP diagnostics" }).click();
     await expect(page.getByRole("heading", { name: "MCP diagnostics" })).toBeVisible();
+    await page.getByRole("link", { name: "Engines" }).click();
+    await expect(page.getByRole("heading", { name: "Scientific engines" })).toBeVisible();
+    await expect(page.getByText("Symbolic math")).toBeVisible();
     const html = await page.content();
     expect(html).not.toContain(token!);
   });
