@@ -625,6 +625,20 @@ const CLOUD_TOOL_DEFINITIONS = [
   },
 ];
 const CLOUD_TOOL_NAMES = new Set(CLOUD_TOOL_DEFINITIONS.map((tool) => tool.name));
+const ENGINE_TOOL_DEFINITIONS = [
+  ["lab_engine_list", "List trusted scientific engines", { domain:{type:"string"}, capability:{type:"string"}, enabled_only:{type:"boolean"}, limit:{type:"integer",minimum:1,maximum:50}, cursor:{type:"string"} }],
+  ["lab_engine_get", "Inspect one trusted engine manifest, limits, and schemas before choosing it.", { engine_id:{type:"string",minLength:1} }, ["engine_id"]],
+  ["lab_engine_match", "Deterministically rank available engines. Do not run an engine; state assumptions, units, and limitations before submitting a separate run.", { domain:{type:"string"}, required_capabilities:{type:"array",items:{type:"string"}}, deterministic_required:{type:"boolean"}, visualization_required:{type:"boolean"}, resource_preference:{type:"string"} }],
+  ["lab_engine_run", "Create a validated scientific engine job. Completion is computed evidence, not scientific verification; never fabricate a result if a runner is offline.", { session_id:{type:"string"}, experiment_id:{type:"string"}, scene_id:{type:"string"}, engine_id:{type:"string",minLength:1}, input:{type:"object"}, seed:{type:"integer"}, requested_visualization:{type:"boolean"} }, ["engine_id","input"]],
+  ["lab_engine_job_get", "Get safe engine-job status.", { job_id:{type:"string",minLength:1} }, ["job_id"]],
+  ["lab_engine_job_wait", "Wait for a bounded interval, then return safe status. Poll again when next_action says to do so.", { job_id:{type:"string",minLength:1}, wait_seconds:{type:"integer",minimum:1,maximum:20} }, ["job_id"]],
+  ["lab_engine_job_cancel", "Request cancellation of a pending or running engine job.", { job_id:{type:"string",minLength:1} }, ["job_id"]],
+  ["lab_engine_result_get", "Retrieve the complete selected result page, warnings, assumptions, reproducibility, and descriptor. Follow next_cursor; do not silently omit data.", { run_id:{type:"string",minLength:1}, series_name:{type:"string"}, cursor:{type:"string"}, limit:{type:"integer",minimum:1,maximum:200} }, ["run_id"]],
+  ["lab_engine_result_attach", "Attach a completed result by safe reference. Scene attachment requires the current expected_scene_revision and never overwrites a stale scene.", { run_id:{type:"string",minLength:1}, session_id:{type:"string"}, experiment_id:{type:"string"}, scene_id:{type:"string"}, expected_scene_revision:{type:"integer",minimum:1} }, ["run_id"]],
+  ["lab_engine_artifact_list", "List bounded, safe artifact metadata for a completed engine run.", { run_id:{type:"string",minLength:1} }, ["run_id"]],
+].map(([name, description, properties, required = []]) => ({ name, title:name.replaceAll("_"," "), description, inputSchema:{type:"object",properties,required,additionalProperties:false}, securitySchemes:[{type:"oauth2",scopes:["tools:read","tools:execute"]}], annotations:{readOnlyHint:["lab_engine_list","lab_engine_get","lab_engine_match","lab_engine_job_get","lab_engine_job_wait","lab_engine_result_get","lab_engine_artifact_list"].includes(name)} }));
+CLOUD_TOOL_DEFINITIONS.push(...ENGINE_TOOL_DEFINITIONS);
+for (const tool of ENGINE_TOOL_DEFINITIONS) CLOUD_TOOL_NAMES.add(tool.name);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const authorizationCodeMemoryStore = new Map();
@@ -4406,6 +4420,44 @@ async function callCloudTool(name, args, env, state) {
     throw new Error("Supabase storage is not configured for cloud-native LAB mode.");
   }
   const limit = Math.min(100, Math.max(1, Number.isInteger(args.limit) ? args.limit : 50));
+  if (name === "lab_engine_list") {
+    const rows = await supabaseSelectRows(env, "lab_engine_registry", { ...(trimmed(args.domain) ? { domain: `eq.${trimmed(args.domain)}` } : {}), ...(args.enabled_only !== false ? { enabled: "eq.true" } : {}) }, { order: "engine_id.asc", params: { limit: String(Math.min(50, limit)) } });
+    return { engines: rows.filter((row) => !trimmed(args.capability) || asStringArray(row.capabilities).includes(trimmed(args.capability))).map((row) => ({ engine_id:row.engine_id, display_name:row.display_name, version:row.version, domain:row.domain, capabilities:asStringArray(row.capabilities), manifest:objectMapping(row.manifest), enabled:Boolean(row.enabled), deprecated:Boolean(row.deprecated), availability:trimmed(row.availability,"available") })), next_cursor:"" };
+  }
+  if (name === "lab_engine_get") {
+    const row = await supabaseSelectOne(env, "lab_engine_registry", { engine_id:`eq.${trimmed(args.engine_id)}` });
+    if (!row) throw new Error("engine_not_found");
+    return { engine_id:row.engine_id, display_name:row.display_name, version:row.version, domain:row.domain, capabilities:asStringArray(row.capabilities), manifest:objectMapping(row.manifest), enabled:Boolean(row.enabled), deprecated:Boolean(row.deprecated), availability:trimmed(row.availability,"available") };
+  }
+  if (name === "lab_engine_match") {
+    const required = asStringArray(args.required_capabilities); const rows = await supabaseSelectRows(env, "lab_engine_registry", { ...(trimmed(args.domain) ? { domain:`eq.${trimmed(args.domain)}` } : {}), enabled:"eq.true", deprecated:"eq.false", availability:"eq.available" }, { order:"engine_id.asc" });
+    return { candidates:rows.filter((row) => required.every((capability) => asStringArray(row.capabilities).includes(capability))).map((row) => ({ engine_id:row.engine_id, version:row.version, score:100 + required.length, reasons:["enabled", "available", ...(required.length ? ["required_capabilities_match"] : []), ...(objectMapping(row.manifest).deterministic === true && args.deterministic_required ? ["deterministic"] : [])] })), next_action:"Select an engine explicitly, state assumptions and units, then call lab_engine_run." };
+  }
+  if (name === "lab_engine_run") {
+    const engine = await supabaseSelectOne(env, "lab_engine_registry", { engine_id:`eq.${trimmed(args.engine_id)}` });
+    if (!engine) throw new Error("engine_not_found");
+    if (!engine.enabled || engine.deprecated) throw new Error("engine_disabled");
+    if (trimmed(engine.availability,"available") !== "available") throw new Error("engine_runner_offline");
+    if (!args.input || typeof args.input !== "object" || Array.isArray(args.input)) throw new Error("engine_input_invalid");
+    const jobId = cloudId("engine-job"); const normalizedInput = objectMapping(args.input); const inputHash = await sha256Base64Url(JSON.stringify(normalizedInput, Object.keys(normalizedInput).sort()));
+    await supabaseInsertRows(env, "lab_engine_jobs", [{ job_id:jobId, session_id:trimmed(args.session_id), experiment_id:trimmed(args.experiment_id), scene_id:trimmed(args.scene_id), engine_id:engine.engine_id, requested_by:"mcp", input_payload:normalizedInput, normalized_input:normalizedInput, status:"pending", metadata_safe:{ requested_visualization:Boolean(args.requested_visualization), input_hash:inputHash } }]);
+    return { job_id:jobId, status:"pending", engine_id:engine.engine_id, engine_version:engine.version, input_hash:inputHash, resource_class:objectMapping(engine.manifest).expected_resource_class || "tiny", polling_interval_seconds:2, next_action:"Call lab_engine_job_wait or lab_engine_job_get." };
+  }
+  if (name === "lab_engine_job_get" || name === "lab_engine_job_wait") {
+    const row = await supabaseSelectOne(env, "lab_engine_jobs", { job_id:`eq.${trimmed(args.job_id)}` });
+    if (!row) throw new Error("engine_job_not_found"); const run = row.status === "completed" ? await supabaseSelectOne(env,"lab_engine_runs",{job_id:`eq.${trimmed(args.job_id)}`}) : null;
+    return { job_id:row.job_id, status:row.status, cancellation_requested:Boolean(row.cancellation_requested), safe_error:trimmed(row.safe_error), run_id:run?.run_id || "", next_action:row.status === "pending" || row.status === "running" ? "Poll again." : "Retrieve the completed result if a run_id is present." };
+  }
+  if (name === "lab_engine_job_cancel") {
+    const result = await supabaseRpc(env,"mystic_request_engine_job_cancellation",{p_job_id:trimmed(args.job_id)}); return { job_id:trimmed(args.job_id), cancellation_requested:Boolean(result) };
+  }
+  if (name === "lab_engine_result_get") {
+    const row=await supabaseSelectOne(env,"lab_engine_runs",{run_id:`eq.${trimmed(args.run_id)}`}); if (!row) throw new Error("engine_result_not_found");
+    const result=objectMapping(row.result); const series=Array.isArray(result.series) ? result.series : [];
+    return { run_id:row.run_id, engine_id:row.engine_id, status:row.status, summary:row.summary, values:result.values || {}, series:trimmed(args.series_name) ? series.filter((item) => objectMapping(item).name === trimmed(args.series_name)) : series, warnings:row.warnings || [], visualization:row.visualization || {}, reproducibility:row.reproducibility || {}, next_cursor:"" };
+  }
+  if (name === "lab_engine_artifact_list") { const rows=await supabaseSelectRows(env,"lab_engine_artifacts",{run_id:`eq.${trimmed(args.run_id)}`},{order:"created_at.asc"}); return { artifacts:rows.map((row) => ({artifact_id:row.artifact_id,artifact_type:row.artifact_type,mime_type:row.mime_type,byte_size:row.byte_size,checksum:row.checksum,display_name:row.display_name,metadata_safe:objectMapping(row.metadata_safe)})),next_cursor:"" }; }
+  if (name === "lab_engine_result_attach") throw new Error("engine_result_attachment_not_available");
   if (name === "lab_session_list") {
     const filters = { ...(trimmed(args.status_filter) ? { status: `eq.${trimmed(args.status_filter)}` } : {}), ...(trimmed(args.domain_filter) ? { domain: `eq.${trimmed(args.domain_filter)}` } : {}), ...(trimmed(args.updated_after) ? { updated_at: `gt.${trimmed(args.updated_after)}` } : {}) };
     const rows = await supabaseSelectRows(env, "lab_sessions", filters, { order: "updated_at.desc", params: { limit: String(limit) } });
@@ -6765,6 +6817,43 @@ async function handleProviderRoute(request, env) {
   return null;
 }
 
+function runnerAuthorized(request, env) {
+  const configured = trimmed(env.MYSTIC_ENGINE_RUNNER_TOKEN);
+  const supplied = extractBearerToken(request);
+  return Boolean(configured && supplied && constantTimeEqual(configured, supplied));
+}
+
+async function runnerBody(request) {
+  try { const body = await request.json(); return body && typeof body === "object" && !Array.isArray(body) ? body : null; } catch { return null; }
+}
+
+async function handleEngineRunnerRoute(request, env, pathname) {
+  if (!runnerAuthorized(request, env)) return jsonResponse({ error:"runner_unauthorized", message:"Runner authentication was not accepted." },401,{"cache-control":"no-store"});
+  const action = pathname.slice("/internal/engine-runner/".length);
+  if (request.method === "GET" && action === "status") return jsonResponse({ status:"ready", runner_token_configured:true },200,{"cache-control":"no-store"});
+  if (request.method !== "POST") return new Response("Method Not Allowed",{status:405,headers:{allow:"POST"}});
+  const body = await runnerBody(request); if (!body) return jsonResponse({error:"engine_input_invalid",message:"A JSON object is required."},400);
+  if (action === "registry-sync") {
+    if (!Array.isArray(body.engines) || body.engines.length > 20) return jsonResponse({error:"engine_input_invalid",message:"A bounded engine list is required."},400);
+    const rows=body.engines.map((item) => objectMapping(item)).filter((item) => trimmed(item.engine_id) && trimmed(item.version) && item.manifest && typeof item.manifest === "object").map((item) => ({engine_id:trimmed(item.engine_id),display_name:trimmed(item.display_name,trimmed(item.engine_id)),version:trimmed(item.version),domain:trimmed(item.domain,"general"),capabilities:asStringArray(item.capabilities),manifest:objectMapping(item.manifest),manifest_hash:trimmed(item.manifest_hash),enabled:item.enabled !== false,deprecated:item.deprecated === true,availability:"available"}));
+    if (rows.length !== body.engines.length) return jsonResponse({error:"engine_input_invalid",message:"Every engine manifest must contain safe required metadata."},400);
+    if (body.apply !== true) { const existing=await supabaseSelectRows(env,"lab_engine_registry",{}, {order:"engine_id.asc"}); return jsonResponse({status:"check",engines:existing.map((item) => ({engine_id:item.engine_id,version:item.version,manifest_hash:item.manifest_hash,enabled:Boolean(item.enabled),availability:trimmed(item.availability,"available")}))}); }
+    await supabaseUpsertRows(env,"lab_engine_registry",rows,"engine_id"); return jsonResponse({status:"applied",engine_count:rows.length,deleted_engine_ids:[]});
+  }
+  if (action === "claim") { const result=await supabaseRpc(env,"mystic_claim_next_engine_job",{p_runner_id:trimmed(body.runner_id),p_lease_seconds:Math.min(300,Math.max(10,Number(body.lease_seconds)||60))}); return jsonResponse({job:Array.isArray(result)?result[0]||null:result||null}); }
+  if (action === "register") return jsonResponse({status:"registered",runner_id:trimmed(body.runner_id),supported_resource_classes:asStringArray(body.supported_resource_classes),engine_count:Array.isArray(body.engines) ? body.engines.length : 0});
+  if (action === "heartbeat") { const ok=await supabaseRpc(env,"mystic_heartbeat_engine_job",{p_job_id:trimmed(body.job_id),p_runner_id:trimmed(body.runner_id),p_lease_seconds:Math.min(300,Math.max(10,Number(body.lease_seconds)||60))}); return jsonResponse({ok:Boolean(ok)}); }
+  if (action === "release") { const released=await supabaseRpc(env,"mystic_release_expired_engine_leases",{}); return jsonResponse({released:Number(released)||0}); }
+  if (action === "complete") {
+    const result=objectMapping(body.result), reproducibility=objectMapping(result.reproducibility), summary=objectMapping(result.summary), visualization=objectMapping(result.visualization);
+    if (!trimmed(body.job_id) || !trimmed(body.runner_id) || !trimmed(result.run_id) || !trimmed(result.engine_version) || !trimmed(reproducibility.input_hash) || !trimmed(reproducibility.output_hash)) return jsonResponse({error:"engine_output_invalid",message:"A complete structured engine result is required."},400);
+    const ok=await supabaseRpc(env,"mystic_complete_engine_job",{p_job_id:trimmed(body.job_id),p_runner_id:trimmed(body.runner_id),p_run_id:trimmed(result.run_id),p_engine_version:trimmed(result.engine_version),p_result:result,p_summary:summary,p_visualization:visualization,p_reproducibility:reproducibility,p_input_hash:trimmed(reproducibility.input_hash),p_output_hash:trimmed(reproducibility.output_hash),p_duration_ms:Number(result.duration_ms)||0,p_warnings:Array.isArray(result.warnings)?result.warnings:[]});
+    return jsonResponse({ok:Boolean(ok)});
+  }
+  if (action === "fail" || action === "cancelled") { const status=action === "cancelled" ? "cancelled" : trimmed(body.status,"failed"); const ok=await supabaseRpc(env,"mystic_fail_engine_job",{p_job_id:trimmed(body.job_id),p_runner_id:trimmed(body.runner_id),p_status:status,p_safe_error:trimmed(body.safe_error,"The engine job did not complete.")}); return jsonResponse({ok:Boolean(ok)}); }
+  return jsonResponse({error:"runner_route_not_found",message:"The runner operation is not available."},404);
+}
+
 async function routeRequest(request, env) {
   const sourceUrl = new URL(request.url);
   const state = oauthState(env, request.url);
@@ -6798,6 +6887,10 @@ async function routeRequest(request, env) {
       return errorResponse("Dynamic client registration is not enabled.", 404);
     }
     return errorResponse("Dynamic client registration is not implemented.", 501);
+  }
+
+  if (pathname.startsWith("/internal/engine-runner/")) {
+    return handleEngineRunnerRoute(request, env, pathname);
   }
 
   if (phase1CloudMode && pathname.startsWith("/providers")) {

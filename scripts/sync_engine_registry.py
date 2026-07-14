@@ -1,35 +1,47 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from typing import Any
 
+import requests
+
 from mystic.lab.engines import builtin_registry
 from mystic.lab.engines.reproducibility import payload_hash
-from mystic.lab.storage import SupabaseLabStorage
 
 
-def registry_rows() -> list[dict[str, Any]]:
+def local_engines() -> list[dict[str, Any]]:
     rows=[]
     for manifest in builtin_registry().list(enabled_only=False):
-        public=manifest.public_dict(); rows.append({"engine_id":manifest.engine_id,"display_name":manifest.display_name,"version":manifest.version,"domain":manifest.domain,"capabilities":list(manifest.capabilities),"manifest":public,"manifest_hash":payload_hash(public),"enabled":manifest.enabled,"deprecated":manifest.deprecated,"availability":"available"})
+        public=manifest.public_dict()
+        rows.append({"engine_id":manifest.engine_id,"display_name":manifest.display_name,"version":manifest.version,"domain":manifest.domain,"capabilities":list(manifest.capabilities),"manifest":public,"manifest_hash":payload_hash(public),"enabled":manifest.enabled,"deprecated":manifest.deprecated})
     return rows
 
 
+def endpoint() -> str:
+    return os.environ.get("MYSTIC_ENGINE_ENDPOINT", "").rstrip("/") + "/internal/engine-runner/registry-sync"
+
+
 def main() -> int:
-    parser=argparse.ArgumentParser(description="Synchronize only Mystic's built-in allowlisted engine manifests.")
+    parser=argparse.ArgumentParser(description="Synchronize built-in engine manifests through the authenticated Mystic Worker only.")
     mode=parser.add_mutually_exclusive_group(required=True); mode.add_argument("--check",action="store_true"); mode.add_argument("--apply",action="store_true")
-    args=parser.parse_args(); storage=SupabaseLabStorage(".")
-    if not storage.describe_status()["configured"]:
-        print("engine_registry_sync_unconfigured: set MYSTIC_SUPABASE_URL and MYSTIC_SUPABASE_SERVICE_ROLE_KEY in the runner environment")
+    args=parser.parse_args(); token=os.environ.get("MYSTIC_ENGINE_RUNNER_TOKEN","").strip(); url=endpoint()
+    if not token or not url.startswith("https://"):
+        print("engine_registry_sync_unconfigured: set MYSTIC_ENGINE_ENDPOINT and MYSTIC_ENGINE_RUNNER_TOKEN in the runner environment")
         return 2
-    rows=registry_rows(); existing={str(row.get("engine_id")):row for row in storage._select_rows("lab_engine_registry",{},order="engine_id.asc")}
+    rows=local_engines()
+    try:
+        response=requests.post(url,headers={"authorization":f"Bearer {token}","content-type":"application/json","user-agent":"MysticEngineRunner/phase2a"},json={"engines":rows,"apply":args.apply},timeout=20)
+    except requests.RequestException:
+        print("engine_registry_sync_unavailable")
+        return 3
+    if response.status_code != 200:
+        print("engine_registry_sync_rejected")
+        return 4
+    payload=response.json(); existing={str(row.get("engine_id")):row for row in payload.get("engines",[])}
     changed=[row["engine_id"] for row in rows if existing.get(row["engine_id"],{}).get("manifest_hash") != row["manifest_hash"]]
-    if args.check:
-        print({"status":"check","engine_count":len(rows),"changed_engine_ids":changed,"unchanged_engine_ids":[row["engine_id"] for row in rows if row["engine_id"] not in changed]})
-        return 0
-    storage._upsert_rows("lab_engine_registry",rows,on_conflict="engine_id")
-    print({"status":"applied","engine_count":len(rows),"changed_engine_ids":changed,"deleted_engine_ids":[]})
+    print(json.dumps({"status":payload.get("status","applied" if args.apply else "check"),"engine_count":len(rows),"changed_engine_ids":changed,"deleted_engine_ids":[]},sort_keys=True))
     return 0
 
 

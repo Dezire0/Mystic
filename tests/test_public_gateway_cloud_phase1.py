@@ -225,6 +225,16 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "lab_session_list",
                 "lab_scene_list",
                 "lab_activity_list",
+                "lab_engine_list",
+                "lab_engine_get",
+                "lab_engine_match",
+                "lab_engine_run",
+                "lab_engine_job_get",
+                "lab_engine_job_wait",
+                "lab_engine_job_cancel",
+                "lab_engine_result_get",
+                "lab_engine_result_attach",
+                "lab_engine_artifact_list",
             ],
         )
 
