@@ -42,3 +42,4 @@ $$;
 revoke all on function public.mystic_list_lab_scenes(integer, text, timestamptz) from public;
 revoke all on function public.mystic_list_lab_scenes(integer, text, timestamptz) from anon, authenticated;
 grant execute on function public.mystic_list_lab_scenes(integer, text, timestamptz) to service_role;
+;

@@ -225,6 +225,16 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "lab_session_list",
                 "lab_scene_list",
                 "lab_activity_list",
+                "lab_engine_list",
+                "lab_engine_get",
+                "lab_engine_match",
+                "lab_engine_run",
+                "lab_engine_job_get",
+                "lab_engine_job_wait",
+                "lab_engine_job_cancel",
+                "lab_engine_result_get",
+                "lab_engine_result_attach",
+                "lab_engine_artifact_list",
             ],
         )
 
@@ -2171,6 +2181,52 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertEqual(export_result["body"]["result"]["structuredContent"]["status"], "completed")
         self.assertEqual(export_result["body"]["result"]["structuredContent"]["snapshot"]["scene"]["name"], "Projectile baseline")
         self.assertIn("Projectile baseline", report_result["body"]["result"]["structuredContent"]["markdown"])
+
+    def test_public_lab_rest_routes_require_auth_and_return_safe_engine_data(self) -> None:
+        unauthenticated = run_worker_helper(
+            "simulateRequest",
+            {"env": self.env, "requestUrl": "https://mystic.dexproject.workers.dev/lab/engines", "method": "GET"},
+        )
+        self.assertEqual(unauthenticated["status"], 401)
+        registry_row = {
+            "engine_id": "physics.simple_projectile", "display_name": "Simple projectile", "version": "2.0.0",
+            "domain": "physics", "capabilities": ["trajectory"], "manifest": {"type": "object"},
+            "enabled": True, "deprecated": False, "availability": "available",
+        }
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": "https://mystic.dexproject.workers.dev/lab/engines",
+                "method": "GET",
+                "headers": self.auth_headers,
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_registry", "status": 200, "body": [registry_row]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_runners", "status": 200, "body": [{"runner_id":"runner","status":"ready","last_heartbeat":"2099-01-01T00:00:00Z"}]},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 200)
+        self.assertTrue(result["body"]["ok"])
+        self.assertEqual(result["body"]["data"]["engines"][0]["engine_id"], "physics.simple_projectile")
+
+    def test_engine_runner_completion_rejects_mismatched_input_hash(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env | {"MYSTIC_ENGINE_RUNNER_TOKEN": "runner-token"},
+                "requestUrl": "https://mystic.dexproject.workers.dev/internal/engine-runner/complete",
+                "method": "POST",
+                "headers": {"Authorization": "Bearer runner-token"},
+                "body": {"runner_id": "runner", "job_id": "job", "result": {"run_id": "run", "engine_id": "physics.simple_projectile", "engine_version": "2.0.0", "duration_ms": 1, "summary": {}, "values": {}, "warnings": [], "reproducibility": {"input_hash": "wrong", "output_hash": "hash"}}},
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_jobs", "status": 200, "body": [{"job_id": "job", "engine_id": "physics.simple_projectile", "status": "running", "claimed_by": "runner", "normalized_input": {"duration_seconds": 1}}]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_registry", "status": 200, "body": [{"engine_id": "physics.simple_projectile", "version": "2.0.0"}]},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 400)
+        self.assertEqual(result["body"]["error"], "engine_output_invalid")
 
 
 if __name__ == "__main__":
