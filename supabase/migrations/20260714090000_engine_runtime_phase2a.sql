@@ -1,7 +1,8 @@
 -- Phase 2A trusted engine runtime. Browser/anon roles receive no direct access.
 create table if not exists public.lab_engine_registry (
   engine_id text primary key, display_name text not null, version text not null, domain text not null,
-  capabilities jsonb not null default '[]'::jsonb, manifest jsonb not null default '{}'::jsonb,
+  capabilities jsonb not null default '[]'::jsonb, manifest jsonb not null default '{}'::jsonb, manifest_hash text not null default '',
+  availability text not null default 'available' check (availability in ('available','dependency_missing','runner_offline')),
   enabled boolean not null default true, deprecated boolean not null default false,
   created_at timestamptz not null default timezone('utc', now()), updated_at timestamptz not null default timezone('utc', now())
 );
@@ -31,9 +32,12 @@ create table if not exists public.lab_engine_artifacts (
 );
 create index if not exists lab_engine_jobs_status_priority_idx on public.lab_engine_jobs(status, priority desc, created_at);
 create index if not exists lab_engine_jobs_session_idx on public.lab_engine_jobs(session_id, created_at desc);
+create index if not exists lab_engine_jobs_experiment_idx on public.lab_engine_jobs(experiment_id, created_at desc);
+create index if not exists lab_engine_jobs_scene_idx on public.lab_engine_jobs(scene_id, created_at desc);
 create index if not exists lab_engine_jobs_engine_idx on public.lab_engine_jobs(engine_id, created_at desc);
 create index if not exists lab_engine_jobs_lease_idx on public.lab_engine_jobs(lease_expires_at) where status = 'running';
 create index if not exists lab_engine_runs_session_idx on public.lab_engine_runs(session_id, created_at desc);
+create index if not exists lab_engine_runs_experiment_idx on public.lab_engine_runs(experiment_id, created_at desc);
 create index if not exists lab_engine_runs_scene_idx on public.lab_engine_runs(scene_id, created_at desc);
 create index if not exists lab_engine_runs_engine_idx on public.lab_engine_runs(engine_id, created_at desc);
 create index if not exists lab_engine_artifacts_run_idx on public.lab_engine_artifacts(run_id, created_at);
@@ -91,5 +95,13 @@ create or replace function public.mystic_release_expired_engine_leases()
 returns integer language plpgsql security definer set search_path = public as $$ declare released integer; begin
  update public.lab_engine_jobs set status=case when cancellation_requested then 'cancelled' when attempts >= max_attempts then 'timed_out' else 'pending' end, claimed_by='', lease_expires_at=null
  where status='running' and lease_expires_at < timezone('utc',now()); get diagnostics released=row_count; return released; end $$;
-revoke all on function public.mystic_claim_next_engine_job(text,integer), public.mystic_heartbeat_engine_job(text,text,integer), public.mystic_complete_engine_job(text,text,text,text,jsonb,jsonb,jsonb,jsonb,text,text,bigint,jsonb), public.mystic_fail_engine_job(text,text,text,text), public.mystic_request_engine_job_cancellation(text), public.mystic_release_expired_engine_leases() from public;
-grant execute on function public.mystic_claim_next_engine_job(text,integer), public.mystic_heartbeat_engine_job(text,text,integer), public.mystic_complete_engine_job(text,text,text,text,jsonb,jsonb,jsonb,jsonb,text,text,bigint,jsonb), public.mystic_fail_engine_job(text,text,text,text), public.mystic_request_engine_job_cancellation(text), public.mystic_release_expired_engine_leases() to service_role;
+create or replace function public.mystic_retry_engine_job(p_job_id text)
+returns boolean language plpgsql security definer set search_path = public as $$
+begin
+  update public.lab_engine_jobs set status='pending', claimed_by='', lease_expires_at=null, heartbeat_at=null, safe_error='', completed_at=null
+   where job_id=p_job_id and status in ('failed','timed_out') and attempts < max_attempts
+     and not exists (select 1 from public.lab_engine_runs where job_id=p_job_id);
+  return found;
+end $$;
+revoke all on function public.mystic_claim_next_engine_job(text,integer), public.mystic_heartbeat_engine_job(text,text,integer), public.mystic_complete_engine_job(text,text,text,text,jsonb,jsonb,jsonb,jsonb,text,text,bigint,jsonb), public.mystic_fail_engine_job(text,text,text,text), public.mystic_request_engine_job_cancellation(text), public.mystic_release_expired_engine_leases(), public.mystic_retry_engine_job(text) from public;
+grant execute on function public.mystic_claim_next_engine_job(text,integer), public.mystic_heartbeat_engine_job(text,text,integer), public.mystic_complete_engine_job(text,text,text,text,jsonb,jsonb,jsonb,jsonb,text,text,bigint,jsonb), public.mystic_fail_engine_job(text,text,text,text), public.mystic_request_engine_job_cancellation(text), public.mystic_release_expired_engine_leases(), public.mystic_retry_engine_job(text) to service_role;

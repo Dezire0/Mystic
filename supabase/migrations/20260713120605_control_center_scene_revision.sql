@@ -99,3 +99,4 @@ $$;
 revoke all on function public.mystic_mutate_lab_scene(text, bigint, jsonb, jsonb, jsonb, jsonb) from public;
 revoke all on function public.mystic_mutate_lab_scene(text, bigint, jsonb, jsonb, jsonb, jsonb) from anon, authenticated;
 grant execute on function public.mystic_mutate_lab_scene(text, bigint, jsonb, jsonb, jsonb, jsonb) to service_role;
+;
