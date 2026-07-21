@@ -1,6 +1,8 @@
 const CONFIG_URL = "https://gist.githubusercontent.com/Dezire0/778759ccca8f7d9a54c1f98662b6a9ec/raw/mystic-origin.json";
 const DEFAULT_SCOPES = "tools:read tools:execute";
 const DEFAULT_TOKEN_TTL_SECONDS = 3600;
+const CHATGPT_MCP_PUBLIC_CLIENT_ID = "mystic-chatgpt";
+const CHATGPT_MCP_REDIRECT_URI = "https://chatgpt.com/connector/oauth/wpja_UKVNtTE";
 const MANUAL_IMPORT_VERIFICATION_PATH = "/mystic_data/e2e/remote_mcp_lab_smoke/chatgpt_import_verified.json";
 const MANUAL_IMPORT_VERIFICATION_ENV = "MYSTIC_CHATGPT_IMPORT_VERIFICATION_JSON";
 const DEFAULT_SUPABASE_SCHEMA = "public";
@@ -684,11 +686,41 @@ function allowedRedirectUris(env) {
     .filter(Boolean);
 }
 
+function predefinedPublicClients(env) {
+  const clients = [{
+    client_id: CHATGPT_MCP_PUBLIC_CLIENT_ID,
+    redirect_uris: [CHATGPT_MCP_REDIRECT_URI],
+    token_endpoint_auth_method: "none",
+    response_types: ["code"],
+    grant_types: ["authorization_code"],
+    scopes: scopesFromValue(DEFAULT_SCOPES),
+    pkce_required: true,
+  }];
+  try {
+    const configured = JSON.parse(String(env.MYSTIC_OAUTH_PREDEFINED_PUBLIC_CLIENTS || "[]"));
+    for (const client of Array.isArray(configured) ? configured : []) {
+      if (!client || typeof client !== "object" || typeof client.client_id !== "string" || !Array.isArray(client.redirect_uris)) continue;
+      const redirectUris = client.redirect_uris.filter((uri) => typeof uri === "string" && /^https:\/\//.test(uri) && !uri.includes("*"));
+      if (!redirectUris.length) continue;
+      clients.push({ client_id: client.client_id, redirect_uris: redirectUris, token_endpoint_auth_method: "none", response_types: ["code"], grant_types: ["authorization_code"], scopes: scopesFromValue(DEFAULT_SCOPES), pkce_required: true });
+    }
+  } catch {
+    // Invalid public-client metadata fails closed by ignoring only that optional value.
+  }
+  return clients;
+}
+
+function predefinedPublicClient(state, clientId) {
+  return state.predefinedPublicClients.find((client) => client.client_id === clientId) || null;
+}
+
 function oauthState(env, requestUrl) {
   const issuer = oauthIssuer(env, requestUrl);
   const enabled = oauthEnabled(env);
   const signingSecret = oauthSigningSecret(env);
-  const dynamicClientRegistrationEnabled = parseBoolean(env.MYSTIC_OAUTH_DYNAMIC_CLIENT_REGISTRATION_ENABLED);
+  // DCR was never implemented. Do not advertise or route a feature that cannot
+  // safely register clients, even if a stale compatibility variable is present.
+  const dynamicClientRegistrationEnabled = false;
   const state = {
     enabled,
     issuer,
@@ -697,9 +729,9 @@ function oauthState(env, requestUrl) {
     resourceMetadataPathUrl: `${issuer}/.well-known/oauth-protected-resource/mcp`,
     authorizationEndpoint: `${issuer}/oauth/authorize`,
     tokenEndpoint: `${issuer}/oauth/token`,
-    registrationEndpoint: dynamicClientRegistrationEnabled ? `${issuer}/oauth/register` : "",
+    registrationEndpoint: "",
     jwksUri: parseBoolean(env.MYSTIC_OAUTH_EXPOSE_JWKS) ? `${issuer}/oauth/jwks` : "",
-    allowedRedirectUris: allowedRedirectUris(env),
+    allowedRedirectUris: Array.from(new Set([...allowedRedirectUris(env), CHATGPT_MCP_REDIRECT_URI])),
     tokenTtlSeconds: accessTokenTtlSeconds(env),
     devStaticToken: String(env.MYSTIC_OAUTH_DEV_STATIC_TOKEN || "").trim(),
     devStaticTokenConfigured: Boolean(String(env.MYSTIC_OAUTH_DEV_STATIC_TOKEN || "").trim()),
@@ -707,6 +739,7 @@ function oauthState(env, requestUrl) {
     metadataAvailable: enabled && Boolean(signingSecret),
     signingSecret,
     dynamicClientRegistrationEnabled,
+    predefinedPublicClients: predefinedPublicClients(env),
   };
   return state;
 }
@@ -5916,10 +5949,7 @@ function isRedirectUriAllowed(redirectUri, state) {
   } catch {
     return false;
   }
-  if (state.allowedRedirectUris.length > 0) {
-    return state.allowedRedirectUris.includes(redirectUri);
-  }
-  return parsed.protocol === "https:" || parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+  return parsed.protocol === "https:" && !redirectUri.includes("*") && state.allowedRedirectUris.includes(redirectUri);
 }
 
 function buildProtectedResourceMetadata(state) {
@@ -6218,8 +6248,18 @@ function validateAuthorizeParams(params, state) {
   if (params.codeChallengeMethod !== "S256") {
     return "Only PKCE S256 is supported.";
   }
+  const client = predefinedPublicClient(state, params.clientId);
+  if (!client) {
+    return "Unknown OAuth client.";
+  }
+  if (!client.redirect_uris.includes(params.redirectUri)) {
+    return "Redirect URI does not match the registered OAuth client.";
+  }
   if (!isRedirectUriAllowed(params.redirectUri, state)) {
     return "Redirect URI is not allowed.";
+  }
+  if (scopesFromValue(params.scope).some((scope) => !client.scopes.includes(scope))) {
+    return "Requested OAuth scope is not allowed.";
   }
   return "";
 }
@@ -6363,6 +6403,10 @@ async function handleToken(request, state) {
   }
   if (!clientId || !redirectUri || !code || !codeVerifier) {
     return jsonResponse({ error: "invalid_request" }, 400, { "cache-control": "no-store" });
+  }
+  const client = predefinedPublicClient(state, clientId);
+  if (!client || !client.redirect_uris.includes(redirectUri) || !isRedirectUriAllowed(redirectUri, state)) {
+    return jsonResponse({ error: "invalid_client" }, 400, { "cache-control": "no-store" });
   }
   const exchanged = await exchangeAuthorizationCode({
     code,

@@ -553,6 +553,8 @@ If OAuth metadata is not implemented yet, the readiness report intentionally ret
 
 Mystic LAB can expose a public MCP-powered research lab without OAuth, but ChatGPT remote MCP import readiness requires OAuth metadata and bearer-token validation.
 
+The production ChatGPT connector uses the pre-registered public OAuth client `mystic-chatgpt` with the exact callback `https://chatgpt.com/connector/oauth/wpja_UKVNtTE`. It requires PKCE `S256` and the `tools:read tools:execute` scopes. Dynamic client registration, CIMD, OIDC userinfo, and Home Assistant integration are not advertised unless their corresponding real implementations are enabled. See [OAuth capability recovery](docs/oauth_capability_recovery.md).
+
 - `READY_PUBLIC_MCP_LAB` means external MCP clients can reach the public `/mcp` endpoint and run lab tools.
 - `import_ready_candidate=true` means the public endpoint appears to have the minimum OAuth metadata and authenticated MCP behavior needed for a manual ChatGPT Developer Mode import attempt.
 - `import_ready=true` must only be set after a real manual import verification artifact exists and validates.

@@ -31,8 +31,9 @@ from scripts.run_remote_mcp_lab_smoke import (
 
 PHASE1_REQUIRED_TOOLS = EXISTING_TOOLS | LAB_TOOLS
 
-
 DEFAULT_PUBLIC_ENDPOINT = "https://mystic.dexproject.workers.dev"
+CHATGPT_PUBLIC_CLIENT_ID = "mystic-chatgpt"
+CHATGPT_CONNECTOR_CALLBACK = "https://chatgpt.com/connector/oauth/wpja_UKVNtTE"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -215,8 +216,8 @@ def _metadata_probe(base_url: str, timeout_seconds: int) -> tuple[dict[str, Any]
     details["oauth_configured"] = True
     authorize_params = {
         "response_type": "code",
-        "client_id": "mystic-readiness-check",
-        "redirect_uri": "https://example.com/callback",
+        "client_id": CHATGPT_PUBLIC_CLIENT_ID,
+        "redirect_uri": CHATGPT_CONNECTOR_CALLBACK,
         "state": "mystic-state",
         "scope": "tools:read tools:execute",
         "code_challenge": "mystic-pkce-challenge",
