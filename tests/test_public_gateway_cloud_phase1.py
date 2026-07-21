@@ -2190,7 +2190,7 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertEqual(unauthenticated["status"], 401)
         registry_row = {
             "engine_id": "physics.simple_projectile", "display_name": "Simple projectile", "version": "2.0.0",
-            "domain": "physics", "capabilities": ["trajectory"], "manifest": {"type": "object"},
+            "domain": "physics", "capabilities": ["trajectory"], "manifest": {"type": "object", "expected_resource_class": "tiny"},
             "enabled": True, "deprecated": False, "availability": "available",
         }
         result = run_worker_helper(
@@ -2202,13 +2202,62 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "headers": self.auth_headers,
                 "fetchResponses": [
                     {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_registry", "status": 200, "body": [registry_row]},
-                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_runners", "status": 200, "body": [{"runner_id":"runner","status":"ready","last_heartbeat":"2099-01-01T00:00:00Z"}]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_runners", "status": 200, "body": [{"runner_id":"runner","status":"ready","last_heartbeat":"2099-01-01T00:00:00Z","engine_versions":[{"engine_id":"physics.simple_projectile","version":"2.0.0"}],"resource_classes":["tiny"]}]},
                 ],
             },
         )
         self.assertEqual(result["status"], 200)
         self.assertTrue(result["body"]["ok"])
         self.assertEqual(result["body"]["data"]["engines"][0]["engine_id"], "physics.simple_projectile")
+        self.assertTrue(result["body"]["data"]["engines"][0]["executable_now"])
+
+    def test_engine_availability_is_consistent_when_compatible_runner_is_stale(self) -> None:
+        registry_row = {
+            "engine_id": "physics.simple_projectile", "display_name": "Simple projectile", "version": "2.0.0",
+            "domain": "physics", "capabilities": ["trajectory"], "manifest": {"expected_resource_class": "tiny", "deterministic": True},
+            "enabled": True, "deprecated": False, "availability": "available",
+        }
+        stale_runner = {
+            "runner_id": "runner", "status": "ready", "last_heartbeat": "2000-01-01T00:00:00Z",
+            "engine_versions": [{"engine_id": "physics.simple_projectile", "version": "2.0.0"}], "resource_classes": ["tiny"],
+        }
+        fetch_responses = [
+            {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_registry", "status": 200, "body": [registry_row]},
+            {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_runners", "status": 200, "body": [stale_runner]},
+        ]
+        list_result = run_worker_helper(
+            "simulateRequest",
+            {"env": self.env, "requestUrl": "https://mystic.dexproject.workers.dev/lab/engines", "method": "GET", "headers": self.auth_headers, "fetchResponses": fetch_responses},
+        )
+        get_result = run_worker_helper(
+            "simulateRequest",
+            {"env": self.env, "requestUrl": "https://mystic.dexproject.workers.dev/lab/engines/physics.simple_projectile", "method": "GET", "headers": self.auth_headers, "fetchResponses": fetch_responses},
+        )
+        match_result = run_worker_helper(
+            "simulateRequest",
+            {"env": self.env, "requestUrl": "https://mystic.dexproject.workers.dev/lab/engines/match", "method": "POST", "headers": self.auth_headers, "body": {"domain": "physics", "required_capabilities": ["trajectory"], "deterministic_required": True}, "fetchResponses": fetch_responses},
+        )
+        run_result = run_worker_helper(
+            "simulateRequest",
+            {"env": self.env, "requestUrl": "https://mystic.dexproject.workers.dev/lab/engine-jobs", "method": "POST", "headers": self.auth_headers, "body": {"engine_id": "physics.simple_projectile", "input": {"duration_seconds": 1}}, "fetchResponses": fetch_responses},
+        )
+        listed = list_result["body"]["data"]["engines"][0]
+        fetched = get_result["body"]["data"]
+        matched = match_result["body"]["data"]["candidates"][0]
+        for payload in (listed, fetched, matched):
+            self.assertEqual(payload["availability"], "runner_offline")
+            self.assertFalse(payload["executable_now"])
+            self.assertTrue(payload["compatible_runner_registered"])
+            self.assertFalse(payload["live_runner_available"])
+            self.assertEqual(payload["blocker"], "engine_runner_offline")
+        self.assertTrue(matched["matched"])
+        self.assertEqual(run_result["status"], 503)
+        error = run_result["body"]["error"]
+        self.assertEqual(error["code"], "engine_runner_offline")
+        self.assertTrue(error["retryable"])
+        self.assertTrue(error["diagnostic_id"].startswith("engine-runner-"))
+        self.assertIn("recommended_next_action", error)
+        self.assertNotIn("runner-token", json.dumps(error))
 
     def test_engine_runner_completion_rejects_mismatched_input_hash(self) -> None:
         result = run_worker_helper(

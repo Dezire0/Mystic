@@ -3516,13 +3516,13 @@ async function sha256Hex(value) {
 }
 
 class EnginePublicError extends Error {
-  constructor(code, message, status = 400, retryable = false, fieldErrors = []) {
-    super(message); this.code = code; this.status = status; this.retryable = retryable; this.fieldErrors = fieldErrors;
+  constructor(code, message, status = 400, retryable = false, fieldErrors = [], safeDetails = {}) {
+    super(message); this.code = code; this.status = status; this.retryable = retryable; this.fieldErrors = fieldErrors; this.safeDetails = safeDetails;
   }
 }
 
 function engineErrorPayload(error) {
-  if (error instanceof EnginePublicError) return { code:error.code, message:error.message, retryable:error.retryable, field_errors:error.fieldErrors };
+  if (error instanceof EnginePublicError) return { code:error.code, message:error.message, retryable:error.retryable, field_errors:error.fieldErrors, ...error.safeDetails };
   const known = String(error?.message || "");
   if (/^(engine_|runner_)/.test(known)) return { code:known, message:"The requested engine operation could not be completed.", retryable:known === "engine_runner_offline", field_errors:[] };
   return { code:"engine_operation_failed", message:"The requested engine operation could not be completed.", retryable:false, field_errors:[] };
@@ -3563,10 +3563,70 @@ async function validateEngineLinks(env, args) {
   return bundle;
 }
 
-async function trustedRunnerAvailable(env) {
-  const rows = await supabaseSelectRows(env, "lab_engine_runners", { status:"in.(ready,busy)" }, { order:"last_heartbeat.desc", params:{limit:"1"} });
-  const heartbeat = rows[0]?.last_heartbeat ? Date.parse(rows[0].last_heartbeat) : 0;
-  return Number.isFinite(heartbeat) && Date.now() - heartbeat <= 90000;
+const RUNNER_PRESENCE_TTL_SECONDS = 90;
+
+async function loadRunnerPresence(env) {
+  return supabaseSelectRows(env, "lab_engine_runners", {}, { order:"last_heartbeat.desc", params:{limit:"50"} });
+}
+
+function engineResourceClass(engine) {
+  return trimmed(objectMapping(engine.manifest).expected_resource_class, "tiny");
+}
+
+function runnerSupportsEngine(runner, engine) {
+  const versions = Array.isArray(runner.engine_versions) ? runner.engine_versions.map(objectMapping) : [];
+  const hasEngine = versions.some((item) => trimmed(item.engine_id) === trimmed(engine.engine_id) && trimmed(item.version) === trimmed(engine.version));
+  return hasEngine && asStringArray(runner.resource_classes).includes(engineResourceClass(engine));
+}
+
+function engineRunnerPresence(engine, runnerRows) {
+  const manifestEnabled = Boolean(engine.enabled) && !Boolean(engine.deprecated);
+  const dependencyAvailable = trimmed(engine.availability, "available") !== "dependency_missing";
+  const compatible = runnerRows.filter((runner) => runnerSupportsEngine(runner, engine));
+  const latest = compatible[0] || null;
+  const heartbeatMs = latest?.last_heartbeat ? Date.parse(latest.last_heartbeat) : NaN;
+  const presenceAgeSeconds = Number.isFinite(heartbeatMs) ? Math.max(0, Math.floor((Date.now() - heartbeatMs) / 1000)) : null;
+  const liveRunnerAvailable = Boolean(latest && ["ready", "busy"].includes(trimmed(latest.status)) && presenceAgeSeconds !== null && presenceAgeSeconds <= RUNNER_PRESENCE_TTL_SECONDS);
+  const executableNow = manifestEnabled && dependencyAvailable && liveRunnerAvailable;
+  const availability = !manifestEnabled ? "engine_disabled" : !dependencyAvailable ? "dependency_missing" : liveRunnerAvailable ? "available" : "runner_offline";
+  return {
+    manifest_enabled: manifestEnabled,
+    dependency_available: dependencyAvailable,
+    compatible_runner_registered: compatible.length > 0,
+    live_runner_available: liveRunnerAvailable,
+    latest_runner_heartbeat: latest?.last_heartbeat || null,
+    runner_presence_age_seconds: presenceAgeSeconds,
+    executable_now: executableNow,
+    availability,
+    blocker: executableNow ? "" : availability === "runner_offline" ? "engine_runner_offline" : availability,
+    required_resource_class: engineResourceClass(engine),
+  };
+}
+
+function publicEngineDescriptor(engine, runnerRows) {
+  return {
+    engine_id:engine.engine_id,
+    display_name:engine.display_name,
+    version:engine.version,
+    domain:engine.domain,
+    capabilities:asStringArray(engine.capabilities),
+    manifest:objectMapping(engine.manifest),
+    enabled:Boolean(engine.enabled),
+    deprecated:Boolean(engine.deprecated),
+    ...engineRunnerPresence(engine, runnerRows),
+  };
+}
+
+function runnerOfflineDetails(presence) {
+  return {
+    diagnostic_id:cloudId("engine-runner"),
+    latest_runner_heartbeat:presence.latest_runner_heartbeat,
+    runner_presence_age_seconds:presence.runner_presence_age_seconds,
+    required_resource_class:presence.required_resource_class,
+    recommended_next_action:presence.compatible_runner_registered
+      ? "Restore the compatible trusted runner heartbeat, then retry the engine job."
+      : "Register a compatible trusted runner for this engine and resource class, then retry the engine job.",
+  };
 }
 
 async function buildPkcePair() {
@@ -4521,22 +4581,25 @@ async function callCloudTool(name, args, env, state) {
   const limit = Math.min(100, Math.max(1, Number.isInteger(args.limit) ? args.limit : 50));
   if (name === "lab_engine_list") {
     const rows = await supabaseSelectRows(env, "lab_engine_registry", { ...(trimmed(args.domain) ? { domain: `eq.${trimmed(args.domain)}` } : {}), ...(args.enabled_only !== false ? { enabled: "eq.true" } : {}) }, { order: "engine_id.asc", params: { limit: String(Math.min(50, limit)) } });
-    const runnerAvailable=await trustedRunnerAvailable(env); return { engines: rows.filter((row) => !trimmed(args.capability) || asStringArray(row.capabilities).includes(trimmed(args.capability))).map((row) => ({ engine_id:row.engine_id, display_name:row.display_name, version:row.version, domain:row.domain, capabilities:asStringArray(row.capabilities), manifest:objectMapping(row.manifest), enabled:Boolean(row.enabled), deprecated:Boolean(row.deprecated), availability:runnerAvailable ? trimmed(row.availability,"available") : "runner_offline" })), next_cursor:"" };
+    const runnerRows = await loadRunnerPresence(env);
+    return { engines: rows.filter((row) => !trimmed(args.capability) || asStringArray(row.capabilities).includes(trimmed(args.capability))).map((row) => publicEngineDescriptor(row, runnerRows)), next_cursor:"" };
   }
   if (name === "lab_engine_get") {
     const row = await supabaseSelectOne(env, "lab_engine_registry", { engine_id:`eq.${trimmed(args.engine_id)}` });
     if (!row) throw new Error("engine_not_found");
-    return { engine_id:row.engine_id, display_name:row.display_name, version:row.version, domain:row.domain, capabilities:asStringArray(row.capabilities), manifest:objectMapping(row.manifest), enabled:Boolean(row.enabled), deprecated:Boolean(row.deprecated), availability:trimmed(row.availability,"available") };
+    return publicEngineDescriptor(row, await loadRunnerPresence(env));
   }
   if (name === "lab_engine_match") {
     const required = asStringArray(args.required_capabilities); const rows = await supabaseSelectRows(env, "lab_engine_registry", { ...(trimmed(args.domain) ? { domain:`eq.${trimmed(args.domain)}` } : {}), enabled:"eq.true", deprecated:"eq.false", availability:"eq.available" }, { order:"engine_id.asc" });
-    return { candidates:rows.filter((row) => required.every((capability) => asStringArray(row.capabilities).includes(capability))).map((row) => ({ engine_id:row.engine_id, version:row.version, score:100 + required.length, reasons:["enabled", "available", ...(required.length ? ["required_capabilities_match"] : []), ...(objectMapping(row.manifest).deterministic === true && args.deterministic_required ? ["deterministic"] : [])] })), next_action:"Select an engine explicitly, state assumptions and units, then call lab_engine_run." };
+    const runnerRows = await loadRunnerPresence(env);
+    return { candidates:rows.filter((row) => required.every((capability) => asStringArray(row.capabilities).includes(capability))).map((row) => { const presence=engineRunnerPresence(row, runnerRows); return { engine_id:row.engine_id, version:row.version, matched:true, score:100 + required.length, reasons:["enabled", ...(presence.executable_now ? ["live_runner_available"] : [presence.blocker]), ...(required.length ? ["required_capabilities_match"] : []), ...(objectMapping(row.manifest).deterministic === true && args.deterministic_required ? ["deterministic"] : [])], ...presence }; }), next_action:"Select an engine explicitly, state assumptions and units, then call lab_engine_run." };
   }
   if (name === "lab_engine_run") {
     const engine = await supabaseSelectOne(env, "lab_engine_registry", { engine_id:`eq.${trimmed(args.engine_id)}` });
     if (!engine) throw new EnginePublicError("engine_not_found", "The selected engine was not found.", 404);
     if (!engine.enabled || engine.deprecated) throw new EnginePublicError("engine_disabled", "The selected engine is not available.", 409);
-    if (trimmed(engine.availability,"available") !== "available" || !await trustedRunnerAvailable(env)) throw new EnginePublicError("engine_runner_offline", "No trusted runner is currently available.", 503, true);
+    const presence = engineRunnerPresence(engine, await loadRunnerPresence(env));
+    if (!presence.executable_now) throw new EnginePublicError("engine_runner_offline", "No compatible trusted runner is currently available.", 503, true, [], runnerOfflineDetails(presence));
     const normalizedInput = boundedEngineInput(engine.engine_id, objectMapping(args.input));
     await validateEngineLinks(env, args);
     const jobId = cloudId("engine-job"); const inputHash = await sha256Hex(canonicalEngineJson(normalizedInput));
@@ -7005,7 +7068,7 @@ async function validateRunnerCompletion(env, runnerId, jobId, result) {
 async function handleEngineRunnerRoute(request, env, pathname) {
   if (!runnerAuthorized(request, env)) return jsonResponse({ error:"runner_unauthorized", message:"Runner authentication was not accepted." },401,{"cache-control":"no-store"});
   const action = pathname.slice("/internal/engine-runner/".length);
-  if (request.method === "GET" && action === "status") { const rows=await supabaseSelectRows(env,"lab_engine_runners",{}, {order:"last_heartbeat.desc",params:{limit:"20"}}); return jsonResponse({ status:"ready", runner_token_configured:true, runners:rows.map((row)=>({runner_id:row.runner_id,status:row.status,current_job_id:row.current_job_id,last_heartbeat:row.last_heartbeat,completed_count:row.completed_count,failed_count:row.failed_count}))},200,{"cache-control":"no-store"}); }
+  if (request.method === "GET" && action === "status") { const rows=await loadRunnerPresence(env); return jsonResponse({ status:"ready", runner_token_configured:true, heartbeat_ttl_seconds:RUNNER_PRESENCE_TTL_SECONDS, runners:rows.map((row)=>({runner_id:row.runner_id,runner_version:row.runner_version,status:row.status,current_job_id:row.current_job_id,last_heartbeat:row.last_heartbeat,engine_versions:Array.isArray(row.engine_versions)?row.engine_versions:[],resource_classes:asStringArray(row.resource_classes),completed_count:row.completed_count,failed_count:row.failed_count}))},200,{"cache-control":"no-store"}); }
   if (request.method !== "POST") return new Response("Method Not Allowed",{status:405,headers:{allow:"POST"}});
   const body = await runnerBody(request); if (!body) return jsonResponse({error:"engine_input_invalid",message:"A JSON object is required."},400);
   if (action === "registry-sync") {
