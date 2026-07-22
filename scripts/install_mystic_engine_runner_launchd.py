@@ -19,11 +19,22 @@ PLIST = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
 LOG_DIR = Path.home() / "Library" / "Logs" / "Mystic"
 
 
-def service_definition() -> dict[str, object]:
+def persistent_repository_root(value: str | Path | None = None) -> Path:
+    root = Path(value or ROOT).expanduser().resolve()
+    temporary_roots = (Path("/tmp"), Path("/private/tmp"))
+    if any(root == temporary or temporary in root.parents for temporary in temporary_roots):
+        raise ValueError("The engine runner must be installed from a persistent repository checkout, not /tmp.")
+    if not (root / "scripts" / "mystic_engine_runner.py").is_file():
+        raise ValueError("The repository root does not contain scripts/mystic_engine_runner.py.")
+    return root
+
+
+def service_definition(root: Path, python_executable: str | None = None) -> dict[str, object]:
+    executable = python_executable or sys.executable
     return {
         "Label": LABEL,
-        "ProgramArguments": [sys.executable, str(ROOT / "scripts" / "mystic_engine_runner.py"), "--start"],
-        "WorkingDirectory": str(ROOT),
+        "ProgramArguments": [executable, str(root / "scripts" / "mystic_engine_runner.py"), "--start"],
+        "WorkingDirectory": str(root),
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
         "ProcessType": "Background",
@@ -42,12 +53,12 @@ def run(*args: str) -> None:
     subprocess.run(args, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def install() -> None:
+def install(root: Path) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.chmod(0o700)
     PLIST.parent.mkdir(parents=True, exist_ok=True)
     with PLIST.open("wb") as handle:
-        plistlib.dump(service_definition(), handle, sort_keys=True)
+        plistlib.dump(service_definition(root), handle, sort_keys=True)
     PLIST.chmod(0o600)
     # bootout is intentionally best-effort for upgrades of an existing service.
     domain = f"gui/{os.getuid()}"
@@ -67,9 +78,14 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--install", action="store_true")
     mode.add_argument("--uninstall", action="store_true")
+    parser.add_argument(
+        "--repo-root",
+        default=str(ROOT),
+        help="Persistent Mystic checkout used by launchd; temporary checkouts are rejected.",
+    )
     args = parser.parse_args()
     if args.install:
-        install()
+        install(persistent_repository_root(args.repo_root))
         print('{"status":"installed","label":"com.mystic.engine-runner"}')
     else:
         uninstall()

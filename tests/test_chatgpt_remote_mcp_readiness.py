@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 from mystic.mcp.import_verification import REQUIRED_TOOLS
 from scripts import check_chatgpt_remote_mcp_readiness as readiness
@@ -73,6 +74,7 @@ class ChatGPTRemoteMCPReadinessTests(unittest.TestCase):
     def test_readiness_reports_candidate_when_oauth_and_token_path_work(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = readiness.Path(temp_dir) / "readiness.json"
+            authorize_requests: list[str] = []
 
             def fake_http_json_request(url: str, *, payload=None, method="POST", timeout_seconds=30, headers=None):  # type: ignore[no-untyped-def]
                 if url.endswith("/health"):
@@ -96,6 +98,7 @@ class ChatGPTRemoteMCPReadinessTests(unittest.TestCase):
                         },
                     }
                 if "/oauth/authorize?" in url:
+                    authorize_requests.append(url)
                     return {"status": 200, "headers": {}, "body": {"ok": True}}
                 if url.endswith("/oauth/token"):
                     return {"status": 400, "headers": {}, "body": {"error": "invalid_request"}}
@@ -146,6 +149,13 @@ class ChatGPTRemoteMCPReadinessTests(unittest.TestCase):
             self.assertFalse(report["manual_import_verified"])
             self.assertIn("MANUAL_IMPORT_NOT_VERIFIED", report["blockers"])
             self.assertNotIn("redacted-token", output_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(authorize_requests), 1)
+            params = parse_qs(urlparse(authorize_requests[0]).query)
+            self.assertEqual(params["client_id"], ["mystic-chatgpt"])
+            self.assertEqual(
+                params["redirect_uri"],
+                ["https://chatgpt.com/connector/oauth/wpja_UKVNtTE"],
+            )
 
     def test_readiness_can_require_dynamic_client_registration(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

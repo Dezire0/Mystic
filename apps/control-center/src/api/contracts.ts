@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { sceneDocumentSchema } from "../engine/scene-schema";
+export { engineArtifactSchema, engineJobSchema, engineManifestSchema, engineRunSchema, visualizationDescriptorSchema } from "../engine-results/descriptor-schema";
 
 export const safeErrorSchema = z.object({ code: z.string(), message: z.string(), diagnosticId: z.string().optional() });
 export const providerSchema = z.object({
