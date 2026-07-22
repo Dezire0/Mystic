@@ -94,6 +94,20 @@ Failure Museum entries can also be exported into Raven-compatible critique rows.
 
 The current Raven vNext status may still remain blocked by Kaggle GPU quota. Exporting and preparing lab failures does not change that status on its own.
 
+## Generating Lab Failure Smoke Data
+
+The Lab Failure -> Raven pipeline is most useful when there are actual reusable Failure Museum entries to export. A deterministic smoke workflow can generate safe computational lab failures locally so the export path produces nonzero rows before the next Raven package prepare.
+
+These generated `mystic_data` artifacts are runtime data and should not be committed. This workflow does not train a model, does not run Kaggle, and does not change the current Raven vNext quota-blocked state.
+
+Generate deterministic reusable lab failures and verify export:
+
+```bash
+python scripts/generate_lab_failure_smoke_sessions.py \
+  --root-path /Users/JYH/Documents/Mystic \
+  --verify-export
+```
+
 Export reusable lab failures:
 
 ```bash
