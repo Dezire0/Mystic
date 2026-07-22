@@ -12,6 +12,10 @@ import requests
 from mystic.lab.engines import builtin_registry
 from mystic.lab.engines.runtime import EngineJob, EngineRuntime
 
+HEARTBEAT_INTERVAL_SECONDS = 20
+LEASE_SECONDS = 60
+IDLE_POLL_SECONDS = 5
+
 
 def runner_token() -> str:
     configured = os.environ.get("MYSTIC_ENGINE_RUNNER_TOKEN", "").strip()
@@ -19,12 +23,15 @@ def runner_token() -> str:
         return configured
     service = os.environ.get("MYSTIC_ENGINE_KEYCHAIN_SERVICE", "mystic-engine-runner-token")
     account = os.environ.get("MYSTIC_ENGINE_KEYCHAIN_ACCOUNT", "mystic-engine-runner")
-    result = subprocess.run(
-        ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
-        check=True,
-        text=True,
-        capture_output=True,
-    )
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError("runner_keychain_lookup_failed") from error
     token = result.stdout.strip()
     if not token:
         raise RuntimeError("runner token is not available in Keychain")
@@ -32,26 +39,54 @@ def runner_token() -> str:
 
 
 def production_request(action: str, payload: dict[str, object] | None = None) -> dict[str, object]:
-    endpoint=os.environ["MYSTIC_ENGINE_ENDPOINT"].rstrip("/")
-    token=runner_token()
-    response=requests.post(f"{endpoint}/internal/engine-runner/{action}",headers={"authorization":f"Bearer {token}","content-type":"application/json","user-agent":"MysticEngineRunner/phase2a"},json=payload or {},timeout=30)
-    if response.status_code != 200: raise RuntimeError("runner backend rejected the safe request")
+    endpoint = os.environ["MYSTIC_ENGINE_ENDPOINT"].rstrip("/")
+    token = runner_token()
+    try:
+        response = requests.post(
+            f"{endpoint}/internal/engine-runner/{action}",
+            headers={"authorization": f"Bearer {token}", "content-type": "application/json", "user-agent": "MysticEngineRunner/phase2a"},
+            json=payload or {},
+            timeout=30,
+        )
+    except requests.RequestException as error:
+        raise RuntimeError("runner_network_failure") from error
+    if response.status_code != 200:
+        raise RuntimeError(f"runner_backend_http_{response.status_code}")
     data=response.json()
     return data if isinstance(data,dict) else {}
 
 
+def production_status() -> dict[str, object]:
+    endpoint = os.environ["MYSTIC_ENGINE_ENDPOINT"].rstrip("/")
+    token = runner_token()
+    try:
+        response = requests.get(
+            f"{endpoint}/internal/engine-runner/status",
+            headers={"authorization": f"Bearer {token}", "user-agent": "MysticEngineRunner/phase2a"},
+            timeout=30,
+        )
+    except requests.RequestException as error:
+        raise RuntimeError("runner_network_failure") from error
+    if response.status_code != 200:
+        raise RuntimeError(f"runner_backend_http_{response.status_code}")
+    data = response.json()
+    if not isinstance(data, dict):
+        raise RuntimeError("runner_backend_invalid_response")
+    return data
+
+
 def production_once(registry) -> dict[str, object]:
     runner_id=os.environ.get("MYSTIC_ENGINE_RUNNER_ID","mystic-mac-runner")
-    production_request("register",{"runner_id":runner_id,"supported_resource_classes":["tiny","small"],"engines":[{"engine_id":item.engine_id,"version":item.version} for item in registry.list()]})
-    claimed=production_request("claim",{"runner_id":runner_id,"lease_seconds":60}).get("job")
+    production_request("register",{"runner_id":runner_id,"runner_version":os.environ.get("MYSTIC_ENGINE_RUNNER_VERSION","phase2a"),"supported_resource_classes":["tiny","small"],"engines":[{"engine_id":item.engine_id,"version":item.version} for item in registry.list()]})
+    claimed=production_request("claim",{"runner_id":runner_id,"lease_seconds":LEASE_SECONDS}).get("job")
     if not isinstance(claimed,dict): return {"status":"idle"}
     job=EngineJob(job_id=str(claimed["job_id"]),engine_id=str(claimed["engine_id"]),input_payload=dict(claimed.get("normalized_input") or {}),session_id=str(claimed.get("session_id") or ""),experiment_id=str(claimed.get("experiment_id") or ""),scene_id=str(claimed.get("scene_id") or ""))
     stop_heartbeat = threading.Event()
     def heartbeat() -> None:
-        while not stop_heartbeat.wait(20):
+        while not stop_heartbeat.wait(HEARTBEAT_INTERVAL_SECONDS):
             try:
-                production_request("heartbeat", {"runner_id": runner_id, "job_id": job.job_id, "lease_seconds": 60})
-            except requests.RequestException:
+                production_request("heartbeat", {"runner_id": runner_id, "job_id": job.job_id, "lease_seconds": LEASE_SECONDS})
+            except RuntimeError:
                 # The worker will expire/release the lease if connectivity remains down.
                 pass
     heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
@@ -76,9 +111,12 @@ def production_start(registry) -> int:
         try:
             result = production_once(registry)
             delay = 2 if result.get("status") != "idle" else 5
-        except (KeyError, RuntimeError, requests.RequestException, ValueError):
+            sleep_seconds = IDLE_POLL_SECONDS if result.get("status") == "idle" else delay
+        except (KeyError, RuntimeError, ValueError) as error:
+            print(json.dumps({"status": "runner_retry", "error_category": str(error)}), flush=True)
             delay = min(delay * 2, 60)
-        time.sleep(delay)
+            sleep_seconds = delay
+        time.sleep(sleep_seconds)
 
 
 def main() -> int:
@@ -89,9 +127,14 @@ def main() -> int:
     if args.self_test:
         from scripts.check_engine_runtime import main as verify
         return verify()
-    if args.status: print(json.dumps({"status":"local_runner_ready","engine_count":len(registry.list()),"production_note":"Supabase claim/heartbeat requires a server-side runner deployment and secret."})); return 0
+    if args.status:
+        if os.environ.get("MYSTIC_ENGINE_ENDPOINT"):
+            status = production_status()
+            print(json.dumps({"status": status.get("status", "unknown"), "runner_count": len(status.get("runners", [])), "runner_token_configured": bool(status.get("runner_token_configured"))}, sort_keys=True))
+            return 0
+        print(json.dumps({"status":"local_runner_ready","engine_count":len(registry.list()),"production_note":"Supabase claim/heartbeat requires a server-side runner deployment and secret."})); return 0
     if args.once:
-        if os.environ.get("MYSTIC_ENGINE_ENDPOINT") and os.environ.get("MYSTIC_ENGINE_RUNNER_TOKEN"):
+        if os.environ.get("MYSTIC_ENGINE_ENDPOINT"):
             print(json.dumps(production_once(registry))); return 0
         print(json.dumps({"status":"idle","result":EngineRuntime(registry).execute_next()})); return 0
     if args.start:

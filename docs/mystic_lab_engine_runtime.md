@@ -24,8 +24,15 @@ The runner key remains only in macOS Keychain under service
 user-scoped persistent service with:
 
 ```bash
-uv run python scripts/install_mystic_engine_runner_launchd.py --install
+uv run python scripts/install_mystic_engine_runner_launchd.py --install --repo-root /persistent/path/to/Mystic
 ```
+
+The installer rejects `/tmp` and `/private/tmp` checkouts. Validate the plist
+with `plutil -lint ~/Library/LaunchAgents/com.mystic.engine-runner.plist` and
+confirm its program and working-directory paths point to the persistent
+checkout before bootstrapping the service. The runner refreshes its presence at
+most every five seconds while idle, sends a 20-second heartbeat for active
+jobs, and Worker presence expires after 90 seconds.
 
 It starts `scripts/mystic_engine_runner.py --start`, registers its supported
 engines, refreshes runner presence, claims jobs, and sends heartbeats while a
