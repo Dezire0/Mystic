@@ -1,0 +1,36 @@
+# Production operators supply the external Docker secret and outbound egress
+# policy. The runner exposes no inbound ports and only needs the Worker origin.
+services:
+  mystic-linux-cpu-runner:
+    build:
+      context: ../..
+      dockerfile: runners/linux/Dockerfile
+    image: mystic-linux-cpu-runner:phase2b.1
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+    cap_drop: ["ALL"]
+    network_mode: none
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 1024m
+    cpus: 1.0
+    restart: unless-stopped
+    environment:
+      # Offline by default. Operators enable reviewed Worker-only egress with
+      # a deployment-specific override before starting the claim loop.
+      MYSTIC_ENGINE_ENDPOINT: https://mystic.dexproject.workers.dev
+      MYSTIC_ENGINE_RUNNER_ID: mystic-linux-cpu-runner
+      MYSTIC_ENGINE_RUNNER_VERSION: phase2b.1
+      MYSTIC_ENGINE_RUNNER_TOKEN_FILE: /run/secrets/mystic_engine_runner_token
+      MYSTIC_ENGINE_RUNNER_MEMORY_LIMIT_MB: "1024"
+      MYSTIC_ENGINE_RUNNER_REGION: ""
+      MYSTIC_ENGINE_RUNNER_PRIORITY: "0"
+    secrets:
+      - mystic_engine_runner_token
+
+secrets:
+  mystic_engine_runner_token:
+    external: true

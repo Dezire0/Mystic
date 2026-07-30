@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { providerListSchema, safeErrorSchema, sceneEnvelopeSchema, type Provider } from "./contracts";
+import { providerListSchema, runnerFleetSchema, runnerSchema, safeErrorSchema, sceneEnvelopeSchema, type Provider } from "./contracts";
 import type { SceneDocument } from "../engine/scene-types";
 import { engineArtifactSchema, engineJobSchema, engineManifestSchema, engineRunSchema, type EngineArtifact, type EngineJob, type EngineManifest, type EngineRun } from "../engine-results/descriptor-schema";
 
@@ -46,5 +46,11 @@ export const api = {
   attachEngineRun: (runId: string, body: Record<string, unknown>) => request(`/api/engine-runs/${encodeURIComponent(runId)}/attach`, z.record(z.string(), z.unknown()), { method: "POST", body: JSON.stringify(body) }),
   refereeEngineRun: (runId: string) => request(`/api/engine-runs/${encodeURIComponent(runId)}/referee-review`, z.record(z.string(), z.unknown()), { method: "POST", body: "{}" }),
   reportEngineRun: (runId: string) => request(`/api/engine-runs/${encodeURIComponent(runId)}/report`, z.record(z.string(), z.unknown()), { method: "POST", body: "{}" }),
+  runners: () => request("/api/runners", runnerFleetSchema),
+  runner: (runnerId: string) => request(`/api/runners/${encodeURIComponent(runnerId)}`, z.object({ runner: runnerSchema })).then((data) => data.runner),
+  runnerJobs: (runnerId: string) => request(`/api/runners/${encodeURIComponent(runnerId)}/jobs`, z.object({ runner_id: z.string(), jobs: z.array(z.record(z.string(), z.unknown())) })),
+  runnerAttempts: (runnerId: string) => request(`/api/runners/${encodeURIComponent(runnerId)}/attempts`, z.object({ runner_id: z.string(), attempts: z.array(z.record(z.string(), z.unknown())) })),
+  runnerAuditEvents: (runnerId: string) => request(`/api/runners/${encodeURIComponent(runnerId)}/audit-events`, z.object({ runner_id: z.string(), events: z.array(z.record(z.string(), z.unknown())) })),
+  runnerAction: (runnerId: string, action: "drain" | "resume" | "maintenance" | "restore" | "quarantine", safeReason?: string) => request(`/api/runners/${encodeURIComponent(runnerId)}/actions`, z.object({ runner: runnerSchema }), { method: "POST", body: JSON.stringify({ action, safe_reason: safeReason }) }),
 };
 export type { EngineArtifact, EngineJob, EngineManifest, EngineRun };

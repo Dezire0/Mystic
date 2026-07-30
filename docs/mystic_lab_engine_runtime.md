@@ -17,7 +17,7 @@ Result attachments only use run references. A scene attachment requires the
 current `expected_scene_revision`; stale revisions return a safe `409`
 `scene_revision_conflict`. Repeating a successful attachment is idempotent.
 
-## Runner operation
+## Runner operation and Phase 2B.1 fleet
 
 The runner key remains only in macOS Keychain under service
 `mystic-engine-runner-token` and account `mystic-engine-runner`. Install the
@@ -38,6 +38,24 @@ It starts `scripts/mystic_engine_runner.py --start`, registers its supported
 engines, refreshes runner presence, claims jobs, and sends heartbeats while a
 job is running. Remove it with `--uninstall`. Internal runner endpoints require
 the separate runner bearer token and are not public API.
+
+Issue #112 adds protocol version `2b.1`, safe capacity metadata, draining,
+lease renewal, release, immutable attempt/audit records, and a deterministic
+candidate order of priority, retry affinity, region preference, load, then
+runner ID. `MYSTIC_RUNNER_FLEET_MODE` controls rollout: `legacy_single_runner`
+retains the Phase 2A selector, `fleet_shadow` is the default and computes fleet
+eligibility without replacing the legacy claim RPC, and `fleet_active` uses the
+fleet RPCs only after its additive schema and per-runner credential verifiers
+are present.
+
+The legacy `MYSTIC_ENGINE_RUNNER_TOKEN` is a compatibility credential only for
+non-active modes. In active mode every runner is bound to a non-revoked
+SHA-256 verifier and the raw credential is never persisted or returned.
+`MYSTIC_FLEET_ADMIN_TOKEN` is a separate Worker-only Control Center BFF
+credential for fleet administration; it is never sent to the browser or
+accepted for MCP or runner execution. Control Center `/runners` exposes only
+safe runner data and requires an authenticated same-origin session and explicit
+confirmation for drain, resume, maintenance, restore, and quarantine actions.
 
 Run `uv run python scripts/check_engine_runtime.py` for local engine smoke
 checks and `scripts/run_remote_mcp_lab_smoke.py` for authenticated public MCP

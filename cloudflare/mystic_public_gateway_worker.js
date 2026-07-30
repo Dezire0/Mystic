@@ -3564,6 +3564,61 @@ async function validateEngineLinks(env, args) {
 }
 
 const RUNNER_PRESENCE_TTL_SECONDS = 90;
+const RUNNER_FLEET_MODES = new Set(["legacy_single_runner", "fleet_shadow", "fleet_active"]);
+const RUNNER_FLEET_PROTOCOL_VERSION = "2b.1";
+
+function runnerFleetMode(env) {
+  const configured = trimmed(env.MYSTIC_RUNNER_FLEET_MODE, "fleet_shadow").toLowerCase();
+  return RUNNER_FLEET_MODES.has(configured) ? configured : "fleet_shadow";
+}
+
+function runnerFleetState(runner) {
+  const explicit = trimmed(runner.fleet_state).toLowerCase();
+  if (["registering", "online", "busy", "draining", "maintenance", "stale", "offline", "quarantined"].includes(explicit)) return explicit;
+  return ({ ready:"online", busy:"busy", offline:"offline", error:"registering" })[trimmed(runner.status).toLowerCase()] || "registering";
+}
+
+function runnerReportedFleetState(runner) {
+  const state = runnerFleetState(runner);
+  return ["online", "busy"].includes(state) && !runnerIsFresh(runner) ? "stale" : state;
+}
+
+function runnerHeartbeatAt(runner) {
+  return runner.latest_heartbeat || runner.last_heartbeat || null;
+}
+
+function runnerHeartbeatAgeSeconds(runner) {
+  const timestamp = runnerHeartbeatAt(runner);
+  const milliseconds = timestamp ? Date.parse(timestamp) : NaN;
+  return Number.isFinite(milliseconds) ? Math.max(0, Math.floor((Date.now() - milliseconds) / 1000)) : null;
+}
+
+function runnerIsFresh(runner) {
+  const age = runnerHeartbeatAgeSeconds(runner);
+  return age !== null && age <= RUNNER_PRESENCE_TTL_SECONDS;
+}
+
+function runnerCapacity(runner) {
+  return Math.max(1, Math.min(32, Number.isInteger(runner.max_concurrent_jobs) ? runner.max_concurrent_jobs : 1));
+}
+
+function runnerActiveJobs(runner) {
+  return Math.max(0, Number.isInteger(runner.active_jobs) ? runner.active_jobs : trimmed(runner.current_job_id) ? 1 : 0);
+}
+
+function safeRunnerRecord(runner) {
+  return {
+    runner_id:trimmed(runner.runner_id), runner_version:trimmed(runner.runner_version), runtime_version:trimmed(runner.runtime_version),
+    display_name:trimmed(runner.display_name), operating_system:trimmed(runner.operating_system), architecture:trimmed(runner.architecture), fleet_state:runnerReportedFleetState(runner),
+    supported_engines:Array.isArray(runner.supported_engines) && runner.supported_engines.length ? runner.supported_engines.map(objectMapping).map((item) => ({engine_id:trimmed(item.engine_id),version:trimmed(item.version)})) : (Array.isArray(runner.engine_versions) ? runner.engine_versions.map(objectMapping).map((item) => ({engine_id:trimmed(item.engine_id),version:trimmed(item.version)})) : []),
+    resource_classes:asStringArray(runner.resource_classes), max_concurrent_jobs:runnerCapacity(runner), active_jobs:runnerActiveJobs(runner),
+    available_slots:Math.max(0, runnerCapacity(runner) - runnerActiveJobs(runner)), cpu_count:Math.max(0, Number(runner.cpu_count) || 0), memory_limit_mb:Math.max(0, Number(runner.memory_limit_mb) || 0),
+    gpu_type:trimmed(runner.gpu_type), region:trimmed(runner.region), priority:Number(runner.priority) || 0,
+    latest_heartbeat:runnerHeartbeatAt(runner), heartbeat_age_seconds:runnerHeartbeatAgeSeconds(runner), maintenance_state:Boolean(runner.maintenance_state),
+    quarantined:Boolean(runner.quarantined_at), failure_count:Math.max(0, Number(runner.failure_count ?? runner.failed_count) || 0),
+    completed_count:Math.max(0, Number(runner.completed_count) || 0), safe_last_error:trimmed(runner.safe_last_error),
+  };
+}
 
 async function loadRunnerPresence(env) {
   return supabaseSelectRows(env, "lab_engine_runners", {}, { order:"last_heartbeat.desc", params:{limit:"50"} });
@@ -3574,9 +3629,28 @@ function engineResourceClass(engine) {
 }
 
 function runnerSupportsEngine(runner, engine) {
-  const versions = Array.isArray(runner.engine_versions) ? runner.engine_versions.map(objectMapping) : [];
+  const versions = Array.isArray(runner.supported_engines) && runner.supported_engines.length ? runner.supported_engines.map(objectMapping) : (Array.isArray(runner.engine_versions) ? runner.engine_versions.map(objectMapping) : []);
   const hasEngine = versions.some((item) => trimmed(item.engine_id) === trimmed(engine.engine_id) && trimmed(item.version) === trimmed(engine.version));
   return hasEngine && asStringArray(runner.resource_classes).includes(engineResourceClass(engine));
+}
+
+function runnerEligibleForEngine(runner, engine) {
+  const state = runnerFleetState(runner);
+  return runnerSupportsEngine(runner, engine) && ["online", "busy"].includes(state) && !Boolean(runner.maintenance_state) && !Boolean(runner.quarantined_at) && runnerIsFresh(runner) && runnerActiveJobs(runner) < runnerCapacity(runner);
+}
+
+function fleetCandidates(engine, runnerRows, options = {}) {
+  const affinity = trimmed(options.retry_affinity_runner_id);
+  const requestedRegion = trimmed(options.region);
+  return runnerRows.filter((runner) => runnerEligibleForEngine(runner, engine)).sort((left, right) => {
+    const priority = (Number(right.priority) || 0) - (Number(left.priority) || 0); if (priority) return priority;
+    const leftAffinity = affinity && trimmed(left.runner_id) === affinity ? 1 : 0, rightAffinity = affinity && trimmed(right.runner_id) === affinity ? 1 : 0;
+    if (leftAffinity !== rightAffinity) return rightAffinity - leftAffinity;
+    const leftRegion = requestedRegion && trimmed(left.region) === requestedRegion ? 1 : 0, rightRegion = requestedRegion && trimmed(right.region) === requestedRegion ? 1 : 0;
+    if (leftRegion !== rightRegion) return rightRegion - leftRegion;
+    const load = runnerActiveJobs(left) / runnerCapacity(left) - runnerActiveJobs(right) / runnerCapacity(right); if (load) return load;
+    return trimmed(left.runner_id).localeCompare(trimmed(right.runner_id));
+  });
 }
 
 function engineRunnerPresence(engine, runnerRows) {
@@ -3584,22 +3658,29 @@ function engineRunnerPresence(engine, runnerRows) {
   const dependencyAvailable = trimmed(engine.availability, "available") !== "dependency_missing";
   const compatible = runnerRows.filter((runner) => runnerSupportsEngine(runner, engine));
   const latest = compatible[0] || null;
-  const heartbeatMs = latest?.last_heartbeat ? Date.parse(latest.last_heartbeat) : NaN;
-  const presenceAgeSeconds = Number.isFinite(heartbeatMs) ? Math.max(0, Math.floor((Date.now() - heartbeatMs) / 1000)) : null;
-  const liveRunnerAvailable = Boolean(latest && ["ready", "busy"].includes(trimmed(latest.status)) && presenceAgeSeconds !== null && presenceAgeSeconds <= RUNNER_PRESENCE_TTL_SECONDS);
+  const presenceAgeSeconds = latest ? runnerHeartbeatAgeSeconds(latest) : null;
+  const eligible = fleetCandidates(engine, runnerRows);
+  const live = compatible.filter((runner) => ["online", "busy"].includes(runnerFleetState(runner)) && runnerIsFresh(runner) && !Boolean(runner.maintenance_state) && !Boolean(runner.quarantined_at));
+  const liveRunnerAvailable = eligible.length > 0;
   const executableNow = manifestEnabled && dependencyAvailable && liveRunnerAvailable;
   const availability = !manifestEnabled ? "engine_disabled" : !dependencyAvailable ? "dependency_missing" : liveRunnerAvailable ? "available" : "runner_offline";
   return {
     manifest_enabled: manifestEnabled,
     dependency_available: dependencyAvailable,
     compatible_runner_registered: compatible.length > 0,
+    compatible_runner_count: compatible.length,
     live_runner_available: liveRunnerAvailable,
+    live_runner_count: live.length,
+    available_slot_count: eligible.reduce((total, runner) => total + Math.max(0, runnerCapacity(runner) - runnerActiveJobs(runner)), 0),
     latest_runner_heartbeat: latest?.last_heartbeat || null,
+    latest_compatible_heartbeat: latest ? runnerHeartbeatAt(latest) : null,
     runner_presence_age_seconds: presenceAgeSeconds,
     executable_now: executableNow,
     availability,
     blocker: executableNow ? "" : availability === "runner_offline" ? "engine_runner_offline" : availability,
     required_resource_class: engineResourceClass(engine),
+    eligible_runner_count: eligible.length,
+    scheduler_mode: "fleet_shadow",
   };
 }
 
@@ -4603,8 +4684,9 @@ async function callCloudTool(name, args, env, state) {
     const normalizedInput = boundedEngineInput(engine.engine_id, objectMapping(args.input));
     await validateEngineLinks(env, args);
     const jobId = cloudId("engine-job"); const inputHash = await sha256Hex(canonicalEngineJson(normalizedInput));
-    await supabaseInsertRows(env, "lab_engine_jobs", [{ job_id:jobId, session_id:trimmed(args.session_id), experiment_id:trimmed(args.experiment_id), scene_id:trimmed(args.scene_id), engine_id:engine.engine_id, requested_by:"mcp", input_payload:normalizedInput, normalized_input:normalizedInput, status:"pending", metadata_safe:{ requested_visualization:Boolean(args.requested_visualization), input_hash:inputHash } }]);
-    return { job_id:jobId, status:"pending", engine_id:engine.engine_id, engine_version:engine.version, input_hash:inputHash, resource_class:objectMapping(engine.manifest).expected_resource_class || "tiny", polling_interval_seconds:2, next_action:"Call lab_engine_job_wait or lab_engine_job_get." };
+    const fleetActive=runnerFleetMode(env) === "fleet_active", maximumAttempts=fleetActive ? 3 : 1;
+    await supabaseInsertRows(env, "lab_engine_jobs", [{ job_id:jobId, session_id:trimmed(args.session_id), experiment_id:trimmed(args.experiment_id), scene_id:trimmed(args.scene_id), engine_id:engine.engine_id, requested_by:"mcp", input_payload:normalizedInput, normalized_input:normalizedInput, status:"pending", max_attempts:maximumAttempts, maximum_attempts:maximumAttempts, fleet_state:"queued", metadata_safe:{ requested_visualization:Boolean(args.requested_visualization), input_hash:inputHash } }]);
+    return { job_id:jobId, status:"pending", engine_id:engine.engine_id, engine_version:engine.version, input_hash:inputHash, resource_class:objectMapping(engine.manifest).expected_resource_class || "tiny", maximum_attempts:maximumAttempts, polling_interval_seconds:2, next_action:"Call lab_engine_job_wait or lab_engine_job_get." };
   }
   if (name === "lab_engine_job_list") {
     const rows=await supabaseSelectRows(env,"lab_engine_jobs",{...(trimmed(args.session_id)?{session_id:`eq.${trimmed(args.session_id)}`} : {}),...(trimmed(args.status)?{status:`eq.${trimmed(args.status)}`} : {})},{order:"created_at.desc",params:{limit:String(Math.min(100,limit))}});
@@ -4616,7 +4698,7 @@ async function callCloudTool(name, args, env, state) {
     return { job_id:row.job_id, status:row.status, cancellation_requested:Boolean(row.cancellation_requested), safe_error:trimmed(row.safe_error), run_id:run?.run_id || "", next_action:row.status === "pending" || row.status === "running" ? "Poll again." : "Retrieve the completed result if a run_id is present." };
   }
   if (name === "lab_engine_job_cancel") {
-    const result = await supabaseRpc(env,"mystic_request_engine_job_cancellation",{p_job_id:trimmed(args.job_id)}); return { job_id:trimmed(args.job_id), cancellation_requested:Boolean(result) };
+    const result = await supabaseRpc(env,runnerFleetMode(env) === "fleet_active" ? "mystic_fleet_request_engine_job_cancellation" : "mystic_request_engine_job_cancellation",{p_job_id:trimmed(args.job_id)}); return { job_id:trimmed(args.job_id), cancellation_requested:Boolean(result) };
   }
   if (name === "lab_engine_run_list") {
     const rows=await supabaseSelectRows(env,"lab_engine_runs",{...(trimmed(args.session_id)?{session_id:`eq.${trimmed(args.session_id)}`} : {}),...(trimmed(args.engine_id)?{engine_id:`eq.${trimmed(args.engine_id)}`} : {})},{order:"created_at.desc",params:{limit:String(Math.min(100,limit))}});
@@ -7050,7 +7132,60 @@ function runnerAuthorized(request, env) {
 }
 
 async function runnerBody(request) {
-  try { const body = await request.json(); return body && typeof body === "object" && !Array.isArray(body) ? body : null; } catch { return null; }
+  const length = Number(request.headers.get("content-length") || 0);
+  if (length > 65536) return null;
+  try { const text=await request.text(); if (text.length > 65536) return null; const body = JSON.parse(text || "{}"); return body && typeof body === "object" && !Array.isArray(body) ? body : null; } catch { return null; }
+}
+
+function validRunnerId(value) {
+  return /^[a-z0-9][a-z0-9._-]{1,119}$/i.test(trimmed(value));
+}
+
+function boundedRunnerNumber(value, fallback, minimum, maximum) {
+  const number = Number(value); return Number.isFinite(number) ? Math.min(maximum, Math.max(minimum, Math.floor(number))) : fallback;
+}
+
+function runnerRegistrationRow(body, state = "online") {
+  const runnerId = trimmed(body.runner_id);
+  const engines = Array.isArray(body.engines) ? body.engines.map(objectMapping).filter((item) => trimmed(item.engine_id) && trimmed(item.version)).slice(0, 32).map((item) => ({engine_id:trimmed(item.engine_id),version:trimmed(item.version)})) : [];
+  const resourceClasses = asStringArray(body.supported_resource_classes).slice(0, 8);
+  const maxConcurrentJobs = boundedRunnerNumber(body.max_concurrent_jobs, 1, 1, 32);
+  return {
+    runner_id:runnerId, runner_version:trimmed(body.runner_version, "phase2a"), runtime_version:trimmed(body.runtime_version), operating_system:trimmed(body.operating_system), architecture:trimmed(body.architecture),
+    engine_versions:engines, supported_engines:engines, resource_classes:resourceClasses, max_concurrent_jobs:maxConcurrentJobs, active_jobs:boundedRunnerNumber(body.active_jobs, 0, 0, maxConcurrentJobs),
+    cpu_count:boundedRunnerNumber(body.cpu_count, 0, 0, 4096), memory_limit_mb:boundedRunnerNumber(body.memory_limit_mb, 0, 0, 1048576), gpu_type:trimmed(body.gpu_type), region:trimmed(body.region), priority:boundedRunnerNumber(body.priority, 0, -1000, 1000),
+    display_name:trimmed(body.display_name, runnerId), status:state === "busy" ? "busy" : state === "offline" ? "offline" : "ready", fleet_state:state, maintenance_state:state === "maintenance", current_job_id:trimmed(body.job_id), latest_heartbeat:nowIso(), last_heartbeat:nowIso(), registered_at:nowIso(), updated_at:nowIso(), metadata_safe:{ protocol_version:trimmed(body.protocol_version, RUNNER_FLEET_PROTOCOL_VERSION) },
+  };
+}
+
+async function runnerCredentialAuthorized(request, env, runnerId) {
+  const supplied = extractBearerToken(request);
+  if (!supplied || !validRunnerId(runnerId)) return false;
+  const mode = runnerFleetMode(env);
+  if (mode !== "fleet_active" && runnerAuthorized(request, env)) return true;
+  try {
+    const credential = await supabaseSelectOne(env, "lab_engine_runner_credentials", { runner_id:`eq.${runnerId}`, revoked_at:"is.null" });
+    return Boolean(credential && trimmed(credential.credential_verifier) && constantTimeEqual(trimmed(credential.credential_verifier), await sha256Hex(supplied)));
+  } catch {
+    // Missing fleet tables fail closed in fleet_active and retain the legacy path otherwise.
+    return false;
+  }
+}
+
+async function recordRunnerFleetEvent(env, eventType, runnerId, jobId = "", safeReason = "", metadata = {}, actorType = "runner") {
+  try {
+    await supabaseInsertRows(env, "lab_engine_runner_audit_events", [{ event_id:cloudId("runner-audit"), event_type:eventType, runner_id:runnerId, job_id:jobId, actor_type:actorType, safe_reason:trimmed(safeReason).slice(0, 1000), metadata_safe:objectMapping(metadata) }]);
+  } catch {
+    // Audit persistence is additive during the migration rollout. It never changes a job outcome.
+  }
+}
+
+async function recordRunnerAttempt(env, jobId, attemptNumber, runnerId, state, fields = {}) {
+  try {
+    await supabaseInsertRows(env, "lab_engine_job_attempts", [{ attempt_id:cloudId("engine-attempt"), job_id:jobId, attempt_number:Math.max(1, Number(attemptNumber) || 1), runner_id:runnerId, state, lease_started_at:fields.lease_started_at || null, lease_expires_at:fields.lease_expires_at || null, input_hash:trimmed(fields.input_hash), output_hash:trimmed(fields.output_hash), safe_reason:trimmed(fields.safe_reason).slice(0, 1000), scheduler_metadata:objectMapping(fields.scheduler_metadata) }]);
+  } catch {
+    // A missing additive history table must not break the Phase 2A runner path.
+  }
 }
 
 async function validateRunnerCompletion(env, runnerId, jobId, result) {
@@ -7067,11 +7202,13 @@ async function validateRunnerCompletion(env, runnerId, jobId, result) {
 }
 
 async function handleEngineRunnerRoute(request, env, pathname) {
-  if (!runnerAuthorized(request, env)) return jsonResponse({ error:"runner_unauthorized", message:"Runner authentication was not accepted." },401,{"cache-control":"no-store"});
   const action = pathname.slice("/internal/engine-runner/".length);
-  if (request.method === "GET" && action === "status") { const rows=await loadRunnerPresence(env); return jsonResponse({ status:"ready", runner_token_configured:true, heartbeat_ttl_seconds:RUNNER_PRESENCE_TTL_SECONDS, runners:rows.map((row)=>({runner_id:row.runner_id,runner_version:row.runner_version,status:row.status,current_job_id:row.current_job_id,last_heartbeat:row.last_heartbeat,engine_versions:Array.isArray(row.engine_versions)?row.engine_versions:[],resource_classes:asStringArray(row.resource_classes),completed_count:row.completed_count,failed_count:row.failed_count}))},200,{"cache-control":"no-store"}); }
+  if (request.method === "GET" && action === "status") { const requestedRunnerId=trimmed(new URL(request.url).searchParams.get("runner_id")); const global=runnerAuthorized(request,env); if (!global && !await runnerCredentialAuthorized(request,env,requestedRunnerId)) return jsonResponse({ error:"runner_unauthorized", message:"Runner authentication was not accepted." },401,{"cache-control":"no-store"}); const rows=await loadRunnerPresence(env); const visible=global ? rows : rows.filter((row) => trimmed(row.runner_id) === requestedRunnerId); return jsonResponse({ status:"ready", fleet_mode:runnerFleetMode(env), protocol_version:RUNNER_FLEET_PROTOCOL_VERSION, heartbeat_ttl_seconds:RUNNER_PRESENCE_TTL_SECONDS, runners:visible.map(safeRunnerRecord)},200,{"cache-control":"no-store"}); }
   if (request.method !== "POST") return new Response("Method Not Allowed",{status:405,headers:{allow:"POST"}});
   const body = await runnerBody(request); if (!body) return jsonResponse({error:"engine_input_invalid",message:"A JSON object is required."},400);
+  const runnerId = trimmed(body.runner_id);
+  if (action !== "registry-sync" && !validRunnerId(runnerId)) return jsonResponse({error:"engine_input_invalid",message:"A valid runner_id is required."},400);
+  if (action === "registry-sync" ? !runnerAuthorized(request, env) : !await runnerCredentialAuthorized(request, env, runnerId)) return jsonResponse({ error:"runner_unauthorized", message:"Runner authentication was not accepted." },401,{"cache-control":"no-store"});
   if (action === "registry-sync") {
     if (!Array.isArray(body.engines) || body.engines.length > 20) return jsonResponse({error:"engine_input_invalid",message:"A bounded engine list is required."},400);
     const rows=body.engines.map((item) => objectMapping(item)).filter((item) => trimmed(item.engine_id) && trimmed(item.version) && item.manifest && typeof item.manifest === "object").map((item) => ({engine_id:trimmed(item.engine_id),display_name:trimmed(item.display_name,trimmed(item.engine_id)),version:trimmed(item.version),domain:trimmed(item.domain,"general"),capabilities:asStringArray(item.capabilities),manifest:objectMapping(item.manifest),manifest_hash:trimmed(item.manifest_hash),enabled:item.enabled !== false,deprecated:item.deprecated === true,availability:"available"}));
@@ -7079,20 +7216,82 @@ async function handleEngineRunnerRoute(request, env, pathname) {
     if (body.apply !== true) { const existing=await supabaseSelectRows(env,"lab_engine_registry",{}, {order:"engine_id.asc"}); return jsonResponse({status:"check",engines:existing.map((item) => ({engine_id:item.engine_id,version:item.version,manifest_hash:item.manifest_hash,enabled:Boolean(item.enabled),availability:trimmed(item.availability,"available")}))}); }
     await supabaseUpsertRows(env,"lab_engine_registry",rows,"engine_id"); return jsonResponse({status:"applied",engine_count:rows.length,deleted_engine_ids:[]});
   }
-  if (action === "claim") { const runnerId=trimmed(body.runner_id); const result=await supabaseRpc(env,"mystic_claim_next_engine_job",{p_runner_id:runnerId,p_lease_seconds:Math.min(300,Math.max(10,Number(body.lease_seconds)||60))}); const job=Array.isArray(result)?result[0]||null:result||null; await supabaseUpsertRows(env,"lab_engine_runners",[{runner_id:runnerId,status:job?"busy":"ready",current_job_id:job?.job_id||"",last_heartbeat:nowIso(),updated_at:nowIso()}],"runner_id"); return jsonResponse({job}); }
-  if (action === "register") { const runnerId=trimmed(body.runner_id); if (!runnerId) return jsonResponse({error:"engine_input_invalid",message:"runner_id is required."},400); await supabaseUpsertRows(env,"lab_engine_runners",[{runner_id:runnerId,runner_version:trimmed(body.runner_version,"phase2a"),engine_versions:Array.isArray(body.engines)?body.engines.map((item)=>({engine_id:trimmed(objectMapping(item).engine_id),version:trimmed(objectMapping(item).version)})):[],resource_classes:asStringArray(body.supported_resource_classes),status:"ready",current_job_id:"",last_heartbeat:nowIso(),updated_at:nowIso()}],"runner_id"); return jsonResponse({status:"registered",runner_id:runnerId,supported_resource_classes:asStringArray(body.supported_resource_classes),engine_count:Array.isArray(body.engines) ? body.engines.length : 0}); }
-  if (action === "heartbeat") { const runnerId=trimmed(body.runner_id); const jobId=trimmed(body.job_id); const ok=jobId ? await supabaseRpc(env,"mystic_heartbeat_engine_job",{p_job_id:jobId,p_runner_id:runnerId,p_lease_seconds:Math.min(300,Math.max(10,Number(body.lease_seconds)||60))}) : true; await supabaseUpsertRows(env,"lab_engine_runners",[{runner_id:runnerId,status:jobId?"busy":"ready",current_job_id:jobId,last_heartbeat:nowIso(),updated_at:nowIso()}],"runner_id"); return jsonResponse({ok:Boolean(ok)}); }
-  if (action === "release") { const released=await supabaseRpc(env,"mystic_release_expired_engine_leases",{}); return jsonResponse({released:Number(released)||0}); }
+  if (action === "claim") {
+    const leaseSeconds=Math.min(300,Math.max(10,Number(body.lease_seconds)||60)), mode=runnerFleetMode(env);
+    const runner=await supabaseSelectOne(env,"lab_engine_runners",{runner_id:`eq.${runnerId}`});
+    if (!runner) return jsonResponse({error:"runner_not_registered",message:"Register the runner before claiming work."},409);
+    const result=await supabaseRpc(env,mode === "fleet_active" ? "mystic_fleet_claim_next_engine_job" : "mystic_claim_next_engine_job",{p_runner_id:runnerId,p_lease_seconds:leaseSeconds});
+    const job=Array.isArray(result)?result[0]||null:result||null;
+    await supabaseUpsertRows(env,"lab_engine_runners",[{runner_id:runnerId,status:job?"busy":"ready",fleet_state:job?"busy":runnerFleetState(runner) === "draining" ? "draining" : "online",current_job_id:job?.job_id||"",active_jobs:job ? Math.max(1,runnerActiveJobs(runner)) : runnerActiveJobs(runner),latest_heartbeat:nowIso(),last_heartbeat:nowIso(),updated_at:nowIso()}],"runner_id");
+    const candidates=job ? fleetCandidates(await supabaseSelectOne(env,"lab_engine_registry",{engine_id:`eq.${job.engine_id}`}) || {}, await loadRunnerPresence(env)) : [];
+    if (job) { await recordRunnerAttempt(env,job.job_id,job.attempt_number || job.attempts,runnerId,"claimed",{lease_started_at:job.lease_started_at,lease_expires_at:job.lease_expires_at,scheduler_metadata:{mode,selected_runner_id:runnerId,candidate_runner_ids:candidates.map((item)=>trimmed(item.runner_id))}}); await recordRunnerFleetEvent(env,Number(job.attempts)>1 ? "job_reassigned" : "job_assigned",runnerId,job.job_id,"",{mode,candidate_runner_count:candidates.length}); }
+    return jsonResponse({job,scheduler:{mode,candidate_runner_count:candidates.length,selected_runner_id:job ? runnerId : ""}});
+  }
+  if (action === "register") { const existing=await supabaseSelectOne(env,"lab_engine_runners",{runner_id:`eq.${runnerId}`}); const state=existing && ["draining","maintenance","quarantined"].includes(runnerFleetState(existing)) ? runnerFleetState(existing) : "online"; const registration=runnerRegistrationRow(body,state); if (existing) { registration.registered_at=existing.registered_at || nowIso(); registration.display_name=trimmed(body.display_name,trimmed(existing.display_name,runnerId)); } await supabaseUpsertRows(env,"lab_engine_runners",[registration],"runner_id"); await recordRunnerFleetEvent(env,existing ? "runner_updated" : "runner_registered",runnerId,"","",{protocol_version:trimmed(body.protocol_version,RUNNER_FLEET_PROTOCOL_VERSION)}); return jsonResponse({status:"registered",runner_id:runnerId,fleet_state:state,supported_resource_classes:registration.resource_classes,engine_count:registration.engine_versions.length,protocol_version:RUNNER_FLEET_PROTOCOL_VERSION}); }
+  if (action === "capability-update") { const current=await supabaseSelectOne(env,"lab_engine_runners",{runner_id:`eq.${runnerId}`}); if (!current) return jsonResponse({error:"runner_not_registered",message:"Register the runner before updating capabilities."},409); const registration=runnerRegistrationRow(body,runnerFleetState(current)); registration.active_jobs=runnerActiveJobs(current); registration.current_job_id=trimmed(current.current_job_id); registration.status=trimmed(current.status,"ready"); registration.maintenance_state=Boolean(current.maintenance_state); registration.quarantined_at=current.quarantined_at || null; registration.registered_at=current.registered_at || nowIso(); registration.display_name=trimmed(body.display_name,trimmed(current.display_name,runnerId)); await supabaseUpsertRows(env,"lab_engine_runners",[registration],"runner_id"); await recordRunnerFleetEvent(env,"runner_updated",runnerId,"","capability_update",{engine_count:registration.engine_versions.length}); return jsonResponse({ok:true,runner_id:runnerId,engine_count:registration.engine_versions.length,resource_classes:registration.resource_classes}); }
+  if (action === "heartbeat" || action === "lease-renew") { const jobId=trimmed(body.job_id), mode=runnerFleetMode(env); const ok=jobId ? await supabaseRpc(env,mode === "fleet_active" ? "mystic_fleet_renew_engine_job_lease" : "mystic_heartbeat_engine_job",{p_job_id:jobId,p_runner_id:runnerId,p_lease_seconds:Math.min(300,Math.max(10,Number(body.lease_seconds)||60))}) : true; const runner=await supabaseSelectOne(env,"lab_engine_runners",{runner_id:`eq.${runnerId}`}); const nextState=jobId ? "busy" : runnerFleetState(runner || {}) === "draining" ? "draining" : "online"; await supabaseUpsertRows(env,"lab_engine_runners",[{runner_id:runnerId,status:jobId?"busy":"ready",fleet_state:nextState,current_job_id:jobId,latest_heartbeat:nowIso(),last_heartbeat:nowIso(),updated_at:nowIso()}],"runner_id"); if (jobId && ok) { await recordRunnerAttempt(env,jobId,Number(body.attempt_number)||1,runnerId,"lease_renewed"); await recordRunnerFleetEvent(env,"lease_renewed",runnerId,jobId); } return jsonResponse({ok:Boolean(ok),fleet_state:nextState}); }
+  if (action === "recover-expired") { const released=await supabaseRpc(env,runnerFleetMode(env) === "fleet_active" ? "mystic_fleet_recover_expired_engine_leases" : "mystic_release_expired_engine_leases",{}); return jsonResponse({released:Number(released)||0}); }
+  if (action === "release") { await supabaseUpsertRows(env,"lab_engine_runners",[{runner_id:runnerId,status:"offline",fleet_state:"offline",current_job_id:"",active_jobs:0,updated_at:nowIso()}],"runner_id"); await recordRunnerFleetEvent(env,"runner_offline",runnerId); return jsonResponse({ok:true,fleet_state:"offline"}); }
+  if (["enter-draining","exit-draining","enter-maintenance","exit-maintenance","quarantine","restore"].includes(action)) { const transitions={"enter-draining":"draining","exit-draining":"online","enter-maintenance":"maintenance","exit-maintenance":"online",quarantine:"quarantined",restore:"online"}; const nextState=transitions[action]; const current=await supabaseSelectOne(env,"lab_engine_runners",{runner_id:`eq.${runnerId}`}); if (!current) return jsonResponse({error:"runner_not_registered",message:"Register the runner before changing its state."},409); if (["enter-maintenance","exit-maintenance","quarantine","restore"].includes(action) && runnerFleetMode(env) === "fleet_active" && !runnerAuthorized(request,env)) return jsonResponse({error:"runner_admin_required",message:"Administrative runner state changes require an approved control-plane credential."},403); await supabaseUpsertRows(env,"lab_engine_runners",[{runner_id:runnerId,status:nextState === "busy" ? "busy" : nextState === "offline" ? "offline" : "ready",fleet_state:nextState,maintenance_state:nextState === "maintenance",quarantined_at:nextState === "quarantined" ? nowIso() : null,updated_at:nowIso()}],"runner_id"); const event={"enter-draining":"runner_draining","exit-draining":"runner_online","enter-maintenance":"runner_maintenance","exit-maintenance":"runner_online",quarantine:"runner_quarantined",restore:"runner_restored"}[action]; await recordRunnerFleetEvent(env,event,runnerId,"",trimmed(body.safe_reason)); return jsonResponse({ok:true,runner_id:runnerId,fleet_state:nextState}); }
   if (action === "complete") {
     const result=objectMapping(body.result), summary=objectMapping(result.summary), visualization=objectMapping(result.visualization); let validated;
     try { validated=await validateRunnerCompletion(env,trimmed(body.runner_id),trimmed(body.job_id),result); } catch (error) { const safe=engineErrorPayload(error); return jsonResponse({error:safe.code,message:safe.message,field_errors:safe.field_errors}, error instanceof EnginePublicError ? error.status : 400); }
     const reproducibility=validated.reproducibility;
-    const ok=await supabaseRpc(env,"mystic_complete_engine_job",{p_job_id:trimmed(body.job_id),p_runner_id:trimmed(body.runner_id),p_run_id:trimmed(result.run_id),p_engine_version:trimmed(result.engine_version),p_result:result,p_summary:summary,p_visualization:visualization,p_reproducibility:reproducibility,p_input_hash:trimmed(reproducibility.input_hash),p_output_hash:trimmed(reproducibility.output_hash),p_duration_ms:Number(result.duration_ms)||0,p_warnings:Array.isArray(result.warnings)?result.warnings:[]});
-    const runnerId=trimmed(body.runner_id); const runner=await supabaseSelectOne(env,"lab_engine_runners",{runner_id:`eq.${runnerId}`}); await supabaseUpsertRows(env,"lab_engine_runners",[{runner_id:runnerId,status:"ready",current_job_id:"",last_heartbeat:nowIso(),updated_at:nowIso(),completed_count:Number(runner?.completed_count||0)+1}],"runner_id");
+    const ok=await supabaseRpc(env,runnerFleetMode(env) === "fleet_active" ? "mystic_fleet_complete_engine_job" : "mystic_complete_engine_job",{p_job_id:trimmed(body.job_id),p_runner_id:trimmed(body.runner_id),p_run_id:trimmed(result.run_id),p_engine_version:trimmed(result.engine_version),p_result:result,p_summary:summary,p_visualization:visualization,p_reproducibility:reproducibility,p_input_hash:trimmed(reproducibility.input_hash),p_output_hash:trimmed(reproducibility.output_hash),p_duration_ms:Number(result.duration_ms)||0,p_warnings:Array.isArray(result.warnings)?result.warnings:[]});
+    const runnerId=trimmed(body.runner_id); const runner=await supabaseSelectOne(env,"lab_engine_runners",{runner_id:`eq.${runnerId}`}), fleetActive=runnerFleetMode(env) === "fleet_active"; await supabaseUpsertRows(env,"lab_engine_runners",[{runner_id:runnerId,status:"ready",fleet_state:runnerFleetState(runner || {}) === "draining" ? "draining" : "online",current_job_id:"",active_jobs:Math.max(0,runnerActiveJobs(runner || {})-(fleetActive ? 0 : 1)),last_heartbeat:nowIso(),latest_heartbeat:nowIso(),updated_at:nowIso(),completed_count:Number(runner?.completed_count||0)+1}],"runner_id"); await recordRunnerAttempt(env,trimmed(body.job_id),validated.job.attempt_number || validated.job.attempts,runnerId,"completed",{input_hash:trimmed(reproducibility.input_hash),output_hash:trimmed(reproducibility.output_hash)});
     return jsonResponse({ok:Boolean(ok)});
   }
-  if (action === "fail" || action === "cancelled") { const status=action === "cancelled" ? "cancelled" : trimmed(body.status,"failed"); const runnerId=trimmed(body.runner_id); const ok=await supabaseRpc(env,"mystic_fail_engine_job",{p_job_id:trimmed(body.job_id),p_runner_id:runnerId,p_status:status,p_safe_error:trimmed(body.safe_error,"The engine job did not complete.")}); const runner=await supabaseSelectOne(env,"lab_engine_runners",{runner_id:`eq.${runnerId}`}); await supabaseUpsertRows(env,"lab_engine_runners",[{runner_id:runnerId,status:"ready",current_job_id:"",last_heartbeat:nowIso(),updated_at:nowIso(),failed_count:Number(runner?.failed_count||0)+1,safe_last_error:trimmed(body.safe_error,"The engine job did not complete.")}],"runner_id"); return jsonResponse({ok:Boolean(ok)}); }
+  if (["fail","cancelled","cancellation-acknowledge"].includes(action)) { const status=action === "cancelled" || action === "cancellation-acknowledge" ? "cancelled" : trimmed(body.status,"failed"); const runnerId=trimmed(body.runner_id); const safeError=trimmed(body.safe_error,"The engine job did not complete."); const fleetActive=runnerFleetMode(env) === "fleet_active", retryable=body.retryable === true && status !== "cancelled"; const ok=await supabaseRpc(env,fleetActive ? "mystic_fleet_fail_engine_job" : "mystic_fail_engine_job",fleetActive ? {p_job_id:trimmed(body.job_id),p_runner_id:runnerId,p_status:status,p_safe_error:safeError,p_retryable:retryable} : {p_job_id:trimmed(body.job_id),p_runner_id:runnerId,p_status:status,p_safe_error:safeError}); const runner=await supabaseSelectOne(env,"lab_engine_runners",{runner_id:`eq.${runnerId}`}); await supabaseUpsertRows(env,"lab_engine_runners",[{runner_id:runnerId,status:"ready",fleet_state:runnerFleetState(runner || {}) === "draining" ? "draining" : "online",current_job_id:"",active_jobs:Math.max(0,runnerActiveJobs(runner || {})-(fleetActive ? 0 : 1)),last_heartbeat:nowIso(),latest_heartbeat:nowIso(),updated_at:nowIso(),failed_count:Number(runner?.failed_count||0)+1,failure_count:Number(runner?.failure_count||0)+(fleetActive ? 0 : 1),safe_last_error:safeError}],"runner_id"); await recordRunnerAttempt(env,trimmed(body.job_id),Number(body.attempt_number)||1,runnerId,retryable ? "retry_scheduled" : status === "cancelled" ? "cancelled" : "failed",{safe_reason:safeError}); if (retryable) await recordRunnerFleetEvent(env,"retry_scheduled",runnerId,trimmed(body.job_id)); return jsonResponse({ok:Boolean(ok),retry_scheduled:Boolean(ok && retryable)}); }
   return jsonResponse({error:"runner_route_not_found",message:"The runner operation is not available."},404);
+}
+
+function fleetAdminAuthorized(request, env) {
+  const configured = trimmed(env.MYSTIC_FLEET_ADMIN_TOKEN);
+  const supplied = extractBearerToken(request);
+  return Boolean(configured && supplied && constantTimeEqual(configured, supplied));
+}
+
+function fleetMetrics(rows) {
+  const safe = rows.map(safeRunnerRecord);
+  const counts = Object.fromEntries(["registering","online","busy","draining","maintenance","stale","offline","quarantined"].map((state) => [state, safe.filter((runner) => runner.fleet_state === state).length]));
+  return { runner_counts:counts, registered_runners:safe.length, active_jobs:safe.reduce((total, runner) => total + runner.active_jobs, 0), available_slots:safe.reduce((total, runner) => total + runner.available_slots, 0), safe_failure_count:safe.reduce((total, runner) => total + runner.failure_count, 0) };
+}
+
+async function handleFleetAdminRoute(request, env, pathname) {
+  if (!fleetAdminAuthorized(request, env)) return jsonResponse({error:"runner_admin_unauthorized",message:"Fleet administration authentication was not accepted."},401,{"cache-control":"no-store"});
+  const action=pathname.slice("/internal/fleet-admin/".length);
+  if (request.method === "GET" && action === "runners") { const rows=await loadRunnerPresence(env); return jsonResponse({fleet_mode:runnerFleetMode(env),protocol_version:RUNNER_FLEET_PROTOCOL_VERSION,runners:rows.map(safeRunnerRecord),metrics:fleetMetrics(rows)},200,{"cache-control":"no-store"}); }
+  const runnerDetailMatch=action.match(/^runners\/([^/]+)$/);
+  if (request.method === "GET" && runnerDetailMatch) { const runnerId=decodeURIComponent(runnerDetailMatch[1]); if (!validRunnerId(runnerId)) return jsonResponse({error:"engine_input_invalid",message:"A valid runner_id is required."},400); const runner=await supabaseSelectOne(env,"lab_engine_runners",{runner_id:`eq.${runnerId}`}); if (!runner) return jsonResponse({error:"runner_not_registered",message:"The requested runner does not exist."},404); return jsonResponse({runner:safeRunnerRecord(runner)},200,{"cache-control":"no-store"}); }
+  const jobsMatch=action.match(/^runners\/([^/]+)\/jobs$/);
+  if (request.method === "GET" && jobsMatch) { const runnerId=decodeURIComponent(jobsMatch[1]); if (!validRunnerId(runnerId)) return jsonResponse({error:"engine_input_invalid",message:"A valid runner_id is required."},400); const jobs=await supabaseSelectRows(env,"lab_engine_jobs",{assigned_runner_id:`eq.${runnerId}`},{order:"created_at.desc",params:{limit:"100"},select:"job_id,engine_id,status,fleet_state,attempt_number,maximum_attempts,created_at,started_at,completed_at,safe_error,terminal_reason"}); return jsonResponse({runner_id:runnerId,jobs},200,{"cache-control":"no-store"}); }
+  const attemptsMatch=action.match(/^runners\/([^/]+)\/attempts$/);
+  if (request.method === "GET" && attemptsMatch) { const runnerId=decodeURIComponent(attemptsMatch[1]); if (!validRunnerId(runnerId)) return jsonResponse({error:"engine_input_invalid",message:"A valid runner_id is required."},400); const attempts=await supabaseSelectRows(env,"lab_engine_job_attempts",{runner_id:`eq.${runnerId}`},{order:"created_at.desc",params:{limit:"100"},select:"attempt_id,job_id,attempt_number,state,lease_started_at,lease_expires_at,input_hash,output_hash,safe_reason,created_at"}); return jsonResponse({runner_id:runnerId,attempts},200,{"cache-control":"no-store"}); }
+  const auditMatch=action.match(/^runners\/([^/]+)\/audit-events$/);
+  if (request.method === "GET" && auditMatch) { const runnerId=decodeURIComponent(auditMatch[1]); if (!validRunnerId(runnerId)) return jsonResponse({error:"engine_input_invalid",message:"A valid runner_id is required."},400); const events=await supabaseSelectRows(env,"lab_engine_runner_audit_events",{runner_id:`eq.${runnerId}`},{order:"created_at.desc",params:{limit:"100"},select:"event_id,event_type,job_id,actor_type,safe_reason,created_at"}); return jsonResponse({runner_id:runnerId,events},200,{"cache-control":"no-store"}); }
+  if (request.method !== "POST") return new Response("Method Not Allowed",{status:405,headers:{allow:"GET, POST"}});
+  const body=await runnerBody(request); if (!body) return jsonResponse({error:"engine_input_invalid",message:"A bounded JSON object is required."},400);
+  const runnerMatch=action.match(/^runners\/([^/]+)\/actions$/);
+  if (runnerMatch) {
+    const runnerId=decodeURIComponent(runnerMatch[1]), requested=trimmed(body.action);
+    const stateByAction={drain:"draining",resume:"online",maintenance:"maintenance",restore:"online",quarantine:"quarantined"};
+    const nextState=stateByAction[requested];
+    if (!validRunnerId(runnerId) || !nextState) return jsonResponse({error:"engine_input_invalid",message:"A valid runner action is required."},400);
+    const runner=await supabaseSelectOne(env,"lab_engine_runners",{runner_id:`eq.${runnerId}`}); if (!runner) return jsonResponse({error:"runner_not_registered",message:"The requested runner does not exist."},404);
+    if (requested === "resume" && runnerFleetState(runner) === "quarantined") return jsonResponse({error:"runner_restore_required",message:"A quarantined runner must be explicitly restored."},409);
+    await supabaseUpsertRows(env,"lab_engine_runners",[{runner_id:runnerId,status:nextState === "offline" ? "offline" : "ready",fleet_state:nextState,maintenance_state:nextState === "maintenance",quarantined_at:nextState === "quarantined" ? nowIso() : null,updated_at:nowIso()}],"runner_id");
+    const event={drain:"runner_draining",resume:"runner_online",maintenance:"runner_maintenance",restore:"runner_restored",quarantine:"runner_quarantined"}[requested]; await recordRunnerFleetEvent(env,event,runnerId,"",trimmed(body.safe_reason),{},"control_center");
+    const updated=await supabaseSelectOne(env,"lab_engine_runners",{runner_id:`eq.${runnerId}`}); return jsonResponse({runner:safeRunnerRecord(updated || {runner_id:runnerId,fleet_state:nextState})},200,{"cache-control":"no-store"});
+  }
+  const credentialMatch=action.match(/^runners\/([^/]+)\/credential-verifier$/);
+  if (credentialMatch) {
+    const runnerId=decodeURIComponent(credentialMatch[1]), verifier=trimmed(body.credential_verifier);
+    if (!validRunnerId(runnerId) || !/^[a-f0-9]{64}$/i.test(verifier)) return jsonResponse({error:"engine_input_invalid",message:"A SHA-256 credential verifier is required."},400);
+    const existing=await supabaseSelectOne(env,"lab_engine_runner_credentials",{runner_id:`eq.${runnerId}`}); const version=Math.max(1,Number(existing?.credential_version)||0)+1;
+    await supabaseUpsertRows(env,"lab_engine_runner_credentials",[{runner_id:runnerId,credential_version:version,credential_verifier:verifier.toLowerCase(),revoked_at:null,updated_at:nowIso(),metadata_safe:{provisioned_by:"control_center"}}],"runner_id"); await recordRunnerFleetEvent(env,"runner_credential_rotated",runnerId,"","",{credential_version:version},"control_center"); return jsonResponse({runner_id:runnerId,credential_version:version,status:"credential_verifier_recorded"},200,{"cache-control":"no-store"});
+  }
+  if (action === "recover-expired") { const released=await supabaseRpc(env,runnerFleetMode(env) === "fleet_active" ? "mystic_fleet_recover_expired_engine_leases" : "mystic_release_expired_engine_leases",{}); return jsonResponse({released:Number(released)||0},200,{"cache-control":"no-store"}); }
+  return jsonResponse({error:"runner_admin_route_not_found",message:"The fleet administration operation is not available."},404,{"cache-control":"no-store"});
 }
 
 async function routeRequest(request, env) {
@@ -7132,6 +7331,10 @@ async function routeRequest(request, env) {
 
   if (pathname.startsWith("/internal/engine-runner/")) {
     return handleEngineRunnerRoute(request, env, pathname);
+  }
+
+  if (pathname.startsWith("/internal/fleet-admin/")) {
+    return handleFleetAdminRoute(request, env, pathname);
   }
 
   if (phase1CloudMode && pathname.startsWith("/lab/")) {
