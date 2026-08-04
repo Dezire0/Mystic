@@ -2263,6 +2263,22 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertIn("recommended_next_action", error)
         self.assertNotIn("runner-token", json.dumps(error))
 
+    def test_runner_status_reports_offline_after_stale_grace_period(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env | {"MYSTIC_ENGINE_RUNNER_TOKEN": "runner-token"},
+                "requestUrl": "https://mystic.dexproject.workers.dev/internal/engine-runner/status?runner_id=runner",
+                "method": "GET",
+                "headers": {"Authorization": "Bearer runner-token"},
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_runners", "status": 200, "body": [{"runner_id": "runner", "status": "ready", "fleet_state": "online", "last_heartbeat": "2000-01-01T00:00:00Z"}]},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 200)
+        self.assertEqual(result["body"]["runners"][0]["fleet_state"], "offline")
+
     def test_engine_runner_completion_rejects_mismatched_input_hash(self) -> None:
         result = run_worker_helper(
             "simulateRequest",

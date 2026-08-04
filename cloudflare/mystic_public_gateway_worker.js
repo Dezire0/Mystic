@@ -3564,6 +3564,7 @@ async function validateEngineLinks(env, args) {
 }
 
 const RUNNER_PRESENCE_TTL_SECONDS = 90;
+const RUNNER_OFFLINE_TTL_SECONDS = RUNNER_PRESENCE_TTL_SECONDS * 3;
 const RUNNER_FLEET_MODES = new Set(["legacy_single_runner", "fleet_shadow", "fleet_active"]);
 const RUNNER_FLEET_PROTOCOL_VERSION = "2b.1";
 
@@ -3580,7 +3581,9 @@ function runnerFleetState(runner) {
 
 function runnerReportedFleetState(runner) {
   const state = runnerFleetState(runner);
-  return ["online", "busy"].includes(state) && !runnerIsFresh(runner) ? "stale" : state;
+  if (!["online", "busy"].includes(state) || runnerIsFresh(runner)) return state;
+  const age = runnerHeartbeatAgeSeconds(runner);
+  return age !== null && age > RUNNER_OFFLINE_TTL_SECONDS ? "offline" : "stale";
 }
 
 function runnerHeartbeatAt(runner) {
