@@ -216,7 +216,7 @@ uv run python -m unittest discover tests -v
 
 The editable install includes reusable `mystic` and `scripts` modules. The lockfile pins the FastAPI/Starlette/httpx test-client compatibility range so this command does not depend on a shell `PYTHONPATH` override.
 
-## Scientific engine runtime (Phase 2A foundation)
+## Scientific engine runtime and runner fleet
 
 `mystic.lab.engines` is a server-owned allowlist of deterministic scientific tools. It never loads a module, executes code, or installs a package from a user request. The initial registry contains bounded math, projectile, collision, n-body, reaction-kinetics, population-dynamics, and safe low-voltage DC-circuit models.
 
@@ -228,7 +228,11 @@ uv run python scripts/mystic_engine_runner.py --status
 uv run python scripts/sync_engine_registry.py --check
 ```
 
-The checked-in runner is a local trusted-runtime foundation. After the Phase 2A migration is applied, synchronize only the built-in manifests from the runner environment with `uv run python scripts/sync_engine_registry.py --apply`. That command requires the runner's server-side Supabase configuration; it never reads credentials from a browser or exposes them in output. Production job claiming and completion require a separately deployed runner with a server-side `MYSTIC_ENGINE_RUNNER_TOKEN`; neither browsers nor Cloudflare Workers execute Python workloads or receive that credential.
+The checked-in runner is a local trusted-runtime foundation. After the Phase 2A migration is applied, synchronize only the built-in manifests from the runner environment with `uv run python scripts/sync_engine_registry.py --apply`. That command requires the runner's server-side Supabase configuration; it never reads credentials from a browser or exposes them in output. Neither browsers nor Cloudflare Workers execute Python workloads or receive runner credentials.
+
+Issue #112 adds an additive multi-host runner fleet. The Worker defaults to `MYSTIC_RUNNER_FLEET_MODE=fleet_shadow`: it records safe fleet metadata and computes eligibility/ranking without replacing the proven Phase 2A claim RPC. `legacy_single_runner` preserves the original selector, while `fleet_active` requires an applied fleet migration and a distinct SHA-256 credential verifier for every runner in `lab_engine_runner_credentials`. Never place raw runner tokens in the database, Control Center, source tree, environment files, or logs.
+
+The existing macOS launchd runner remains supported. The rootless Linux CPU package is in `runners/linux/README.md`; it has no inbound listener, uses a read-only filesystem and bounded temporary directory, and mounts its per-runner token as an external runtime secret. Follow the staged deployment and rollback plan in `docs/phase2b_runner_fleet.md` before enabling `fleet_active`.
 
 ## Deployment
 

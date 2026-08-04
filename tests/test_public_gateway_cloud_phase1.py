@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -2210,6 +2211,9 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertTrue(result["body"]["ok"])
         self.assertEqual(result["body"]["data"]["engines"][0]["engine_id"], "physics.simple_projectile")
         self.assertTrue(result["body"]["data"]["engines"][0]["executable_now"])
+        self.assertEqual(result["body"]["data"]["engines"][0]["compatible_runner_count"], 1)
+        self.assertEqual(result["body"]["data"]["engines"][0]["live_runner_count"], 1)
+        self.assertEqual(result["body"]["data"]["engines"][0]["available_slot_count"], 1)
 
     def test_engine_availability_is_consistent_when_compatible_runner_is_stale(self) -> None:
         registry_row = {
@@ -2259,6 +2263,22 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertIn("recommended_next_action", error)
         self.assertNotIn("runner-token", json.dumps(error))
 
+    def test_runner_status_reports_offline_after_stale_grace_period(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env | {"MYSTIC_ENGINE_RUNNER_TOKEN": "runner-token"},
+                "requestUrl": "https://mystic.dexproject.workers.dev/internal/engine-runner/status?runner_id=runner",
+                "method": "GET",
+                "headers": {"Authorization": "Bearer runner-token"},
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_runners", "status": 200, "body": [{"runner_id": "runner", "status": "ready", "fleet_state": "online", "last_heartbeat": "2000-01-01T00:00:00Z"}]},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 200)
+        self.assertEqual(result["body"]["runners"][0]["fleet_state"], "offline")
+
     def test_engine_runner_completion_rejects_mismatched_input_hash(self) -> None:
         result = run_worker_helper(
             "simulateRequest",
@@ -2276,6 +2296,126 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         )
         self.assertEqual(result["status"], 400)
         self.assertEqual(result["body"]["error"], "engine_output_invalid")
+
+    def test_fleet_active_requires_a_per_runner_credential_verifier(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env | {"MYSTIC_RUNNER_FLEET_MODE": "fleet_active", "MYSTIC_ENGINE_RUNNER_TOKEN": "legacy-runner-token"},
+                "requestUrl": "https://mystic.dexproject.workers.dev/internal/engine-runner/register",
+                "method": "POST",
+                "headers": {"Authorization": "Bearer legacy-runner-token"},
+                "body": {"runner_id": "mystic-linux-cpu-runner", "engines": []},
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_runner_credentials", "status": 200, "body": []},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 401)
+        self.assertEqual(result["body"]["error"], "runner_unauthorized")
+        self.assertNotIn("legacy-runner-token", json.dumps(result["body"]))
+
+    def test_fleet_active_claim_uses_fleet_rpc_and_safe_scheduler_output(self) -> None:
+        verifier = "a0b168db4da3454195cb2bab84880c9d08d2b280b7286391ab558d30df26d9f9"
+        runner = {
+            "runner_id": "mystic-linux-cpu-runner", "fleet_state": "online", "status": "ready", "latest_heartbeat": "2099-01-01T00:00:00Z",
+            "supported_engines": [{"engine_id": "physics.simple_projectile", "version": "2.0.0"}], "resource_classes": ["tiny"], "max_concurrent_jobs": 1, "active_jobs": 0,
+        }
+        job = {"job_id": "job-1", "engine_id": "physics.simple_projectile", "attempts": 1, "attempt_number": 1, "lease_started_at": "2026-07-01T00:00:00Z", "lease_expires_at": "2026-07-01T00:01:00Z"}
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env | {"MYSTIC_RUNNER_FLEET_MODE": "fleet_active"},
+                "requestUrl": "https://mystic.dexproject.workers.dev/internal/engine-runner/claim",
+                "method": "POST",
+                "headers": {"Authorization": "Bearer fleet-runner-token"},
+                "body": {"runner_id": "mystic-linux-cpu-runner", "lease_seconds": 60},
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_runner_credentials", "status": 200, "body": [{"runner_id": "mystic-linux-cpu-runner", "credential_verifier": verifier}]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_runners", "status": 200, "body": [runner]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/rpc/mystic_fleet_claim_next_engine_job", "status": 200, "body": [job]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_engine_runners", "status": 200, "body": []},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_registry", "status": 200, "body": [{"engine_id": "physics.simple_projectile", "version": "2.0.0", "manifest": {"expected_resource_class": "tiny"}}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_engine_job_attempts", "status": 200, "body": []},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/lab_engine_runner_audit_events", "status": 200, "body": []},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 200)
+        self.assertEqual(result["body"]["scheduler"]["mode"], "fleet_active")
+        self.assertEqual(result["body"]["scheduler"]["selected_runner_id"], "mystic-linux-cpu-runner")
+        self.assertTrue(any("mystic_fleet_claim_next_engine_job" in call["url"] for call in result["fetchCalls"]))
+        self.assertNotIn("fleet-runner-token", json.dumps(result["body"]))
+
+    def test_fleet_active_rejected_completion_does_not_mutate_runner_or_history(self) -> None:
+        verifier = "a0b168db4da3454195cb2bab84880c9d08d2b280b7286391ab558d30df26d9f9"
+        input_hash = hashlib.sha256(b'{"duration_seconds":1}').hexdigest()
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env | {"MYSTIC_RUNNER_FLEET_MODE": "fleet_active"},
+                "requestUrl": "https://mystic.dexproject.workers.dev/internal/engine-runner/complete",
+                "method": "POST",
+                "headers": {"Authorization": "Bearer fleet-runner-token"},
+                "body": {
+                    "runner_id": "mystic-linux-cpu-runner",
+                    "job_id": "job-1",
+                    "result": {
+                        "run_id": "run-1", "engine_id": "physics.simple_projectile", "engine_version": "2.0.0", "duration_ms": 1,
+                        "summary": {}, "values": {}, "warnings": [],
+                        "reproducibility": {"input_hash": input_hash, "output_hash": "output-hash"},
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_runner_credentials", "status": 200, "body": [{"runner_id": "mystic-linux-cpu-runner", "credential_verifier": verifier}]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_jobs", "status": 200, "body": [{"job_id": "job-1", "engine_id": "physics.simple_projectile", "status": "running", "claimed_by": "mystic-linux-cpu-runner", "normalized_input": {"duration_seconds": 1}}]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_registry", "status": 200, "body": [{"engine_id": "physics.simple_projectile", "version": "2.0.0"}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/rpc/mystic_fleet_complete_engine_job", "status": 200, "body": False},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 409)
+        self.assertEqual(result["body"]["error"], "engine_job_not_claimed")
+        self.assertFalse(any("/lab_engine_runners" in call["url"] or "/lab_engine_job_attempts" in call["url"] for call in result["fetchCalls"]))
+
+    def test_fleet_active_rejected_failure_does_not_mutate_runner_or_history(self) -> None:
+        verifier = "a0b168db4da3454195cb2bab84880c9d08d2b280b7286391ab558d30df26d9f9"
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env | {"MYSTIC_RUNNER_FLEET_MODE": "fleet_active"},
+                "requestUrl": "https://mystic.dexproject.workers.dev/internal/engine-runner/fail",
+                "method": "POST",
+                "headers": {"Authorization": "Bearer fleet-runner-token"},
+                "body": {"runner_id": "mystic-linux-cpu-runner", "job_id": "job-1", "status": "failed", "safe_error": "bounded infrastructure failure", "retryable": True},
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_runner_credentials", "status": 200, "body": [{"runner_id": "mystic-linux-cpu-runner", "credential_verifier": verifier}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/rpc/mystic_fleet_fail_engine_job", "status": 200, "body": False},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 409)
+        self.assertEqual(result["body"]["error"], "engine_job_not_claimed")
+        self.assertFalse(any("/lab_engine_runners" in call["url"] or "/lab_engine_job_attempts" in call["url"] for call in result["fetchCalls"]))
+
+    def test_fleet_admin_lists_only_safe_runner_metadata(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env | {"MYSTIC_FLEET_ADMIN_TOKEN": "fleet-admin-token"},
+                "requestUrl": "https://mystic.dexproject.workers.dev/internal/fleet-admin/runners",
+                "method": "GET",
+                "headers": {"Authorization": "Bearer fleet-admin-token"},
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_runners", "status": 200, "body": [{"runner_id": "mystic-linux-cpu-runner", "runner_version": "phase2b.1", "status": "ready", "fleet_state": "online", "latest_heartbeat": "2099-01-01T00:00:00Z", "supported_engines": [], "resource_classes": [], "max_concurrent_jobs": 1, "active_jobs": 0, "metadata_safe": {"host_path": "/private/ignored"}}]},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 200)
+        runner = result["body"]["runners"][0]
+        self.assertEqual(runner["fleet_state"], "online")
+        self.assertNotIn("metadata_safe", runner)
+        self.assertNotIn("host_path", json.dumps(result["body"]))
 
 
 if __name__ == "__main__":

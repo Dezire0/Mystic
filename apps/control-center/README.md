@@ -10,6 +10,8 @@ The scene engine keeps `SceneDocument` as its serializable source of truth. Reac
 
 The Engine and Runs screens use fixed, server-side `/api/engines`, `/api/engine-jobs`, and `/api/engine-runs` mappings to the deployed Mystic `/lab/*` API. The browser cannot choose a backend URL, an MCP tool name, SQL/RPC name, or an authorization header. Engine manifests, jobs, runs, artifacts, and visualization descriptors are parsed with Zod before display. The legacy generic built-in schemas have bounded local form fallbacks that mirror their public validators until the registry publishes detailed schemas. Descriptor payloads are bounded and never become executable shaders, URLs, HTML, or scripts; attached result references are fetched afresh, validated, and rendered as non-editable spatial layers. Scene attachment always sends the displayed revision and presents a conflict instead of silently retrying a stale write.
 
+The `/runners` fleet page is a fixed, authenticated BFF mapping to the private Worker fleet-admin route. It displays redacted operational capacity only. State changes are limited to drain, resume, maintenance, restore, and quarantine; the browser sends no Worker URL, runner credential, service credential, or raw verifier, and every action requires a same-origin session and explicit confirmation.
+
 ## Required Cloudflare configuration
 
 Set the following only as Worker secrets:

@@ -29,6 +29,16 @@ Runner Registry
 
 The Worker remains the authority for job validation, state transitions, audit records, and public result retrieval. Runners only execute allowlisted engine jobs assigned through runner-only endpoints. The scheduler is a Worker-side deterministic decision, not a client-controlled selection field.
 
+### Implemented rollout contract
+
+Issue #112 uses `MYSTIC_RUNNER_FLEET_MODE` with three explicit values:
+
+- `legacy_single_runner` keeps the Phase 2A queue selector.
+- `fleet_shadow` is the default and computes fleet eligibility/ranking while leaving `mystic_claim_next_engine_job` authoritative.
+- `fleet_active` calls the fleet claim, lease renewal, and recovery RPCs only after the additive schema and per-runner credential verifiers are present.
+
+The existing macOS runner is accepted through its legacy credential during the shadow rollout. Active fleet mode binds every request's runner ID to a non-revoked SHA-256 credential verifier. The raw credential is created and installed out of band, never stored in Supabase, returned by the Worker, or rendered by Control Center. Lease TTL is currently 60 seconds, idle heartbeats are five seconds, active-job heartbeats are 20 seconds, presence freshness is 90 seconds, and active-mode jobs default to three attempts. Retry waits use bounded exponential backoff with a small bounded jitter; invalid input, output-validation failures, safety rejections, and scientific/model failures are non-retryable. Region is a soft deterministic preference only.
+
 ## Runner registry
 
 ### States
