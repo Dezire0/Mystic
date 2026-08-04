@@ -37,9 +37,14 @@ class RunnerFleetAssetTests(unittest.TestCase):
             "mystic_fleet_request_engine_job_cancellation",
             "mystic_fleet_complete_engine_job",
             "mystic_fleet_fail_engine_job",
+            "mystic_fleet_append_engine_attempt",
+            "mystic_reject_fleet_history_mutation",
+            "dead_lettered_at",
         ):
             self.assertIn(required, migration)
         self.assertNotIn("credential_token", migration)
+        self.assertIn("before update or delete on public.lab_engine_job_attempts", migration)
+        self.assertIn("before update or delete on public.lab_engine_runner_audit_events", migration)
 
     def test_linux_runner_is_non_root_read_only_and_has_no_shell_execution(self) -> None:
         dockerfile = (ROOT / "runners/linux/Dockerfile").read_text()

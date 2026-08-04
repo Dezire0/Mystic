@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -2329,6 +2330,57 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertEqual(result["body"]["scheduler"]["selected_runner_id"], "mystic-linux-cpu-runner")
         self.assertTrue(any("mystic_fleet_claim_next_engine_job" in call["url"] for call in result["fetchCalls"]))
         self.assertNotIn("fleet-runner-token", json.dumps(result["body"]))
+
+    def test_fleet_active_rejected_completion_does_not_mutate_runner_or_history(self) -> None:
+        verifier = "a0b168db4da3454195cb2bab84880c9d08d2b280b7286391ab558d30df26d9f9"
+        input_hash = hashlib.sha256(b'{"duration_seconds":1}').hexdigest()
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env | {"MYSTIC_RUNNER_FLEET_MODE": "fleet_active"},
+                "requestUrl": "https://mystic.dexproject.workers.dev/internal/engine-runner/complete",
+                "method": "POST",
+                "headers": {"Authorization": "Bearer fleet-runner-token"},
+                "body": {
+                    "runner_id": "mystic-linux-cpu-runner",
+                    "job_id": "job-1",
+                    "result": {
+                        "run_id": "run-1", "engine_id": "physics.simple_projectile", "engine_version": "2.0.0", "duration_ms": 1,
+                        "summary": {}, "values": {}, "warnings": [],
+                        "reproducibility": {"input_hash": input_hash, "output_hash": "output-hash"},
+                    },
+                },
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_runner_credentials", "status": 200, "body": [{"runner_id": "mystic-linux-cpu-runner", "credential_verifier": verifier}]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_jobs", "status": 200, "body": [{"job_id": "job-1", "engine_id": "physics.simple_projectile", "status": "running", "claimed_by": "mystic-linux-cpu-runner", "normalized_input": {"duration_seconds": 1}}]},
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_registry", "status": 200, "body": [{"engine_id": "physics.simple_projectile", "version": "2.0.0"}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/rpc/mystic_fleet_complete_engine_job", "status": 200, "body": False},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 409)
+        self.assertEqual(result["body"]["error"], "engine_job_not_claimed")
+        self.assertFalse(any("/lab_engine_runners" in call["url"] or "/lab_engine_job_attempts" in call["url"] for call in result["fetchCalls"]))
+
+    def test_fleet_active_rejected_failure_does_not_mutate_runner_or_history(self) -> None:
+        verifier = "a0b168db4da3454195cb2bab84880c9d08d2b280b7286391ab558d30df26d9f9"
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env | {"MYSTIC_RUNNER_FLEET_MODE": "fleet_active"},
+                "requestUrl": "https://mystic.dexproject.workers.dev/internal/engine-runner/fail",
+                "method": "POST",
+                "headers": {"Authorization": "Bearer fleet-runner-token"},
+                "body": {"runner_id": "mystic-linux-cpu-runner", "job_id": "job-1", "status": "failed", "safe_error": "bounded infrastructure failure", "retryable": True},
+                "fetchResponses": [
+                    {"methodPrefix": "GET https://example.supabase.co/rest/v1/lab_engine_runner_credentials", "status": 200, "body": [{"runner_id": "mystic-linux-cpu-runner", "credential_verifier": verifier}]},
+                    {"methodPrefix": "POST https://example.supabase.co/rest/v1/rpc/mystic_fleet_fail_engine_job", "status": 200, "body": False},
+                ],
+            },
+        )
+        self.assertEqual(result["status"], 409)
+        self.assertEqual(result["body"]["error"], "engine_job_not_claimed")
+        self.assertFalse(any("/lab_engine_runners" in call["url"] or "/lab_engine_job_attempts" in call["url"] for call in result["fetchCalls"]))
 
     def test_fleet_admin_lists_only_safe_runner_metadata(self) -> None:
         result = run_worker_helper(

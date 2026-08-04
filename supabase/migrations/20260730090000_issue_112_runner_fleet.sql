@@ -66,7 +66,7 @@ create table if not exists public.lab_engine_runner_audit_events (
   event_type text not null check (event_type in (
     'runner_registered','runner_updated','runner_online','runner_busy','runner_draining','runner_maintenance',
     'runner_stale','runner_offline','runner_quarantined','runner_restored','runner_credential_rotated',
-    'job_assigned','job_reassigned','lease_renewed','lease_expired','retry_scheduled','job_dead_lettered'
+    'job_assigned','job_reassigned','job_completed','job_failed','job_cancelled','lease_renewed','lease_expired','retry_scheduled','job_dead_lettered'
   )),
   runner_id text not null default '',
   job_id text not null default '',
@@ -87,6 +87,7 @@ alter table public.lab_engine_jobs
   add column if not exists maximum_attempts integer not null default 3 check (maximum_attempts between 1 and 10),
   add column if not exists retry_after timestamptz,
   add column if not exists terminal_reason text not null default '',
+  add column if not exists dead_lettered_at timestamptz,
   add column if not exists fleet_state text not null default 'queued' check (fleet_state in ('queued','claimed','running','cancellation_requested','completed','failed','cancelled','lease_expired','retry_wait','dead_letter')),
   add column if not exists scheduler_metadata jsonb not null default '{}'::jsonb;
 
@@ -109,6 +110,20 @@ create index if not exists lab_engine_jobs_fleet_queue_idx
   on public.lab_engine_jobs(status, fleet_state, retry_after, priority desc, created_at);
 create index if not exists lab_engine_jobs_fleet_lease_idx
   on public.lab_engine_jobs(lease_expires_at) where status = 'running';
+
+-- Active-mode transitions append history inside the same transaction that owns
+-- the queue state. The Worker never writes active-mode history after a RPC.
+create or replace function public.mystic_fleet_append_engine_attempt(p_job_id text, p_attempt_number integer, p_runner_id text, p_state text, p_lease_started_at timestamptz default null, p_lease_expires_at timestamptz default null, p_input_hash text default '', p_output_hash text default '', p_safe_reason text default '', p_scheduler_metadata jsonb default '{}'::jsonb)
+returns void language sql security definer set search_path = public as $$
+  insert into public.lab_engine_job_attempts(attempt_id,job_id,attempt_number,runner_id,state,lease_started_at,lease_expires_at,input_hash,output_hash,safe_reason,scheduler_metadata)
+  values ('attempt-' || gen_random_uuid()::text,p_job_id,greatest(1,p_attempt_number),p_runner_id,p_state,p_lease_started_at,p_lease_expires_at,left(coalesce(p_input_hash,''),256),left(coalesce(p_output_hash,''),256),left(coalesce(p_safe_reason,''),1000),coalesce(p_scheduler_metadata,'{}'::jsonb));
+$$;
+
+create or replace function public.mystic_fleet_append_audit_event(p_event_type text, p_runner_id text default '', p_job_id text default '', p_safe_reason text default '', p_metadata_safe jsonb default '{}'::jsonb, p_actor_type text default 'system')
+returns void language sql security definer set search_path = public as $$
+  insert into public.lab_engine_runner_audit_events(event_id,event_type,runner_id,job_id,actor_type,safe_reason,metadata_safe)
+  values ('runner-audit-' || gen_random_uuid()::text,p_event_type,p_runner_id,p_job_id,p_actor_type,left(coalesce(p_safe_reason,''),1000),coalesce(p_metadata_safe,'{}'::jsonb));
+$$;
 
 -- The Worker computes the complete deterministic ranking and this RPC repeats
 -- the non-bypassable eligibility checks inside the atomic claim transaction.
@@ -166,53 +181,84 @@ begin
   set active_jobs = active_jobs + 1, status = 'busy', fleet_state = 'busy', current_job_id = claimed.job_id,
       latest_heartbeat = timezone('utc', now()), last_heartbeat = timezone('utc', now()), updated_at = timezone('utc', now())
   where runner_id = p_runner_id;
+  perform public.mystic_fleet_append_engine_attempt(claimed.job_id,claimed.attempt_number,p_runner_id,'claimed',claimed.lease_started_at,claimed.lease_expires_at,'','','',jsonb_build_object('mode','fleet_active','selected_runner_id',p_runner_id));
+  perform public.mystic_fleet_append_audit_event(case when claimed.attempt_number > 1 then 'job_reassigned' else 'job_assigned' end,p_runner_id,claimed.job_id,'',jsonb_build_object('mode','fleet_active'));
   return next claimed;
 end $$;
 
 create or replace function public.mystic_fleet_renew_engine_job_lease(p_job_id text, p_runner_id text, p_lease_seconds integer default 60)
 returns boolean language plpgsql security definer set search_path = public as $$
+declare renewed public.lab_engine_jobs;
 begin
   update public.lab_engine_jobs
   set heartbeat_at = timezone('utc', now()), last_job_heartbeat = timezone('utc', now()),
       lease_expires_at = timezone('utc', now()) + make_interval(secs => greatest(10, least(p_lease_seconds, 300)))
   where job_id = p_job_id and status = 'running' and lease_owner = p_runner_id
     and assigned_runner_id = p_runner_id and cancellation_requested = false
-    and lease_expires_at >= timezone('utc', now());
-  return found;
+    and lease_expires_at >= timezone('utc', now())
+  returning * into renewed;
+  if not found then return false; end if;
+  perform public.mystic_fleet_append_engine_attempt(renewed.job_id,renewed.attempt_number,p_runner_id,'lease_renewed',renewed.lease_started_at,renewed.lease_expires_at);
+  perform public.mystic_fleet_append_audit_event('lease_renewed',p_runner_id,renewed.job_id);
+  return true;
 end $$;
 
 create or replace function public.mystic_fleet_recover_expired_engine_leases()
 returns integer language plpgsql security definer set search_path = public as $$
-declare recovered integer;
+declare recovered integer := 0;
+declare expired public.lab_engine_jobs;
+declare next_state text;
 begin
-  with expired as (
-    update public.lab_engine_jobs
-    set status = case when cancellation_requested then 'cancelled' when attempts >= max_attempts then 'timed_out' else 'pending' end,
-        fleet_state = case when cancellation_requested then 'cancelled' when attempts >= max_attempts then 'dead_letter' else 'retry_wait' end,
-        terminal_reason = case when attempts >= max_attempts then 'lease_expired_retry_limit' else terminal_reason end,
-        retry_after = case when cancellation_requested or attempts >= max_attempts then null else timezone('utc', now()) + make_interval(secs => least(300, 5 * power(2::numeric, greatest(0, attempts - 1))::integer) + floor(random() * 3)::integer) end,
-        claimed_by = '', lease_owner = '', lease_expires_at = null
+  for expired in
+    select * from public.lab_engine_jobs
     where status = 'running' and lease_expires_at < timezone('utc', now())
-    returning job_id, assigned_runner_id
-  ), released_runners as (
-    update public.lab_engine_runners runner set active_jobs = greatest(0, active_jobs - 1), current_job_id = '',
-      fleet_state = case when fleet_state = 'draining' then 'draining' else 'online' end, status = 'ready', updated_at = timezone('utc', now())
-    where runner.runner_id in (select assigned_runner_id from expired where assigned_runner_id <> '')
-  ) select count(*) into recovered from expired;
+    for update skip locked
+  loop
+    next_state := case when expired.cancellation_requested then 'cancelled' when expired.attempts >= expired.max_attempts then 'dead_letter' else 'retry_wait' end;
+    update public.lab_engine_jobs
+    set status = case when next_state = 'cancelled' then 'cancelled' when next_state = 'dead_letter' then 'timed_out' else 'pending' end,
+        fleet_state = next_state,
+        terminal_reason = case when next_state = 'dead_letter' then 'lease_expired_retry_limit' else terminal_reason end,
+        dead_lettered_at = case when next_state = 'dead_letter' then timezone('utc', now()) else dead_lettered_at end,
+        retry_after = case when next_state = 'retry_wait' then timezone('utc', now()) + make_interval(secs => least(300, 5 * power(2::numeric, greatest(0, expired.attempts - 1))::integer) + floor(random() * 3)::integer) else null end,
+        claimed_by = '', lease_owner = '', lease_expires_at = null
+    where job_id = expired.job_id;
+    update public.lab_engine_runners
+    set active_jobs = greatest(0, active_jobs - 1), current_job_id = '',
+        fleet_state = case when fleet_state = 'draining' then 'draining' else 'online' end, status = 'ready', updated_at = timezone('utc', now())
+    where runner_id = expired.assigned_runner_id and expired.assigned_runner_id <> '';
+    perform public.mystic_fleet_append_engine_attempt(expired.job_id,expired.attempt_number,expired.assigned_runner_id,'lease_expired',expired.lease_started_at,expired.lease_expires_at,'','','lease_expired');
+    if next_state = 'retry_wait' then
+      perform public.mystic_fleet_append_engine_attempt(expired.job_id,expired.attempt_number,expired.assigned_runner_id,'retry_scheduled',null,null,'','','lease_expired_retry');
+      perform public.mystic_fleet_append_audit_event('retry_scheduled',expired.assigned_runner_id,expired.job_id,'lease_expired_retry');
+    elsif next_state = 'dead_letter' then
+      perform public.mystic_fleet_append_engine_attempt(expired.job_id,expired.attempt_number,expired.assigned_runner_id,'dead_letter',null,null,'','','lease_expired_retry_limit');
+      perform public.mystic_fleet_append_audit_event('job_dead_lettered',expired.assigned_runner_id,expired.job_id,'lease_expired_retry_limit');
+    end if;
+    perform public.mystic_fleet_append_audit_event('lease_expired',expired.assigned_runner_id,expired.job_id);
+    recovered := recovered + 1;
+  end loop;
   return recovered;
 end $$;
 
 create or replace function public.mystic_fleet_complete_engine_job(p_job_id text, p_runner_id text, p_run_id text, p_engine_version text, p_result jsonb, p_summary jsonb, p_visualization jsonb, p_reproducibility jsonb, p_input_hash text, p_output_hash text, p_duration_ms bigint, p_warnings jsonb default '[]'::jsonb)
 returns boolean language plpgsql security definer set search_path = public as $$
+declare completed public.lab_engine_jobs;
 begin
-  if not exists(select 1 from public.lab_engine_jobs where job_id=p_job_id and status='running' and assigned_runner_id=p_runner_id and lease_owner=p_runner_id and cancellation_requested=false and lease_expires_at >= timezone('utc',now())) then return false; end if;
+  select * into completed from public.lab_engine_jobs
+  where job_id=p_job_id and status='running' and assigned_runner_id=p_runner_id and lease_owner=p_runner_id
+    and cancellation_requested=false and lease_expires_at >= timezone('utc',now())
+  for update;
+  if not found then return false; end if;
   insert into public.lab_engine_runs(run_id,job_id,session_id,experiment_id,scene_id,engine_id,engine_version,status,result,summary,visualization,reproducibility,input_hash,output_hash,duration_ms,warnings,completed_at)
-    select p_run_id,job_id,session_id,experiment_id,scene_id,engine_id,p_engine_version,'completed',p_result,p_summary,p_visualization,p_reproducibility,p_input_hash,p_output_hash,p_duration_ms,p_warnings,timezone('utc',now()) from public.lab_engine_jobs where job_id=p_job_id
+    values (p_run_id,completed.job_id,completed.session_id,completed.experiment_id,completed.scene_id,completed.engine_id,p_engine_version,'completed',p_result,p_summary,p_visualization,p_reproducibility,p_input_hash,p_output_hash,p_duration_ms,p_warnings,timezone('utc',now()))
     on conflict (job_id) do nothing;
   update public.lab_engine_jobs set status='completed',fleet_state='completed',completed_at=timezone('utc',now()),lease_expires_at=null,lease_owner=''
-    where job_id=p_job_id and status='running' and assigned_runner_id=p_runner_id and lease_owner=p_runner_id;
-  if found then update public.lab_engine_runners set active_jobs=greatest(0,active_jobs-1),current_job_id='',fleet_state=case when fleet_state='draining' then 'draining' else 'online' end,status='ready',updated_at=timezone('utc',now()) where runner_id=p_runner_id; end if;
-  return found;
+    where job_id=completed.job_id;
+  update public.lab_engine_runners set active_jobs=greatest(0,active_jobs-1),current_job_id='',fleet_state=case when fleet_state='draining' then 'draining' else 'online' end,status='ready',completed_count=completed_count+1,latest_heartbeat=timezone('utc',now()),last_heartbeat=timezone('utc',now()),updated_at=timezone('utc',now()) where runner_id=p_runner_id;
+  perform public.mystic_fleet_append_engine_attempt(completed.job_id,completed.attempt_number,p_runner_id,'completed',completed.lease_started_at,completed.lease_expires_at,p_input_hash,p_output_hash);
+  perform public.mystic_fleet_append_audit_event('job_completed',p_runner_id,completed.job_id,'',jsonb_build_object('mode','fleet_active'));
+  return true;
 end $$;
 
 create or replace function public.mystic_fleet_request_engine_job_cancellation(p_job_id text)
@@ -229,24 +275,59 @@ end $$;
 create or replace function public.mystic_fleet_fail_engine_job(p_job_id text, p_runner_id text, p_status text, p_safe_error text, p_retryable boolean default false)
 returns boolean language plpgsql security definer set search_path = public as $$
 declare retrying boolean;
+declare failed public.lab_engine_jobs;
 begin
   if p_status not in ('failed','cancelled','timed_out') then raise exception 'invalid final status'; end if;
-  select p_retryable and attempts < max_attempts and not cancellation_requested into retrying from public.lab_engine_jobs where job_id=p_job_id and status='running' and assigned_runner_id=p_runner_id and lease_owner=p_runner_id;
-  if retrying is null then return false; end if;
+  select * into failed from public.lab_engine_jobs where job_id=p_job_id and status='running' and assigned_runner_id=p_runner_id and lease_owner=p_runner_id for update;
+  if not found then return false; end if;
+  retrying := p_retryable and failed.attempts < failed.max_attempts and not failed.cancellation_requested;
   update public.lab_engine_jobs set status=case when retrying then 'pending' else p_status end,
     fleet_state=case when cancellation_requested or p_status='cancelled' then 'cancelled' when retrying then 'retry_wait' when attempts >= max_attempts then 'dead_letter' else 'failed' end,
     retry_after=case when retrying then timezone('utc',now()) + make_interval(secs => least(300, 5 * power(2::numeric, greatest(0, attempts - 1))::integer) + floor(random() * 3)::integer) else null end,
     terminal_reason=case when retrying then '' when attempts >= max_attempts then 'retry_limit_reached' else left(p_safe_error,1000) end,
+    dead_lettered_at=case when not retrying and not cancellation_requested and p_status <> 'cancelled' and attempts >= max_attempts then timezone('utc',now()) else dead_lettered_at end,
     safe_error=left(p_safe_error,1000),completed_at=case when retrying then null else timezone('utc',now()) end,lease_expires_at=null,lease_owner='',claimed_by=''
-  where job_id=p_job_id and status='running' and assigned_runner_id=p_runner_id;
-  if found then update public.lab_engine_runners set active_jobs=greatest(0,active_jobs-1),current_job_id='',fleet_state=case when fleet_state='draining' then 'draining' else 'online' end,status='ready',failure_count=failure_count+1,updated_at=timezone('utc',now()) where runner_id=p_runner_id; end if;
-  return found;
+  where job_id=failed.job_id;
+  update public.lab_engine_runners set active_jobs=greatest(0,active_jobs-1),current_job_id='',fleet_state=case when fleet_state='draining' then 'draining' else 'online' end,status='ready',failure_count=failure_count+1,failed_count=failed_count+1,latest_heartbeat=timezone('utc',now()),last_heartbeat=timezone('utc',now()),updated_at=timezone('utc',now()) where runner_id=p_runner_id;
+  if retrying then
+    perform public.mystic_fleet_append_engine_attempt(failed.job_id,failed.attempt_number,p_runner_id,'failed',failed.lease_started_at,failed.lease_expires_at,'','',p_safe_error);
+    perform public.mystic_fleet_append_engine_attempt(failed.job_id,failed.attempt_number,p_runner_id,'retry_scheduled',failed.lease_started_at,failed.lease_expires_at,'','',p_safe_error);
+    perform public.mystic_fleet_append_audit_event('retry_scheduled',p_runner_id,failed.job_id,p_safe_error);
+  elsif failed.cancellation_requested or p_status='cancelled' then
+    perform public.mystic_fleet_append_engine_attempt(failed.job_id,failed.attempt_number,p_runner_id,'cancelled',failed.lease_started_at,failed.lease_expires_at,'','',p_safe_error);
+    perform public.mystic_fleet_append_audit_event('job_cancelled',p_runner_id,failed.job_id,p_safe_error);
+  elsif failed.attempts >= failed.max_attempts then
+    perform public.mystic_fleet_append_engine_attempt(failed.job_id,failed.attempt_number,p_runner_id,'failed',failed.lease_started_at,failed.lease_expires_at,'','',p_safe_error);
+    perform public.mystic_fleet_append_engine_attempt(failed.job_id,failed.attempt_number,p_runner_id,'dead_letter',failed.lease_started_at,failed.lease_expires_at,'','',p_safe_error);
+    perform public.mystic_fleet_append_audit_event('job_dead_lettered',p_runner_id,failed.job_id,p_safe_error);
+  else
+    perform public.mystic_fleet_append_engine_attempt(failed.job_id,failed.attempt_number,p_runner_id,'failed',failed.lease_started_at,failed.lease_expires_at,'','',p_safe_error);
+    perform public.mystic_fleet_append_audit_event('job_failed',p_runner_id,failed.job_id,p_safe_error);
+  end if;
+  return true;
 end $$;
 
 alter table public.lab_engine_runner_credentials enable row level security;
 alter table public.lab_engine_job_attempts enable row level security;
 alter table public.lab_engine_runner_audit_events enable row level security;
+
+create or replace function public.mystic_reject_fleet_history_mutation()
+returns trigger language plpgsql set search_path = public as $$
+begin
+  raise exception 'runner fleet history is append-only';
+end $$;
+
+create trigger lab_engine_job_attempts_append_only
+before update or delete on public.lab_engine_job_attempts
+for each row execute function public.mystic_reject_fleet_history_mutation();
+
+create trigger lab_engine_runner_audit_events_append_only
+before update or delete on public.lab_engine_runner_audit_events
+for each row execute function public.mystic_reject_fleet_history_mutation();
+
 revoke all on public.lab_engine_runner_credentials, public.lab_engine_job_attempts, public.lab_engine_runner_audit_events from anon, authenticated;
-grant select, insert, update, delete on public.lab_engine_runner_credentials, public.lab_engine_job_attempts, public.lab_engine_runner_audit_events to service_role;
+grant select, insert, update on public.lab_engine_runner_credentials to service_role;
+grant select, insert on public.lab_engine_job_attempts, public.lab_engine_runner_audit_events to service_role;
+revoke all on function public.mystic_fleet_append_engine_attempt(text,integer,text,text,timestamptz,timestamptz,text,text,text,jsonb), public.mystic_fleet_append_audit_event(text,text,text,text,jsonb,text), public.mystic_reject_fleet_history_mutation() from public;
 revoke all on function public.mystic_fleet_claim_next_engine_job(text,integer), public.mystic_fleet_renew_engine_job_lease(text,text,integer), public.mystic_fleet_recover_expired_engine_leases(), public.mystic_fleet_complete_engine_job(text,text,text,text,jsonb,jsonb,jsonb,jsonb,text,text,bigint,jsonb), public.mystic_fleet_request_engine_job_cancellation(text), public.mystic_fleet_fail_engine_job(text,text,text,text,boolean) from public;
 grant execute on function public.mystic_fleet_claim_next_engine_job(text,integer), public.mystic_fleet_renew_engine_job_lease(text,text,integer), public.mystic_fleet_recover_expired_engine_leases(), public.mystic_fleet_complete_engine_job(text,text,text,text,jsonb,jsonb,jsonb,jsonb,text,text,bigint,jsonb), public.mystic_fleet_request_engine_job_cancellation(text), public.mystic_fleet_fail_engine_job(text,text,text,text,boolean) to service_role;
