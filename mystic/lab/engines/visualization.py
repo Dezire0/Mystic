@@ -5,7 +5,7 @@ from typing import Any
 from .errors import EngineError
 
 
-SUPPORTED_LAYER_TYPES = frozenset({"point", "point_set", "line", "polyline", "trajectory", "vector", "vector_field", "scalar_label", "time_series_link", "object_state", "heatmap_points", "graph_network"})
+SUPPORTED_LAYER_TYPES = frozenset({"point", "point_set", "line", "polyline", "trajectory", "vector", "vector_field", "scalar_label", "time_series_link", "object_state", "heatmap_points", "graph_network", "function_curve", "convergence_curve", "matrix_heatmap", "histogram", "scatter_plot", "phase_diagram", "confidence_interval", "error_curve"})
 
 
 def validate_visualization(descriptor: dict[str, Any] | None) -> dict[str, Any] | None:

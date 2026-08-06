@@ -641,6 +641,20 @@ const ENGINE_TOOL_DEFINITIONS = [
 ].map(([name, description, properties, required = []]) => ({ name, title:name.replaceAll("_"," "), description, inputSchema:{type:"object",properties,required,additionalProperties:false}, securitySchemes:[{type:"oauth2",scopes:["tools:read","tools:execute"]}], annotations:{readOnlyHint:["lab_engine_list","lab_engine_get","lab_engine_match","lab_engine_job_get","lab_engine_job_wait","lab_engine_result_get","lab_engine_artifact_list"].includes(name)} }));
 CLOUD_TOOL_DEFINITIONS.push(...ENGINE_TOOL_DEFINITIONS);
 for (const tool of ENGINE_TOOL_DEFINITIONS) CLOUD_TOOL_NAMES.add(tool.name);
+const MATH_TOOL_DEFINITIONS = [
+  ["lab_math_list", "List trusted Math Engine Pack solvers. Solver code is never executed in the Worker.", { capability:{type:"string"} }],
+  ["lab_math_get", "Inspect one trusted Math Engine Pack solver manifest and its published limits.", { engine_id:{type:"string",minLength:1} }, ["engine_id"]],
+  ["lab_math_run", "Create a Math Engine Pack job for a compatible trusted runner. Never fabricate a result when no runner is available.", { engine_id:{type:"string",minLength:1}, input:{type:"object"}, session_id:{type:"string"}, experiment_id:{type:"string"}, scene_id:{type:"string"}, seed:{type:"integer"} }, ["engine_id","input"]],
+  ["lab_math_compare", "Deterministically compare eligible Math Engine Pack manifests without running computations.", { required_capabilities:{type:"array",items:{type:"string"}} }],
+  ["lab_math_visualize", "Return a renderer-independent visualization descriptor from a completed math result.", { run_id:{type:"string",minLength:1} }, ["run_id"]],
+  ["lab_math_benchmark", "Queue a bounded synthetic math benchmark on a trusted runner.", { workload:{type:"string",enum:["matrix","ode","optimization","regression","monte_carlo"]}, dimension:{type:"integer",minimum:2,maximum:64} }, ["workload"]],
+  ["lab_math_fit", "Queue a declarative statistics or regression job on a trusted runner.", { input:{type:"object"} }, ["input"]],
+  ["lab_math_optimize", "Queue a declarative bounded optimization job on a trusted runner.", { input:{type:"object"} }, ["input"]],
+  ["lab_math_uncertainty", "Queue declarative uncertainty propagation on a trusted runner.", { input:{type:"object"} }, ["input"]],
+  ["lab_math_sensitivity", "Queue declarative sensitivity analysis on a trusted runner.", { input:{type:"object"} }, ["input"]],
+].map(([name, description, properties, required = []]) => ({ name, title:name.replaceAll("_"," "), description, inputSchema:{type:"object",properties,required,additionalProperties:false}, securitySchemes:[{type:"oauth2",scopes:["tools:read","tools:execute"]}], annotations:{readOnlyHint:["lab_math_list","lab_math_get","lab_math_compare","lab_math_visualize"].includes(name)} }));
+CLOUD_TOOL_DEFINITIONS.push(...MATH_TOOL_DEFINITIONS);
+for (const tool of MATH_TOOL_DEFINITIONS) CLOUD_TOOL_NAMES.add(tool.name);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const authorizationCodeMemoryStore = new Map();
@@ -1033,6 +1047,11 @@ function validateCloudToolArguments(name, args) {
     return ["arguments must be a JSON object"];
   }
   const errors = [];
+  if (name === "lab_math_get" && (typeof args.engine_id !== "string" || !args.engine_id.trim())) errors.push("engine_id is required");
+  if (name === "lab_math_run" && (typeof args.engine_id !== "string" || !args.engine_id.trim())) errors.push("engine_id is required");
+  if (["lab_math_run", "lab_math_fit", "lab_math_optimize", "lab_math_uncertainty", "lab_math_sensitivity"].includes(name) && (!args.input || typeof args.input !== "object" || Array.isArray(args.input))) errors.push("input must be an object");
+  if (name === "lab_math_visualize" && (typeof args.run_id !== "string" || !args.run_id.trim())) errors.push("run_id is required");
+  if (name === "lab_math_benchmark" && !["matrix", "ode", "optimization", "regression", "monte_carlo"].includes(trimmed(args.workload))) errors.push("workload must be an allowlisted benchmark");
   if (name === "lab_engine_run") {
     if (typeof args.engine_id !== "string" || !args.engine_id.trim()) errors.push("engine_id is required");
     if (!args.input || typeof args.input !== "object" || Array.isArray(args.input)) errors.push("input must be an object");
@@ -4248,6 +4267,16 @@ async function cloudMysticStatus(state, supabase, env) {
     provider_disconnect: supabase.configured ? "ready" : "blocked",
     provider_model_list: "ready",
     provider_call_test: "ready",
+    lab_math_list: supabase.configured ? "ready" : "blocked",
+    lab_math_get: supabase.configured ? "ready" : "blocked",
+    lab_math_run: supabase.configured ? "ready" : "blocked",
+    lab_math_compare: supabase.configured ? "ready" : "blocked",
+    lab_math_visualize: supabase.configured ? "ready" : "blocked",
+    lab_math_benchmark: supabase.configured ? "ready" : "blocked",
+    lab_math_fit: supabase.configured ? "ready" : "blocked",
+    lab_math_optimize: supabase.configured ? "ready" : "blocked",
+    lab_math_uncertainty: supabase.configured ? "ready" : "blocked",
+    lab_math_sensitivity: supabase.configured ? "ready" : "blocked",
   };
   const blockers = [];
   if (!state.enabled) {
@@ -4575,6 +4604,17 @@ async function callCloudTool(name, args, env, state) {
   if (name === "health_check") {
     return cloudHealthCheck(state, supabase, env);
   }
+  // Math tools deliberately only map to trusted-engine jobs or stored results.
+  // The Cloudflare Worker does not execute Python or user-defined mathematics.
+  if (name === "lab_math_list") return callCloudTool("lab_engine_list", { ...args, domain:"math" }, env, state);
+  if (name === "lab_math_get") return callCloudTool("lab_engine_get", { engine_id:args.engine_id }, env, state);
+  if (name === "lab_math_run") return callCloudTool("lab_engine_run", { ...args, requested_visualization:true }, env, state);
+  if (name === "lab_math_compare") return callCloudTool("lab_engine_match", { domain:"math", required_capabilities:asStringArray(args.required_capabilities), deterministic_required:true, visualization_required:false }, env, state);
+  if (name === "lab_math_visualize") return callCloudTool("lab_engine_result_get", { run_id:args.run_id }, env, state);
+  if (name === "lab_math_benchmark") return callCloudTool("lab_engine_run", { engine_id:"math.benchmark", input:{ operation:args.workload, dimension:Number(args.dimension) || 32 }, requested_visualization:true }, env, state);
+  if (name === "lab_math_fit") return callCloudTool("lab_engine_run", { engine_id:"math.statistics", input:objectMapping(args.input), requested_visualization:true }, env, state);
+  if (name === "lab_math_optimize") return callCloudTool("lab_engine_run", { engine_id:"math.optimization", input:objectMapping(args.input), requested_visualization:true }, env, state);
+  if (name === "lab_math_uncertainty" || name === "lab_math_sensitivity") return callCloudTool("lab_engine_run", { engine_id:"math.uncertainty", input:name === "lab_math_sensitivity" ? { ...objectMapping(args.input), operation:trimmed(objectMapping(args.input).operation,"sensitivity_analysis") } : objectMapping(args.input), requested_visualization:true }, env, state);
   if (!supabase.configured) {
     throw new Error("Supabase storage is not configured for cloud-native LAB mode.");
   }

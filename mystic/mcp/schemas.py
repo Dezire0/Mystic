@@ -465,6 +465,36 @@ TOOL_SCHEMAS = {
         "required": ["packet_id", "label_json", "source_model", "target_agent"],
         "additionalProperties": False,
     },
+    "lab_math_list": {
+        "type": "object", "properties": {"capability": {"type": "string"}}, "additionalProperties": False,
+    },
+    "lab_math_get": {
+        "type": "object", "properties": {"engine_id": {"type": "string", "minLength": 1}}, "required": ["engine_id"], "additionalProperties": False,
+    },
+    "lab_math_run": {
+        "type": "object", "properties": {"engine_id": {"type": "string", "minLength": 1}, "input": {"type": "object"}, "session_id": {"type": "string"}, "experiment_id": {"type": "string"}, "scene_id": {"type": "string"}, "seed": {"type": "integer"}}, "required": ["engine_id", "input"], "additionalProperties": False,
+    },
+    "lab_math_compare": {
+        "type": "object", "properties": {"required_capabilities": {"type": "array", "items": {"type": "string"}, "maxItems": 32}}, "additionalProperties": False,
+    },
+    "lab_math_visualize": {
+        "type": "object", "properties": {"run_id": {"type": "string", "minLength": 1}}, "required": ["run_id"], "additionalProperties": False,
+    },
+    "lab_math_benchmark": {
+        "type": "object", "properties": {"workload": {"type": "string", "enum": ["matrix", "ode", "optimization", "regression", "monte_carlo"]}, "dimension": {"type": "integer", "minimum": 2, "maximum": 64}}, "required": ["workload"], "additionalProperties": False,
+    },
+    "lab_math_fit": {
+        "type": "object", "properties": {"input": {"type": "object"}}, "required": ["input"], "additionalProperties": False,
+    },
+    "lab_math_optimize": {
+        "type": "object", "properties": {"input": {"type": "object"}}, "required": ["input"], "additionalProperties": False,
+    },
+    "lab_math_uncertainty": {
+        "type": "object", "properties": {"input": {"type": "object"}}, "required": ["input"], "additionalProperties": False,
+    },
+    "lab_math_sensitivity": {
+        "type": "object", "properties": {"input": {"type": "object"}}, "required": ["input"], "additionalProperties": False,
+    },
 }
 
 
@@ -720,6 +750,16 @@ TOOL_DEFINITIONS = [
         "Import teacher labels for local agents and persist them under mystic_data.",
         title="Import Teacher Label",
     ),
+    _tool_definition("lab_math_list", "List trusted Math Engine Pack solvers and their safe capabilities.", title="List Math Solvers", read_only=True),
+    _tool_definition("lab_math_get", "Inspect one Math Engine Pack solver manifest, tolerances, limitations, and capabilities.", title="Get Math Solver", read_only=True),
+    _tool_definition("lab_math_run", "Create and execute a local trusted-runner math job; cloud deployments queue the same job for a registered runner.", title="Run Math Solver"),
+    _tool_definition("lab_math_compare", "Deterministically compare eligible Math Engine Pack solver manifests without fabricating results.", title="Compare Math Solvers", read_only=True),
+    _tool_definition("lab_math_visualize", "Return a renderer-independent descriptor from a completed trusted Math Engine Pack run.", title="Visualize Math Result", read_only=True),
+    _tool_definition("lab_math_benchmark", "Queue a bounded synthetic Math Engine Pack benchmark through a trusted runner.", title="Benchmark Math Solver"),
+    _tool_definition("lab_math_fit", "Queue a declarative statistics/regression fit through a trusted runner.", title="Fit Math Model"),
+    _tool_definition("lab_math_optimize", "Queue a declarative bounded optimization job through a trusted runner.", title="Optimize Math Model"),
+    _tool_definition("lab_math_uncertainty", "Queue declarative uncertainty propagation through a trusted runner.", title="Math Uncertainty"),
+    _tool_definition("lab_math_sensitivity", "Queue declarative sensitivity analysis through a trusted runner.", title="Math Sensitivity"),
 ]
 
 
@@ -760,6 +800,16 @@ PUBLIC_TOOL_NAMES = [
     "provider_disconnect",
     "provider_model_list",
     "provider_call_test",
+    "lab_math_list",
+    "lab_math_get",
+    "lab_math_run",
+    "lab_math_compare",
+    "lab_math_visualize",
+    "lab_math_benchmark",
+    "lab_math_fit",
+    "lab_math_optimize",
+    "lab_math_uncertainty",
+    "lab_math_sensitivity",
 ]
 
 

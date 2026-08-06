@@ -216,7 +216,7 @@ uv run python -m unittest discover tests -v
 
 The editable install includes reusable `mystic` and `scripts` modules. The lockfile pins the FastAPI/Starlette/httpx test-client compatibility range so this command does not depend on a shell `PYTHONPATH` override.
 
-## Scientific engine runtime (Phase 2A foundation)
+## Scientific engine runtime (Phase 2A foundation and Phase 2B.2 Math Engine Pack)
 
 `mystic.lab.engines` is a server-owned allowlist of deterministic scientific tools. It never loads a module, executes code, or installs a package from a user request. The initial registry contains bounded math, projectile, collision, n-body, reaction-kinetics, population-dynamics, and safe low-voltage DC-circuit models.
 
@@ -229,6 +229,8 @@ uv run python scripts/sync_engine_registry.py --check
 ```
 
 The checked-in runner is a local trusted-runtime foundation. After the Phase 2A migration is applied, synchronize only the built-in manifests from the runner environment with `uv run python scripts/sync_engine_registry.py --apply`. That command requires the runner's server-side Supabase configuration; it never reads credentials from a browser or exposes them in output. Production job claiming and completion require a separately deployed runner with a server-side `MYSTIC_ENGINE_RUNNER_TOKEN`; neither browsers nor Cloudflare Workers execute Python workloads or receive that credential.
+
+Phase 2B.2 adds a bounded, standard-library Mathematics & Numerical Computing Engine Pack. It contains 11 new `math.*` runner engines for linear algebra, root finding, integration, ODEs, optimization, statistics, probability, geometry, uncertainty, calculus, and bounded benchmarks. The new MCP tools queue or inspect trusted-runner jobs; they do not execute mathematical code inside a Cloudflare Worker or browser. See [Math Engine Pack](docs/math_engine_pack.md), [ScientificModelSpec](docs/scientific_model_spec.md), and [Math Solver SDK](docs/math_solver_sdk.md).
 
 ## Deployment
 

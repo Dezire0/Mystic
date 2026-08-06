@@ -11,6 +11,7 @@ from typing import Any
 from mystic.debate.runner import DebateRunner
 from mystic.final_answer_verifier import extract_candidate_tuples, verify_final_answer
 from mystic.lab.runner import LabRunner
+from mystic.lab.engines import EngineRuntime, builtin_registry
 from mystic.mcp.import_verification import (
     default_verification_artifact_path,
     load_import_verification,
@@ -69,6 +70,16 @@ LAB_TOOL_NAMES = (
     "provider_disconnect",
     "provider_model_list",
     "provider_call_test",
+    "lab_math_list",
+    "lab_math_get",
+    "lab_math_run",
+    "lab_math_compare",
+    "lab_math_visualize",
+    "lab_math_benchmark",
+    "lab_math_fit",
+    "lab_math_optimize",
+    "lab_math_uncertainty",
+    "lab_math_sensitivity",
 )
 
 PHASE_1_TOOL_NAMES = (
@@ -108,6 +119,8 @@ class MysticToolbox:
             research_table_runner=self.research_table_runner,
         )
         self.provider_connect = self.lab_runner.provider_connect
+        self.math_runtime = EngineRuntime(builtin_registry())
+        self._math_runs: dict[str, dict[str, Any]] = {}
         self._ensure_data_dirs()
 
     def mystic_status(self) -> dict[str, Any]:
@@ -177,6 +190,16 @@ class MysticToolbox:
                 "provider_disconnect": "ready",
                 "provider_model_list": "ready",
                 "provider_call_test": "ready",
+                "lab_math_list": "ready",
+                "lab_math_get": "ready",
+                "lab_math_run": "ready",
+                "lab_math_compare": "ready",
+                "lab_math_visualize": "ready",
+                "lab_math_benchmark": "ready",
+                "lab_math_fit": "ready",
+                "lab_math_optimize": "ready",
+                "lab_math_uncertainty": "ready",
+                "lab_math_sensitivity": "ready",
             },
             "provider_registry": provider_registry,
             "lab_core_available": True,
@@ -763,6 +786,63 @@ class MysticToolbox:
 
     def provider_call_test(self, *, provider_id: str, prompt: str) -> dict[str, Any]:
         return self.provider_connect.provider_call_test(provider_id=provider_id, prompt=prompt)
+
+    def lab_math_list(self, *, capability: str | None = None) -> dict[str, Any]:
+        manifests = builtin_registry().list(domain="math", capability=capability)
+        return {"solvers": [manifest.public_dict() for manifest in manifests], "execution": "trusted_runner_only"}
+
+    def lab_math_get(self, *, engine_id: str) -> dict[str, Any]:
+        manifest = builtin_registry().get(engine_id).manifest()
+        if manifest.domain != "math":
+            raise ValueError("engine_id must identify a math engine.")
+        return manifest.public_dict()
+
+    def lab_math_run(
+        self,
+        *,
+        engine_id: str,
+        input: dict[str, Any],
+        session_id: str = "",
+        experiment_id: str = "",
+        scene_id: str = "",
+        seed: int | None = None,
+    ) -> dict[str, Any]:
+        manifest = builtin_registry().get(engine_id).manifest()
+        if manifest.domain != "math":
+            raise ValueError("engine_id must identify a math engine.")
+        job = self.math_runtime.create_job(engine_id=engine_id, input_payload=input, session_id=session_id, experiment_id=experiment_id, scene_id=scene_id, seed=seed)
+        completed = self.math_runtime.execute_next("local-trusted-math-runner")
+        if completed is None:
+            return {**job, "status": "runner_required", "next_action": "Wait for a trusted runner to claim the math job."}
+        if completed.get("run_id"):
+            self._math_runs[str(completed["run_id"])] = completed
+        return {"job": job, "result": completed}
+
+    def lab_math_compare(self, *, required_capabilities: list[str] | None = None) -> dict[str, Any]:
+        required = set(required_capabilities or [])
+        candidates = [manifest.public_dict() for manifest in builtin_registry().list(domain="math") if required.issubset(set(manifest.capabilities))]
+        return {"candidates": candidates, "selection": "deterministic engine_id ordering", "next_action": "Select one solver and call lab_math_run."}
+
+    def lab_math_visualize(self, *, run_id: str) -> dict[str, Any]:
+        run = self._math_runs.get(run_id)
+        if not run:
+            return {"status": "engine_result_required", "run_id": run_id, "next_action": "Retrieve a completed trusted-runner result first."}
+        return {"run_id": run_id, "visualization": run.get("visualization") or {}, "renderer": "descriptor_only"}
+
+    def lab_math_benchmark(self, *, workload: str, dimension: int = 32) -> dict[str, Any]:
+        return self.lab_math_run(engine_id="math.benchmark", input={"operation": workload, "dimension": dimension})
+
+    def lab_math_fit(self, *, input: dict[str, Any]) -> dict[str, Any]:
+        return self.lab_math_run(engine_id="math.statistics", input=input)
+
+    def lab_math_optimize(self, *, input: dict[str, Any]) -> dict[str, Any]:
+        return self.lab_math_run(engine_id="math.optimization", input=input)
+
+    def lab_math_uncertainty(self, *, input: dict[str, Any]) -> dict[str, Any]:
+        return self.lab_math_run(engine_id="math.uncertainty", input=input)
+
+    def lab_math_sensitivity(self, *, input: dict[str, Any]) -> dict[str, Any]:
+        return self.lab_math_run(engine_id="math.uncertainty", input={**input, "operation": input.get("operation", "sensitivity_analysis")})
 
     def mystic_export_teacher_packet(
         self,
