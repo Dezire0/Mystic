@@ -8,6 +8,7 @@ from ..errors import EngineError
 from ..manifest import EngineManifest
 from ..registry import EngineRegistry
 from ..visualization import validate_visualization
+from mystic.lab.math import math_engine_plugins
 
 
 def _number(payload: dict[str, Any], name: str, *, minimum: float | None = None, default: float | None = None) -> float:
@@ -164,4 +165,4 @@ class DCCircuitPlugin(_Plugin):
 
 
 def builtin_registry() -> EngineRegistry:
-    return EngineRegistry([MathSympyPlugin(), ProjectilePlugin(), CollisionPlugin(), NBodyPlugin(), KineticsPlugin(), PopulationPlugin(), DCCircuitPlugin()])
+    return EngineRegistry([MathSympyPlugin(), ProjectilePlugin(), CollisionPlugin(), NBodyPlugin(), KineticsPlugin(), PopulationPlugin(), DCCircuitPlugin(), *math_engine_plugins()])

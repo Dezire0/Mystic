@@ -7,6 +7,17 @@ from mystic.lab.engines import EngineExecutionContext, builtin_registry
 
 SMOKE_INPUTS = {
     "math.sympy": {"operation":"solve_linear","equation":"2*x + 3 = 7","variable":"x"},
+    "math.linear_algebra": {"operation":"rank","matrix":[[1,0],[0,1]]},
+    "math.root_finding": {"operation":"bisection","function":{"family":"polynomial","coefficients":[-1,1]},"lower":0,"upper":2},
+    "math.numerical_integration": {"operation":"simpson","function":{"family":"polynomial","coefficients":[0,1]},"lower":0,"upper":1,"steps":10},
+    "math.ode_solver": {"operation":"rk4","rhs":{"family":"exponential_decay","rate":1},"initial_state":[1],"start":0,"end":0.1,"step":0.01},
+    "math.optimization": {"operation":"gradient_descent","objective":{"family":"quadratic","matrix":[[2]],"center":[1]},"initial":[0]},
+    "math.statistics": {"operation":"mean","values":[1,2,3]},
+    "math.probability": {"operation":"monte_carlo","distribution":{"family":"normal"},"sample_count":10,"seed":0},
+    "math.geometry": {"operation":"distance","a":[0,0],"b":[3,4]},
+    "math.uncertainty": {"operation":"floating_point_diagnostics","value":1.0},
+    "math.calculus": {"operation":"automatic_differentiation","function":{"family":"polynomial","coefficients":[0,0,1]},"x":2},
+    "math.benchmark": {"operation":"matrix","dimension":4},
     "physics.simple_projectile": {"initial_position":[0,0,0],"initial_velocity":[1,5,0],"duration_seconds":1},
     "physics.simple_collision": {"mass_a":1,"mass_b":1,"velocity_a":2,"velocity_b":0},
     "physics.n_body": {"bodies":[{"id":"a","mass_kg":1e10,"position_m":[0,0,0],"velocity_m_s":[0,0,0]},{"id":"b","mass_kg":1e5,"position_m":[10,0,0],"velocity_m_s":[0,1,0]}],"duration_seconds":1,"time_step_seconds":0.1},

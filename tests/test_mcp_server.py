@@ -114,6 +114,36 @@ class _StubToolbox:
     def provider_call_test(self, **_: object) -> dict:
         return {"provider_id": "openai_compatible", "status": "provider_required"}
 
+    def lab_math_list(self, **_: object) -> dict:
+        return {"solvers": []}
+
+    def lab_math_get(self, **_: object) -> dict:
+        return {"engine_id": "math.linear_algebra"}
+
+    def lab_math_run(self, **_: object) -> dict:
+        return {"result": {"status": "completed"}}
+
+    def lab_math_compare(self, **_: object) -> dict:
+        return {"candidates": []}
+
+    def lab_math_visualize(self, **_: object) -> dict:
+        return {"visualization": {}}
+
+    def lab_math_benchmark(self, **_: object) -> dict:
+        return {"result": {"status": "completed"}}
+
+    def lab_math_fit(self, **_: object) -> dict:
+        return {"result": {"status": "completed"}}
+
+    def lab_math_optimize(self, **_: object) -> dict:
+        return {"result": {"status": "completed"}}
+
+    def lab_math_uncertainty(self, **_: object) -> dict:
+        return {"result": {"status": "completed"}}
+
+    def lab_math_sensitivity(self, **_: object) -> dict:
+        return {"result": {"status": "completed"}}
+
 
 class MCPServerTests(unittest.TestCase):
     def test_initialize_returns_server_capabilities(self):
@@ -170,8 +200,25 @@ class MCPServerTests(unittest.TestCase):
                 "provider_disconnect",
                 "provider_model_list",
                 "provider_call_test",
+                "lab_math_list",
+                "lab_math_get",
+                "lab_math_run",
+                "lab_math_compare",
+                "lab_math_visualize",
+                "lab_math_benchmark",
+                "lab_math_fit",
+                "lab_math_optimize",
+                "lab_math_uncertainty",
+                "lab_math_sensitivity",
             ],
         )
+
+    def test_math_tool_rejects_missing_problem_input(self):
+        server = MysticMCPServer(toolbox=_StubToolbox())
+        response = server.handle_request({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "lab_math_run", "arguments": {"engine_id": "math.statistics"}}})
+        assert response is not None
+        self.assertEqual(response["error"]["code"], -32000)
+        self.assertIn("$.input is required", response["error"]["message"])
 
     def test_tools_call_returns_structured_content(self):
         server = MysticMCPServer(toolbox=_StubToolbox())

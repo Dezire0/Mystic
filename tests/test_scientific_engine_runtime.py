@@ -11,7 +11,16 @@ class ScientificEngineRuntimeTests(unittest.TestCase):
         self.registry = builtin_registry()
 
     def test_registry_is_deterministic_and_allowlisted(self) -> None:
-        self.assertEqual([manifest.engine_id for manifest in self.registry.list()], ["biology.population_dynamics", "chemistry.reaction_kinetics", "engineering.dc_circuit", "math.sympy", "physics.n_body", "physics.simple_collision", "physics.simple_projectile"])
+        self.assertEqual(
+            [manifest.engine_id for manifest in self.registry.list()],
+            [
+                "biology.population_dynamics", "chemistry.reaction_kinetics", "engineering.dc_circuit",
+                "math.benchmark", "math.calculus", "math.geometry", "math.linear_algebra",
+                "math.numerical_integration", "math.ode_solver", "math.optimization", "math.probability",
+                "math.root_finding", "math.statistics", "math.sympy", "math.uncertainty",
+                "physics.n_body", "physics.simple_collision", "physics.simple_projectile",
+            ],
+        )
         with self.assertRaises(EngineError) as raised:
             self.registry.get("user.supplied.module")
         self.assertEqual(raised.exception.code, "engine_not_found")

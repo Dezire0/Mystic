@@ -235,8 +235,33 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "lab_engine_result_get",
                 "lab_engine_result_attach",
                 "lab_engine_artifact_list",
+                "lab_math_list",
+                "lab_math_get",
+                "lab_math_run",
+                "lab_math_compare",
+                "lab_math_visualize",
+                "lab_math_benchmark",
+                "lab_math_fit",
+                "lab_math_optimize",
+                "lab_math_uncertainty",
+                "lab_math_sensitivity",
             ],
         )
+
+    def test_cloud_math_tools_are_visible_and_do_not_execute_worker_python(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {"jsonrpc": "2.0", "id": 88, "method": "tools/list"},
+            },
+        )
+        tools = {tool["name"]: tool for tool in result["body"]["result"]["tools"]}
+        self.assertEqual(tools["lab_math_run"]["inputSchema"]["required"], ["engine_id", "input"])
+        self.assertIn("trusted runner", tools["lab_math_run"]["description"].lower())
+        self.assertEqual(result["fetchCalls"], [])
 
     def test_cloud_phase1_tools_list_passes_chatgpt_action_discovery_rules(self) -> None:
         result = run_worker_helper(
