@@ -11,6 +11,7 @@ from typing import Any
 from mystic.debate.runner import DebateRunner
 from mystic.final_answer_verifier import extract_candidate_tuples, verify_final_answer
 from mystic.lab.runner import LabRunner
+from mystic.lab.campaign_runtime import CampaignRuntime
 from mystic.mcp.import_verification import (
     default_verification_artifact_path,
     load_import_verification,
@@ -39,6 +40,16 @@ DEFAULT_MODEL_BY_AGENT = {
 
 PUBLIC_MCP_BASE_URL = "https://mystic.dexproject.workers.dev"
 LAB_TOOL_NAMES = (
+    "lab_campaign_create",
+    "lab_campaign_get",
+    "lab_campaign_list",
+    "lab_campaign_pause",
+    "lab_campaign_resume",
+    "lab_campaign_cancel",
+    "lab_campaign_checkpoint",
+    "lab_campaign_graph",
+    "lab_campaign_timeline",
+    "lab_campaign_statistics",
     "lab_session_create",
     "lab_session_get",
     "lab_session_advance",
@@ -107,6 +118,7 @@ class MysticToolbox:
             verify_answer=self.mystic_verify_answer,
             research_table_runner=self.research_table_runner,
         )
+        self.campaign_runtime = CampaignRuntime(self.root_path)
         self.provider_connect = self.lab_runner.provider_connect
         self._ensure_data_dirs()
 
@@ -147,6 +159,16 @@ class MysticToolbox:
                 "mystic_call_model": "ready",
                 "mystic_compare_models": "ready",
                 "mystic_run_research_table": "ready",
+                "lab_campaign_create": "ready",
+                "lab_campaign_get": "ready",
+                "lab_campaign_list": "ready",
+                "lab_campaign_pause": "ready",
+                "lab_campaign_resume": "ready",
+                "lab_campaign_cancel": "ready",
+                "lab_campaign_checkpoint": "ready",
+                "lab_campaign_graph": "ready",
+                "lab_campaign_timeline": "ready",
+                "lab_campaign_statistics": "ready",
                 "lab_session_create": "ready",
                 "lab_session_get": "ready",
                 "lab_session_advance": "ready",
@@ -184,6 +206,8 @@ class MysticToolbox:
             "phase_1_tools_count": len(PHASE_1_TOOL_NAMES),
             "storage_backend": storage_status.get("backend", "local"),
             "storage_status": storage_status,
+            "campaign_storage_status": self.campaign_runtime.storage.describe_status(),
+            "campaign_storage_root": str(self.campaign_runtime.storage.base_dir),
             "lab_storage_root": str(storage_status.get("storage_root", self.data_root / "lab_sessions")),
             "remote_mcp_public_endpoint": remote_mcp_public_endpoint,
             "oauth_configured": oauth_configured,
@@ -215,6 +239,7 @@ class MysticToolbox:
             "oauth_enabled": self._oauth_enabled(),
             "oauth_configured": self._oauth_configured(),
             "phase_1_tools": list(PHASE_1_TOOL_NAMES),
+            "campaign_runtime": self.campaign_runtime.storage.describe_status(),
         }
 
     def mystic_verify_answer(
@@ -521,6 +546,119 @@ class MysticToolbox:
             mode=mode,
             participants=participants,
         )
+
+    def lab_campaign_create(
+        self,
+        *,
+        title: str,
+        goal: str,
+        question: str = "",
+        description: str = "",
+        domain: str = "general",
+        tags: list[str] | None = None,
+        budget: dict[str, Any] | None = None,
+        idempotency_key: str = "",
+    ) -> dict[str, Any]:
+        campaign = self.campaign_runtime.create_campaign(
+            title=title,
+            goal=goal,
+            question=question,
+            description=description,
+            domain=domain,
+            tags=tags,
+            budget=budget,
+            idempotency_key=idempotency_key,
+        )
+        return self._campaign_payload(campaign)
+
+    def lab_campaign_get(self, *, campaign_id: str) -> dict[str, Any]:
+        return self._campaign_payload(self.campaign_runtime.get(campaign_id))
+
+    def lab_campaign_list(self, *, limit: int = 50, status: str = "") -> dict[str, Any]:
+        records = self.campaign_runtime.list(limit=limit, status=status or None)
+        return {
+            "campaigns": [self._campaign_summary(campaign) for campaign in records],
+            "count": len(records),
+        }
+
+    def lab_campaign_pause(self, *, campaign_id: str, idempotency_key: str = "") -> dict[str, Any]:
+        return self._campaign_payload(
+            self.campaign_runtime.pause(campaign_id, idempotency_key=idempotency_key)
+        )
+
+    def lab_campaign_resume(self, *, campaign_id: str, idempotency_key: str = "") -> dict[str, Any]:
+        return self._campaign_payload(
+            self.campaign_runtime.resume(campaign_id, idempotency_key=idempotency_key)
+        )
+
+    def lab_campaign_cancel(self, *, campaign_id: str, idempotency_key: str = "") -> dict[str, Any]:
+        return self._campaign_payload(
+            self.campaign_runtime.cancel(campaign_id, idempotency_key=idempotency_key)
+        )
+
+    def lab_campaign_checkpoint(
+        self,
+        *,
+        campaign_id: str,
+        label: str = "manual",
+        idempotency_key: str = "",
+    ) -> dict[str, Any]:
+        return self._campaign_payload(
+            self.campaign_runtime.checkpoint(
+                campaign_id,
+                label=label,
+                idempotency_key=idempotency_key,
+            )
+        )
+
+    def lab_campaign_graph(self, *, campaign_id: str, latest_only: bool = True) -> dict[str, Any]:
+        return self.campaign_runtime.graph(campaign_id, latest_only=latest_only)
+
+    def lab_campaign_timeline(self, *, campaign_id: str, limit: int = 100) -> dict[str, Any]:
+        events = self.campaign_runtime.timeline(campaign_id, limit=limit)
+        return {"campaign_id": campaign_id, "events": events, "count": len(events)}
+
+    def lab_campaign_statistics(self, *, campaign_id: str) -> dict[str, Any]:
+        return self.campaign_runtime.statistics(campaign_id)
+
+    @staticmethod
+    def _campaign_summary(campaign: Any) -> dict[str, Any]:
+        return {
+            "campaign_id": campaign.campaign_id,
+            "title": campaign.metadata.title,
+            "domain": campaign.metadata.domain,
+            "phase": campaign.phase.value,
+            "status": campaign.status.value,
+            "revision": campaign.revision,
+            "iteration": campaign.runtime.iteration,
+            "created_at": campaign.created_at,
+            "updated_at": campaign.updated_at,
+        }
+
+    @classmethod
+    def _campaign_payload(cls, campaign: Any) -> dict[str, Any]:
+        payload = campaign.to_dict()
+        payload.pop("idempotency_records", None)
+        payload["graph"] = campaign.graph.to_dict(latest_only=True) if campaign.graph else {}
+        payload["checkpoints"] = [
+            {
+                "checkpoint_id": item.checkpoint_id,
+                "label": item.label,
+                "iteration": item.iteration,
+                "phase": item.phase,
+                "status": item.status,
+                "revision": item.revision,
+                "metadata": item.metadata,
+                "timing": item.timing,
+                "engine_versions": item.engine_versions,
+                "runner_versions": item.runner_versions,
+                "hashes": item.hashes,
+                "created_at": item.created_at,
+            }
+            for item in campaign.checkpoints
+        ]
+        payload["summary"] = cls._campaign_summary(campaign)
+        return payload
 
     def lab_session_get(self, *, session_id: str) -> dict[str, Any]:
         return self.lab_runner.get_session(session_id=session_id)

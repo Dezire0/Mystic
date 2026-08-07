@@ -21,6 +21,15 @@ Reference docs:
 - [docs/mystic_lab_engine_adapter_layer.md](/Users/JYH/Documents/Mystic/docs/mystic_lab_engine_adapter_layer.md)
 - [docs/mystic_lab_domains.md](/Users/JYH/Documents/Mystic/docs/mystic_lab_domains.md)
 - [docs/mystic_lab_provider_connect.md](/Users/JYH/Documents/Mystic/docs/mystic_lab_provider_connect.md)
+- [Research campaign runtime](docs/research_campaign_runtime.md)
+- [Campaign state machine](docs/campaign_state_machine.md)
+- [Campaign knowledge graph](docs/knowledge_graph.md)
+
+## Autonomous Scientist research campaigns (Phase 2C.1)
+
+Every future autonomous scientific investigation is represented by a durable `ResearchCampaign`. The Phase 2C.1 runtime is deterministic infrastructure: it validates explicit state transitions, persists versioned knowledge and atomic checkpoints, enforces budgets and idempotency, and exposes typed extension hooks. It does not make AI decisions or run an LLM-agent chat loop.
+
+Campaigns move from `PLANNING` through background research, knowledge, hypothesis, model, experiment, engine, validation, review, archive/update/next-action, and report phases before `COMPLETE`. They can be paused, resumed, cancelled, retried, checkpointed, recovered after restart, and rolled back by trusted runtime code. The Control Center exposes campaign operations at `/campaigns`, and MCP exposes the ten `lab_campaign_*` tools documented in [the runtime guide](docs/research_campaign_runtime.md).
 
 The current LAB status is intentionally conservative:
 
