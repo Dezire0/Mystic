@@ -24,6 +24,36 @@ class _StubToolbox:
     def mystic_run_research_table(self, **_: object) -> dict:
         return {"final_status": "UNKNOWN", "saved_artifact_path": "mystic_data/research_table_sessions/test/session.json"}
 
+    def lab_campaign_create(self, **_: object) -> dict:
+        return {"campaign_id": "campaign-test", "phase": "PLANNING", "status": "ACTIVE"}
+
+    def lab_campaign_get(self, **_: object) -> dict:
+        return {"campaign_id": "campaign-test", "phase": "PLANNING", "status": "ACTIVE"}
+
+    def lab_campaign_list(self, **_: object) -> dict:
+        return {"campaigns": [], "count": 0}
+
+    def lab_campaign_pause(self, **_: object) -> dict:
+        return {"campaign_id": "campaign-test", "status": "PAUSED"}
+
+    def lab_campaign_resume(self, **_: object) -> dict:
+        return {"campaign_id": "campaign-test", "status": "ACTIVE"}
+
+    def lab_campaign_cancel(self, **_: object) -> dict:
+        return {"campaign_id": "campaign-test", "status": "CANCELLED"}
+
+    def lab_campaign_checkpoint(self, **_: object) -> dict:
+        return {"campaign_id": "campaign-test", "checkpoints": []}
+
+    def lab_campaign_graph(self, **_: object) -> dict:
+        return {"campaign_id": "campaign-test", "nodes": [], "edges": []}
+
+    def lab_campaign_timeline(self, **_: object) -> dict:
+        return {"campaign_id": "campaign-test", "events": []}
+
+    def lab_campaign_statistics(self, **_: object) -> dict:
+        return {"campaign_id": "campaign-test", "transition_count": 0}
+
     def lab_session_create(self, **_: object) -> dict:
         return {"session_id": "lab-test"}
 
@@ -140,6 +170,16 @@ class MCPServerTests(unittest.TestCase):
                 "mystic_call_model",
                 "mystic_compare_models",
                 "mystic_run_research_table",
+                "lab_campaign_create",
+                "lab_campaign_get",
+                "lab_campaign_list",
+                "lab_campaign_pause",
+                "lab_campaign_resume",
+                "lab_campaign_cancel",
+                "lab_campaign_checkpoint",
+                "lab_campaign_graph",
+                "lab_campaign_timeline",
+                "lab_campaign_statistics",
                 "lab_session_create",
                 "lab_session_get",
                 "lab_session_advance",

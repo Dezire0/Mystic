@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { providerListSchema, safeErrorSchema, sceneEnvelopeSchema, type Provider } from "./contracts";
+import { campaignGraphSchema, campaignListSchema, campaignSchema, campaignTimelineSchema, providerListSchema, safeErrorSchema, sceneEnvelopeSchema, type Provider } from "./contracts";
 import type { SceneDocument } from "../engine/scene-types";
 import { engineArtifactSchema, engineJobSchema, engineManifestSchema, engineRunSchema, type EngineArtifact, type EngineJob, type EngineManifest, type EngineRun } from "../engine-results/descriptor-schema";
 
@@ -21,6 +21,16 @@ export const api = {
   research: () => request("/api/research", z.record(z.string(), z.unknown())),
   scenes: () => request("/api/scenes", z.record(z.string(), z.unknown())),
   activity: () => request("/api/activity", z.record(z.string(), z.unknown())),
+  campaigns: () => request("/api/campaigns", campaignListSchema),
+  campaign: (campaignId: string) => request(`/api/campaigns/${encodeURIComponent(campaignId)}`, campaignSchema),
+  createCampaign: (body: { title: string; goal: string; question?: string; domain?: string; description?: string }) => request("/api/campaigns", campaignSchema, { method: "POST", body: JSON.stringify({ ...body, idempotency_key: crypto.randomUUID() }) }),
+  pauseCampaign: (campaignId: string) => request(`/api/campaigns/${encodeURIComponent(campaignId)}/pause`, campaignSchema, { method: "POST", body: JSON.stringify({ idempotency_key: crypto.randomUUID() }) }),
+  resumeCampaign: (campaignId: string) => request(`/api/campaigns/${encodeURIComponent(campaignId)}/resume`, campaignSchema, { method: "POST", body: JSON.stringify({ idempotency_key: crypto.randomUUID() }) }),
+  cancelCampaign: (campaignId: string) => request(`/api/campaigns/${encodeURIComponent(campaignId)}/cancel`, campaignSchema, { method: "POST", body: JSON.stringify({ idempotency_key: crypto.randomUUID() }) }),
+  checkpointCampaign: (campaignId: string, label = "operator") => request(`/api/campaigns/${encodeURIComponent(campaignId)}/checkpoint`, campaignSchema, { method: "POST", body: JSON.stringify({ label, idempotency_key: crypto.randomUUID() }) }),
+  campaignGraph: (campaignId: string) => request(`/api/campaigns/${encodeURIComponent(campaignId)}/graph`, campaignGraphSchema),
+  campaignTimeline: (campaignId: string) => request(`/api/campaigns/${encodeURIComponent(campaignId)}/timeline`, campaignTimelineSchema),
+  campaignStatistics: (campaignId: string) => request(`/api/campaigns/${encodeURIComponent(campaignId)}/statistics`, z.record(z.string(), z.unknown())),
   getResearch: (sessionId: string) => request(`/api/research/${encodeURIComponent(sessionId)}`, z.record(z.string(), z.unknown())),
   advanceResearch: (sessionId: string) => request(`/api/research/${encodeURIComponent(sessionId)}/advance`, z.record(z.string(), z.unknown()), { method: "POST", body: "{}" }),
   reportResearch: (sessionId: string) => request(`/api/research/${encodeURIComponent(sessionId)}/report`, z.record(z.string(), z.unknown()), { method: "POST", body: "{}" }),

@@ -626,6 +626,19 @@ const CLOUD_TOOL_DEFINITIONS = [
     annotations: { readOnlyHint: true },
   },
 ];
+const CAMPAIGN_TOOL_DEFINITIONS = [
+  ["lab_campaign_create", "Create Research Campaign", "Create a durable deterministic research campaign with bounded metadata and budget.", { title:{type:"string",minLength:1,maxLength:240}, goal:{type:"string",minLength:1,maxLength:4000}, question:{type:"string",maxLength:4000}, description:{type:"string",maxLength:8000}, domain:{type:"string",minLength:1,maxLength:80}, tags:{type:"array",items:{type:"string",maxLength:80},maxItems:32}, budget:{type:"object"}, idempotency_key:{type:"string",maxLength:160} }, ["title","goal"], false],
+  ["lab_campaign_get", "Get Research Campaign", "Load a durable research campaign aggregate without private idempotency records.", { campaign_id:{type:"string",minLength:1,maxLength:160} }, ["campaign_id"], true],
+  ["lab_campaign_list", "List Research Campaigns", "List bounded persisted research campaign summaries.", { limit:{type:"integer",minimum:1,maximum:100}, status:{type:"string",enum:["","ACTIVE","PAUSED","FAILED","CANCELLED","COMPLETE"]} }, [], true],
+  ["lab_campaign_pause", "Pause Research Campaign", "Pause an active campaign without changing its scientific phase.", { campaign_id:{type:"string",minLength:1,maxLength:160}, idempotency_key:{type:"string",maxLength:160} }, ["campaign_id"], false],
+  ["lab_campaign_resume", "Resume Research Campaign", "Resume a paused campaign at its persisted scientific phase.", { campaign_id:{type:"string",minLength:1,maxLength:160}, idempotency_key:{type:"string",maxLength:160} }, ["campaign_id"], false],
+  ["lab_campaign_cancel", "Cancel Research Campaign", "Cancel a campaign while preserving its audit history.", { campaign_id:{type:"string",minLength:1,maxLength:160}, idempotency_key:{type:"string",maxLength:160} }, ["campaign_id"], false],
+  ["lab_campaign_checkpoint", "Checkpoint Research Campaign", "Create integrity-hashed state and knowledge-graph snapshots.", { campaign_id:{type:"string",minLength:1,maxLength:160}, label:{type:"string",minLength:1,maxLength:160}, idempotency_key:{type:"string",maxLength:160} }, ["campaign_id"], false],
+  ["lab_campaign_graph", "Get Campaign Knowledge Graph", "Read the versioned campaign knowledge graph and integrity hash.", { campaign_id:{type:"string",minLength:1,maxLength:160}, latest_only:{type:"boolean"} }, ["campaign_id"], true],
+  ["lab_campaign_timeline", "Get Campaign Timeline", "Read a bounded deterministic campaign audit timeline.", { campaign_id:{type:"string",minLength:1,maxLength:160}, limit:{type:"integer",minimum:1,maximum:500} }, ["campaign_id"], true],
+  ["lab_campaign_statistics", "Get Campaign Statistics", "Read lifecycle, budget, graph, evidence, experiment, and failure statistics.", { campaign_id:{type:"string",minLength:1,maxLength:160} }, ["campaign_id"], true],
+].map(([name,title,description,properties,required,readOnly]) => ({ name,title,description,inputSchema:{type:"object",properties,required,additionalProperties:false},securitySchemes:[{type:"oauth2",scopes:["tools:read","tools:execute"]}],...(readOnly?{annotations:{readOnlyHint:true}}:{}) }));
+CLOUD_TOOL_DEFINITIONS.push(...CAMPAIGN_TOOL_DEFINITIONS);
 const CLOUD_TOOL_NAMES = new Set(CLOUD_TOOL_DEFINITIONS.map((tool) => tool.name));
 const ENGINE_TOOL_DEFINITIONS = [
   ["lab_engine_list", "List trusted scientific engines", { domain:{type:"string"}, capability:{type:"string"}, enabled_only:{type:"boolean"}, limit:{type:"integer",minimum:1,maximum:50}, cursor:{type:"string"} }],
@@ -1033,6 +1046,16 @@ function validateCloudToolArguments(name, args) {
     return ["arguments must be a JSON object"];
   }
   const errors = [];
+  if (name === "lab_campaign_create") {
+    if (typeof args.title !== "string" || !args.title.trim() || args.title.length > 240) errors.push("title is required and must not exceed 240 characters");
+    if (typeof args.goal !== "string" || !args.goal.trim() || args.goal.length > 4000) errors.push("goal is required and must not exceed 4000 characters");
+    if (args.tags !== undefined && (!Array.isArray(args.tags) || args.tags.length > 32)) errors.push("tags must contain at most 32 entries");
+  }
+  if (["lab_campaign_get","lab_campaign_pause","lab_campaign_resume","lab_campaign_cancel","lab_campaign_checkpoint","lab_campaign_graph","lab_campaign_timeline","lab_campaign_statistics"].includes(name)) {
+    if (typeof args.campaign_id !== "string" || !args.campaign_id.trim() || args.campaign_id.length > 160) errors.push("campaign_id is required");
+  }
+  if (name === "lab_campaign_list" && args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 100)) errors.push("limit must be an integer between 1 and 100");
+  if (name === "lab_campaign_timeline" && args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 500)) errors.push("limit must be an integer between 1 and 500");
   if (name === "lab_engine_run") {
     if (typeof args.engine_id !== "string" || !args.engine_id.trim()) errors.push("engine_id is required");
     if (!args.input || typeof args.input !== "object" || Array.isArray(args.input)) errors.push("input must be an object");
@@ -4215,6 +4238,16 @@ async function cloudMysticStatus(state, supabase, env) {
   const toolStates = {
     mystic_status: "ready",
     health_check: "ready",
+    lab_campaign_create: supabase.configured ? "ready" : "blocked",
+    lab_campaign_get: supabase.configured ? "ready" : "blocked",
+    lab_campaign_list: supabase.configured ? "ready" : "blocked",
+    lab_campaign_pause: supabase.configured ? "ready" : "blocked",
+    lab_campaign_resume: supabase.configured ? "ready" : "blocked",
+    lab_campaign_cancel: supabase.configured ? "ready" : "blocked",
+    lab_campaign_checkpoint: supabase.configured ? "ready" : "blocked",
+    lab_campaign_graph: supabase.configured ? "ready" : "blocked",
+    lab_campaign_timeline: supabase.configured ? "ready" : "blocked",
+    lab_campaign_statistics: supabase.configured ? "ready" : "blocked",
     lab_session_create: supabase.configured ? "ready" : "blocked",
     lab_session_get: supabase.configured ? "ready" : "blocked",
     lab_session_list: supabase.configured ? "ready" : "blocked",
@@ -4567,6 +4600,44 @@ async function cloudMemorySearch(env, { query, domain, statusFilter, limit }) {
   };
 }
 
+function cloudCampaignSummary(row) {
+  return {campaign_id:trimmed(row.campaign_id),title:trimmed(row.title),domain:trimmed(row.domain,"general"),phase:trimmed(row.phase,"PLANNING"),status:trimmed(row.status,"ACTIVE"),revision:Number(row.revision||0),iteration:Number(row.iteration||0),created_at:row.created_at,updated_at:row.updated_at};
+}
+
+async function loadCloudCampaignGraph(env,campaignId,latestOnly=true) {
+  const [nodes,edges]=await Promise.all([
+    supabaseSelectRows(env,"lab_campaign_knowledge_nodes",{campaign_id:`eq.${campaignId}`},{order:"node_id.asc,version.asc"}),
+    supabaseSelectRows(env,"lab_campaign_knowledge_edges",{campaign_id:`eq.${campaignId}`},{order:"created_at.asc"}),
+  ]);
+  let selected=nodes;
+  if (latestOnly) {
+    const latest=new Map(); for (const node of nodes) if (!latest.has(node.node_id) || Number(node.version)>Number(latest.get(node.node_id).version)) latest.set(node.node_id,node);
+    selected=[...latest.values()];
+  }
+  return {campaign_id:campaignId,nodes:selected,edges,graph_hash:await sha256Hex(canonicalEngineJson({nodes,edges}))};
+}
+
+async function loadPublicCloudCampaign(env,campaignId) {
+  const row=await supabaseSelectOne(env,"lab_research_campaigns",{campaign_id:`eq.${campaignId}`});
+  if (!row) throw new Error("campaign_not_found");
+  const [graph,events,checkpoints]=await Promise.all([
+    loadCloudCampaignGraph(env,campaignId,true),
+    supabaseSelectRows(env,"lab_campaign_timeline",{campaign_id:`eq.${campaignId}`},{order:"created_at.asc",params:{limit:"500"}}),
+    supabaseSelectRows(env,"lab_campaign_checkpoints",{campaign_id:`eq.${campaignId}`},{select:"checkpoint_id,campaign_id,label,iteration,phase,status,revision,metadata,timing,engine_versions,runner_versions,hashes,created_at",order:"created_at.asc",params:{limit:"1000"}}),
+  ]);
+  return {campaign_id:row.campaign_id,metadata:objectMapping(row.metadata),phase:row.phase,status:row.status,revision:Number(row.revision||0),created_at:row.created_at,updated_at:row.updated_at,goals:Array.isArray(row.goals)?row.goals:[],questions:Array.isArray(row.questions)?row.questions:[],hypotheses:Array.isArray(row.hypotheses)?row.hypotheses:[],evidence:Array.isArray(row.evidence)?row.evidence:[],experiments:Array.isArray(row.experiments)?row.experiments:[],models:Array.isArray(row.models)?row.models:[],reviews:Array.isArray(row.reviews)?row.reviews:[],failures:Array.isArray(row.failures)?row.failures:[],decisions:Array.isArray(row.decisions)?row.decisions:[],artifacts:Array.isArray(row.artifacts)?row.artifacts:[],checkpoints,graph,timeline:{campaign_id:campaignId,events},budget:objectMapping(row.budget),statistics:objectMapping(row.statistics),runtime:objectMapping(row.runtime),summary:cloudCampaignSummary(row)};
+}
+
+async function createCloudCampaignCheckpoint(env,row,label,idempotencyKey="") {
+  if (!row) throw new Error("campaign_not_found");
+  const campaignId=trimmed(row.campaign_id);
+  const graph=await loadCloudCampaignGraph(env,campaignId,false);
+  const stateSnapshot={campaign_id:campaignId,metadata:objectMapping(row.metadata),phase:row.phase,status:row.status,revision:Number(row.revision||0),created_at:row.created_at,updated_at:row.updated_at,goals:row.goals||[],questions:row.questions||[],hypotheses:row.hypotheses||[],evidence:row.evidence||[],experiments:row.experiments||[],models:row.models||[],reviews:row.reviews||[],failures:row.failures||[],decisions:row.decisions||[],artifacts:row.artifacts||[],budget:row.budget||{},statistics:row.statistics||{},runtime:row.runtime||{}};
+  const metadata={campaign_schema_version:"2C.1",runtime_version:"2C.1",label};
+  const checkpoint={checkpoint_id:cloudId("checkpoint"),campaign_id:campaignId,label,iteration:Number(row.iteration||0),phase:row.phase,status:row.status,revision:Number(row.revision||0),state_snapshot:stateSnapshot,graph_snapshot:graph,metadata,timing:{created_at:nowIso(),iteration:Number(row.iteration||0)},engine_versions:objectMapping(objectMapping(row.runtime).engine_versions),runner_versions:objectMapping(objectMapping(row.runtime).runner_versions),hashes:{state:await sha256Hex(canonicalEngineJson(stateSnapshot)),graph:await sha256Hex(canonicalEngineJson(graph)),metadata:await sha256Hex(canonicalEngineJson(metadata))},created_at:nowIso()};
+  return supabaseRpc(env,"mystic_checkpoint_research_campaign",{p_campaign_id:campaignId,p_expected_revision:Number(row.revision||0),p_checkpoint:checkpoint,p_idempotency_key:idempotencyKey});
+}
+
 async function callCloudTool(name, args, env, state) {
   const supabase = supabaseState(env);
   if (name === "mystic_status") {
@@ -4579,6 +4650,59 @@ async function callCloudTool(name, args, env, state) {
     throw new Error("Supabase storage is not configured for cloud-native LAB mode.");
   }
   const limit = Math.min(100, Math.max(1, Number.isInteger(args.limit) ? args.limit : 50));
+  if (name === "lab_campaign_create") {
+    const idempotencyKey = trimmed(args.idempotency_key);
+    const campaignId = idempotencyKey ? `campaign_${(await sha256Hex(`mystic-campaign:${idempotencyKey}`)).slice(0,32)}` : cloudId("campaign");
+    const existing = await supabaseSelectOne(env,"lab_research_campaigns",{campaign_id:`eq.${campaignId}`});
+    if (existing) return loadPublicCloudCampaign(env,campaignId);
+    const createdAt=nowIso();
+    const goalId=cloudId("goal");
+    const goals=[{goal_id:goalId,campaign_id:campaignId,statement:trimmed(args.goal),priority:0,status:"OPEN",created_at:createdAt}];
+    const questions=trimmed(args.question) ? [{question_id:cloudId("question"),campaign_id:campaignId,text:trimmed(args.question),goal_id:goalId,status:"OPEN",created_at:createdAt}] : [];
+    const budget={max_iterations:100,max_experiments:100,max_engine_seconds:3600,max_graph_nodes:5000,max_graph_edges:10000,max_checkpoints:100,iterations_used:0,experiments_used:0,engine_seconds_used:0,...objectMapping(args.budget)};
+    const metadata={title:trimmed(args.title),description:trimmed(args.description),domain:trimmed(args.domain,"general"),tags:asStringArray(args.tags).slice(0,32),external_references:[],created_by:"mystic-cloud-worker",schema_version:"2C.1"};
+    const statistics={transition_count:0,checkpoint_count:0,rollback_count:0,retry_count:0,graph_node_count:0,graph_edge_count:0,evidence_count:0,experiment_count:0,failure_count:0,started_at:createdAt,completed_at:"",last_transition_at:""};
+    const runtime={runtime_version:"2C.1",iteration:0,last_checkpoint_id:"",last_error:"",engine_versions:{},runner_versions:{},pending_hook:""};
+    await supabaseInsertRows(env,"lab_research_campaigns",[{campaign_id:campaignId,title:metadata.title,description:metadata.description,domain:metadata.domain,phase:"PLANNING",status:"ACTIVE",revision:0,iteration:0,metadata,goals,questions,hypotheses:[],evidence:[],experiments:[],models:[],reviews:[],failures:[],decisions:[],artifacts:[],budget,statistics,runtime,idempotency_records:idempotencyKey?{[idempotencyKey]:{operation:"create",revision:0}}:{},created_at:createdAt,updated_at:createdAt}]);
+    await supabaseInsertRows(env,"lab_campaign_timeline",[{event_id:cloudId("event"),campaign_id:campaignId,event_type:"CAMPAIGN_CREATED",phase:"PLANNING",status:"ACTIVE",summary:"Research campaign created.",revision:0,metadata:{},created_at:createdAt}]);
+    await createCloudCampaignCheckpoint(env,await supabaseSelectOne(env,"lab_research_campaigns",{campaign_id:`eq.${campaignId}`}),"initial",`initial:${campaignId}`);
+    return loadPublicCloudCampaign(env,campaignId);
+  }
+  if (name === "lab_campaign_get") return loadPublicCloudCampaign(env,trimmed(args.campaign_id));
+  if (name === "lab_campaign_list") {
+    const rows=await supabaseSelectRows(env,"lab_research_campaigns",{...(trimmed(args.status)?{status:`eq.${trimmed(args.status)}`}:{})},{order:"updated_at.desc",params:{limit:String(limit)}});
+    return {campaigns:rows.map(cloudCampaignSummary),count:rows.length};
+  }
+  if (["lab_campaign_pause","lab_campaign_resume","lab_campaign_cancel"].includes(name)) {
+    const operation=name.slice("lab_campaign_".length);
+    await supabaseRpc(env,"mystic_set_research_campaign_status",{p_campaign_id:trimmed(args.campaign_id),p_operation:operation,p_idempotency_key:trimmed(args.idempotency_key)});
+    return loadPublicCloudCampaign(env,trimmed(args.campaign_id));
+  }
+  if (name === "lab_campaign_checkpoint") {
+    const row=await supabaseSelectOne(env,"lab_research_campaigns",{campaign_id:`eq.${trimmed(args.campaign_id)}`});
+    if (!row) throw new Error("campaign_not_found");
+    await createCloudCampaignCheckpoint(env,row,trimmed(args.label,"manual"),trimmed(args.idempotency_key));
+    return loadPublicCloudCampaign(env,trimmed(args.campaign_id));
+  }
+  if (name === "lab_campaign_graph") {
+    const graph=await loadCloudCampaignGraph(env,trimmed(args.campaign_id),args.latest_only !== false);
+    return graph;
+  }
+  if (name === "lab_campaign_timeline") {
+    const eventLimit=Math.min(500,Math.max(1,Number.isInteger(args.limit)?args.limit:100));
+    const events=await supabaseSelectRows(env,"lab_campaign_timeline",{campaign_id:`eq.${trimmed(args.campaign_id)}`},{order:"created_at.desc",params:{limit:String(eventLimit)}});
+    events.reverse(); return {campaign_id:trimmed(args.campaign_id),events,count:events.length};
+  }
+  if (name === "lab_campaign_statistics") {
+    const row=await supabaseSelectOne(env,"lab_research_campaigns",{campaign_id:`eq.${trimmed(args.campaign_id)}`});
+    if (!row) throw new Error("campaign_not_found");
+    const [nodes,edges,checkpoints]=await Promise.all([
+      supabaseSelectRows(env,"lab_campaign_knowledge_nodes",{campaign_id:`eq.${row.campaign_id}`}),
+      supabaseSelectRows(env,"lab_campaign_knowledge_edges",{campaign_id:`eq.${row.campaign_id}`}),
+      supabaseSelectRows(env,"lab_campaign_checkpoints",{campaign_id:`eq.${row.campaign_id}`},{select:"checkpoint_id"}),
+    ]);
+    return {...objectMapping(row.statistics),phase:row.phase,status:row.status,revision:Number(row.revision||0),iteration:Number(row.iteration||0),budget:objectMapping(row.budget),graph_node_count:new Set(nodes.map((item)=>item.node_id)).size,graph_edge_count:edges.length,checkpoint_count:checkpoints.length,evidence_count:Array.isArray(row.evidence)?row.evidence.length:0,experiment_count:Array.isArray(row.experiments)?row.experiments.length:0,failure_count:Array.isArray(row.failures)?row.failures.length:0};
+  }
   if (name === "lab_engine_list") {
     const rows = await supabaseSelectRows(env, "lab_engine_registry", { ...(trimmed(args.domain) ? { domain: `eq.${trimmed(args.domain)}` } : {}), ...(args.enabled_only !== false ? { enabled: "eq.true" } : {}) }, { order: "engine_id.asc", params: { limit: String(Math.min(50, limit)) } });
     const runnerRows = await loadRunnerPresence(env);
