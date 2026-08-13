@@ -60,6 +60,27 @@ from mystic.lab.campaign import (
     ScientificModel,
 )
 from mystic.lab.campaign_runtime import CampaignRuntime
+from mystic.lab.scientific_job import (
+    ScientificJob,
+    ScientificJobAttachment,
+    ScientificJobFailure,
+    ScientificJobFailureClass,
+    ScientificJobLease,
+    ScientificJobOutboxEvent,
+    ScientificJobRequest,
+    ScientificJobResult,
+    ScientificJobStatus,
+)
+from mystic.lab.scientific_job_adapter import (
+    ScientificEngineJobAdapter,
+    ScientificJobExecution,
+    ScientificJobWorker,
+)
+from mystic.lab.scientific_job_runtime import (
+    PollingScientificJobDispatchTransport,
+    ScientificJobDispatchTransport,
+    ScientificJobRuntime,
+)
 
 __all__ = [
     "Artifact",
@@ -83,4 +104,19 @@ __all__ = [
     "ResearchQuestion",
     "Review",
     "ScientificModel",
+    "ScientificEngineJobAdapter",
+    "ScientificJob",
+    "ScientificJobAttachment",
+    "ScientificJobExecution",
+    "ScientificJobFailure",
+    "ScientificJobFailureClass",
+    "ScientificJobLease",
+    "ScientificJobOutboxEvent",
+    "ScientificJobRequest",
+    "ScientificJobResult",
+    "ScientificJobDispatchTransport",
+    "ScientificJobRuntime",
+    "ScientificJobStatus",
+    "ScientificJobWorker",
+    "PollingScientificJobDispatchTransport",
 ]

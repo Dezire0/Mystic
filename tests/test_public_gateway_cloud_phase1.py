@@ -235,6 +235,12 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
                 "lab_campaign_graph",
                 "lab_campaign_timeline",
                 "lab_campaign_statistics",
+                "lab_job_create",
+                "lab_job_get",
+                "lab_job_list",
+                "lab_job_cancel",
+                "lab_job_retry",
+                "lab_job_statistics",
                 "lab_engine_list",
                 "lab_engine_get",
                 "lab_engine_match",
@@ -265,6 +271,33 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         for summary in summaries:
             self.assertEqual(summary["blockers"], [], msg=json.dumps(summary, indent=2))
 
+    def test_cloud_job_tools_reject_unknown_operator_arguments_before_dispatch(self) -> None:
+        result = run_worker_helper(
+            "simulateRequest",
+            {
+                "env": self.env,
+                "requestUrl": self.request_url,
+                "headers": self.auth_headers,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 22,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "lab_job_create",
+                        "arguments": {
+                            "campaign_id": "campaign_valid",
+                            "engine_name": "physics.simple_projectile",
+                            "input_payload": {"duration_seconds": 1},
+                            "worker_override": "not-allowed",
+                        },
+                    },
+                },
+            },
+        )
+        self.assertEqual(result["status"], 200)
+        self.assertIn("unknown argument: worker_override", result["body"]["error"]["message"])
+        self.assertEqual(result["fetchCalls"], [])
+
     def test_cloud_phase1_mystic_status_reports_supabase_mode(self) -> None:
         result = run_worker_helper(
             "simulateRequest",
@@ -286,6 +319,8 @@ class PublicGatewayCloudPhase1Tests(unittest.TestCase):
         self.assertEqual(payload["runtime_mode"], "cloud_native_worker_lab_v0")
         self.assertIn("health_check", payload["tools"])
         self.assertIn("provider_list", payload["tools"])
+        self.assertEqual(payload["tools"]["lab_job_create"], "ready")
+        self.assertEqual(payload["tools"]["lab_job_statistics"], "ready")
         self.assertTrue(payload["chatgpt_remote_import_ready_candidate"])
         self.assertFalse(payload["chatgpt_remote_import_ready"])
         self.assertEqual(result["fetchCalls"], [])

@@ -24,12 +24,23 @@ Reference docs:
 - [Research campaign runtime](docs/research_campaign_runtime.md)
 - [Campaign state machine](docs/campaign_state_machine.md)
 - [Campaign knowledge graph](docs/knowledge_graph.md)
+- [Durable scientific job runtime](docs/scientific_job_runtime.md)
+- [Scientific job state machine](docs/job_state_machine.md)
+- [Job leasing](docs/job_leasing.md)
+- [Job reconciliation and outbox](docs/job_reconciliation.md)
+- [Exactly-once logical result attachment](docs/exactly_once_result_attachment.md)
 
 ## Autonomous Scientist research campaigns (Phase 2C.1)
 
 Every future autonomous scientific investigation is represented by a durable `ResearchCampaign`. The Phase 2C.1 runtime is deterministic infrastructure: it validates explicit state transitions, persists versioned knowledge and atomic checkpoints, enforces budgets and idempotency, and exposes typed extension hooks. It does not make AI decisions or run an LLM-agent chat loop.
 
 Campaigns move from `PLANNING` through background research, knowledge, hypothesis, model, experiment, engine, validation, review, archive/update/next-action, and report phases before `COMPLETE`. They can be paused, resumed, cancelled, retried, checkpointed, recovered after restart, and rolled back by trusted runtime code. The Control Center exposes campaign operations at `/campaigns`, and MCP exposes the ten `lab_campaign_*` tools documented in [the runtime guide](docs/research_campaign_runtime.md).
+
+## Durable scientific job runtime (Phase 2C.2A)
+
+Phase 2C.2A adds a separate, restart-safe `ScientificJob` execution substrate. A campaign records a constrained execution intent; a durable outbox makes it discoverable; a trusted worker proves lease ownership to start, heartbeat, complete, or fail it; and the result is attached back through the campaign runtime exactly once at the logical application layer. It does not alter the Phase 2A engine queue, add an LLM agent, or promise exactly-once physical engine execution.
+
+Jobs are versioned, integrity-hashed, retry-bounded, lease-reclaimed, and auditable. Public MCP intentionally exposes only `lab_job_create`, `lab_job_get`, `lab_job_list`, `lab_job_cancel`, `lab_job_retry`, and `lab_job_statistics`; lease, worker, completion, attachment, and reconciliation APIs remain internal. The Control Center provides the Job Queue and job-detail/dead-letter views at `/jobs`. See [the job runtime guide](docs/scientific_job_runtime.md) for the physical-execution versus logical-attachment guarantee and migration/RLS details.
 
 The current LAB status is intentionally conservative:
 

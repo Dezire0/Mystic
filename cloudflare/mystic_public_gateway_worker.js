@@ -639,6 +639,15 @@ const CAMPAIGN_TOOL_DEFINITIONS = [
   ["lab_campaign_statistics", "Get Campaign Statistics", "Read lifecycle, budget, graph, evidence, experiment, and failure statistics.", { campaign_id:{type:"string",minLength:1,maxLength:160} }, ["campaign_id"], true],
 ].map(([name,title,description,properties,required,readOnly]) => ({ name,title,description,inputSchema:{type:"object",properties,required,additionalProperties:false},securitySchemes:[{type:"oauth2",scopes:["tools:read","tools:execute"]}],...(readOnly?{annotations:{readOnlyHint:true}}:{}) }));
 CLOUD_TOOL_DEFINITIONS.push(...CAMPAIGN_TOOL_DEFINITIONS);
+const SCIENTIFIC_JOB_TOOL_DEFINITIONS = [
+  ["lab_job_create", "Create Scientific Job", "Create one durable campaign engine-execution intent. Worker leasing and completion remain internal.", { campaign_id:{type:"string",minLength:1,maxLength:160}, engine_name:{type:"string",minLength:1,maxLength:160}, input_payload:{type:"object"}, experiment_id:{type:"string",maxLength:160}, max_attempts:{type:"integer",minimum:1,maximum:10}, idempotency_key:{type:"string",maxLength:160}, correlation_id:{type:"string",maxLength:160} }, ["campaign_id","engine_name","input_payload"], false],
+  ["lab_job_get", "Get Scientific Job", "Read a redacted scientific job record with provenance, lease state, and attachment state.", { job_id:{type:"string",minLength:1,maxLength:160} }, ["job_id"], true],
+  ["lab_job_list", "List Scientific Jobs", "List bounded scientific job summaries for an operator or campaign.", { limit:{type:"integer",minimum:1,maximum:100}, status:{type:"string",enum:["","PENDING","READY","LEASED","RUNNING","SUCCEEDED","FAILED","RETRY_WAIT","CANCELLED","DEAD_LETTER"]}, campaign_id:{type:"string",maxLength:160} }, [], true],
+  ["lab_job_cancel", "Cancel Scientific Job", "Request safe cancellation without bypassing runtime lease validation.", { job_id:{type:"string",minLength:1,maxLength:160} }, ["job_id"], false],
+  ["lab_job_retry", "Retry Scientific Job", "Apply deterministic retry policy to a failed scientific job.", { job_id:{type:"string",minLength:1,maxLength:160} }, ["job_id"], false],
+  ["lab_job_statistics", "Get Scientific Job Statistics", "Read job-state and reconciliation metrics derived from durable runtime records.", { campaign_id:{type:"string",maxLength:160} }, [], true],
+].map(([name,title,description,properties,required,readOnly]) => ({ name,title,description,inputSchema:{type:"object",properties,required,additionalProperties:false},securitySchemes:[{type:"oauth2",scopes:["tools:read","tools:execute"]}],...(readOnly?{annotations:{readOnlyHint:true}}:{}) }));
+CLOUD_TOOL_DEFINITIONS.push(...SCIENTIFIC_JOB_TOOL_DEFINITIONS);
 const CLOUD_TOOL_NAMES = new Set(CLOUD_TOOL_DEFINITIONS.map((tool) => tool.name));
 const ENGINE_TOOL_DEFINITIONS = [
   ["lab_engine_list", "List trusted scientific engines", { domain:{type:"string"}, capability:{type:"string"}, enabled_only:{type:"boolean"}, limit:{type:"integer",minimum:1,maximum:50}, cursor:{type:"string"} }],
@@ -1046,6 +1055,20 @@ function validateCloudToolArguments(name, args) {
     return ["arguments must be a JSON object"];
   }
   const errors = [];
+  const jobArgumentNames = {
+    lab_job_create: new Set(["campaign_id","engine_name","input_payload","experiment_id","max_attempts","idempotency_key","correlation_id"]),
+    lab_job_get: new Set(["job_id"]),
+    lab_job_list: new Set(["limit","status","campaign_id"]),
+    lab_job_cancel: new Set(["job_id"]),
+    lab_job_retry: new Set(["job_id"]),
+    lab_job_statistics: new Set(["campaign_id"]),
+  };
+  const allowedJobArguments = jobArgumentNames[name];
+  if (allowedJobArguments) {
+    for (const key of Object.keys(args)) {
+      if (!allowedJobArguments.has(key)) errors.push(`unknown argument: ${key}`);
+    }
+  }
   if (name === "lab_campaign_create") {
     if (typeof args.title !== "string" || !args.title.trim() || args.title.length > 240) errors.push("title is required and must not exceed 240 characters");
     if (typeof args.goal !== "string" || !args.goal.trim() || args.goal.length > 4000) errors.push("goal is required and must not exceed 4000 characters");
@@ -1056,6 +1079,22 @@ function validateCloudToolArguments(name, args) {
   }
   if (name === "lab_campaign_list" && args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 100)) errors.push("limit must be an integer between 1 and 100");
   if (name === "lab_campaign_timeline" && args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 500)) errors.push("limit must be an integer between 1 and 500");
+  if (name === "lab_job_create") {
+    if (typeof args.campaign_id !== "string" || !args.campaign_id.trim() || args.campaign_id.length > 160) errors.push("campaign_id is required");
+    if (typeof args.engine_name !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(args.engine_name)) errors.push("engine_name must be an allowlisted engine identifier");
+    if (!args.input_payload || typeof args.input_payload !== "object" || Array.isArray(args.input_payload)) errors.push("input_payload must be an object");
+    else if (textEncoder.encode(JSON.stringify(args.input_payload)).byteLength > 131072) errors.push("input_payload exceeds the runtime size limit");
+    if (args.max_attempts !== undefined && (!Number.isInteger(args.max_attempts) || args.max_attempts < 1 || args.max_attempts > 10)) errors.push("max_attempts must be an integer between 1 and 10");
+  }
+  if (["lab_job_get","lab_job_cancel","lab_job_retry"].includes(name)) {
+    if (typeof args.job_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(args.job_id)) errors.push("job_id is required");
+  }
+  if (name === "lab_job_list") {
+    if (args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 100)) errors.push("limit must be an integer between 1 and 100");
+    if (args.status !== undefined && !["","PENDING","READY","LEASED","RUNNING","SUCCEEDED","FAILED","RETRY_WAIT","CANCELLED","DEAD_LETTER"].includes(args.status)) errors.push("status is invalid");
+    if (args.campaign_id !== undefined && (typeof args.campaign_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(args.campaign_id))) errors.push("campaign_id is invalid");
+  }
+  if (name === "lab_job_statistics" && args.campaign_id !== undefined && (typeof args.campaign_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(args.campaign_id))) errors.push("campaign_id is invalid");
   if (name === "lab_engine_run") {
     if (typeof args.engine_id !== "string" || !args.engine_id.trim()) errors.push("engine_id is required");
     if (!args.input || typeof args.input !== "object" || Array.isArray(args.input)) errors.push("input must be an object");
@@ -4248,6 +4287,12 @@ async function cloudMysticStatus(state, supabase, env) {
     lab_campaign_graph: supabase.configured ? "ready" : "blocked",
     lab_campaign_timeline: supabase.configured ? "ready" : "blocked",
     lab_campaign_statistics: supabase.configured ? "ready" : "blocked",
+    lab_job_create: supabase.configured ? "ready" : "blocked",
+    lab_job_get: supabase.configured ? "ready" : "blocked",
+    lab_job_list: supabase.configured ? "ready" : "blocked",
+    lab_job_cancel: supabase.configured ? "ready" : "blocked",
+    lab_job_retry: supabase.configured ? "ready" : "blocked",
+    lab_job_statistics: supabase.configured ? "ready" : "blocked",
     lab_session_create: supabase.configured ? "ready" : "blocked",
     lab_session_get: supabase.configured ? "ready" : "blocked",
     lab_session_list: supabase.configured ? "ready" : "blocked",
@@ -4625,17 +4670,59 @@ async function loadPublicCloudCampaign(env,campaignId) {
     supabaseSelectRows(env,"lab_campaign_timeline",{campaign_id:`eq.${campaignId}`},{order:"created_at.asc",params:{limit:"500"}}),
     supabaseSelectRows(env,"lab_campaign_checkpoints",{campaign_id:`eq.${campaignId}`},{select:"checkpoint_id,campaign_id,label,iteration,phase,status,revision,metadata,timing,engine_versions,runner_versions,hashes,created_at",order:"created_at.asc",params:{limit:"1000"}}),
   ]);
-  return {campaign_id:row.campaign_id,metadata:objectMapping(row.metadata),phase:row.phase,status:row.status,revision:Number(row.revision||0),created_at:row.created_at,updated_at:row.updated_at,goals:Array.isArray(row.goals)?row.goals:[],questions:Array.isArray(row.questions)?row.questions:[],hypotheses:Array.isArray(row.hypotheses)?row.hypotheses:[],evidence:Array.isArray(row.evidence)?row.evidence:[],experiments:Array.isArray(row.experiments)?row.experiments:[],models:Array.isArray(row.models)?row.models:[],reviews:Array.isArray(row.reviews)?row.reviews:[],failures:Array.isArray(row.failures)?row.failures:[],decisions:Array.isArray(row.decisions)?row.decisions:[],artifacts:Array.isArray(row.artifacts)?row.artifacts:[],checkpoints,graph,timeline:{campaign_id:campaignId,events},budget:objectMapping(row.budget),statistics:objectMapping(row.statistics),runtime:objectMapping(row.runtime),summary:cloudCampaignSummary(row)};
+  return {campaign_id:row.campaign_id,metadata:objectMapping(row.metadata),phase:row.phase,status:row.status,revision:Number(row.revision||0),created_at:row.created_at,updated_at:row.updated_at,goals:Array.isArray(row.goals)?row.goals:[],questions:Array.isArray(row.questions)?row.questions:[],hypotheses:Array.isArray(row.hypotheses)?row.hypotheses:[],evidence:Array.isArray(row.evidence)?row.evidence:[],experiments:Array.isArray(row.experiments)?row.experiments:[],models:Array.isArray(row.models)?row.models:[],reviews:Array.isArray(row.reviews)?row.reviews:[],failures:Array.isArray(row.failures)?row.failures:[],decisions:Array.isArray(row.decisions)?row.decisions:[],artifacts:Array.isArray(row.artifacts)?row.artifacts:[],scientific_jobs:Array.isArray(row.scientific_jobs)?row.scientific_jobs:[],scientific_job_attachments:Array.isArray(row.scientific_job_attachments)?row.scientific_job_attachments:[],checkpoints,graph,timeline:{campaign_id:campaignId,events},budget:objectMapping(row.budget),statistics:objectMapping(row.statistics),runtime:objectMapping(row.runtime),summary:cloudCampaignSummary(row)};
 }
 
 async function createCloudCampaignCheckpoint(env,row,label,idempotencyKey="") {
   if (!row) throw new Error("campaign_not_found");
   const campaignId=trimmed(row.campaign_id);
   const graph=await loadCloudCampaignGraph(env,campaignId,false);
-  const stateSnapshot={campaign_id:campaignId,metadata:objectMapping(row.metadata),phase:row.phase,status:row.status,revision:Number(row.revision||0),created_at:row.created_at,updated_at:row.updated_at,goals:row.goals||[],questions:row.questions||[],hypotheses:row.hypotheses||[],evidence:row.evidence||[],experiments:row.experiments||[],models:row.models||[],reviews:row.reviews||[],failures:row.failures||[],decisions:row.decisions||[],artifacts:row.artifacts||[],budget:row.budget||{},statistics:row.statistics||{},runtime:row.runtime||{}};
+  const stateSnapshot={campaign_id:campaignId,metadata:objectMapping(row.metadata),phase:row.phase,status:row.status,revision:Number(row.revision||0),created_at:row.created_at,updated_at:row.updated_at,goals:row.goals||[],questions:row.questions||[],hypotheses:row.hypotheses||[],evidence:row.evidence||[],experiments:row.experiments||[],models:row.models||[],reviews:row.reviews||[],failures:row.failures||[],decisions:row.decisions||[],artifacts:row.artifacts||[],scientific_jobs:row.scientific_jobs||[],scientific_job_attachments:row.scientific_job_attachments||[],budget:row.budget||{},statistics:row.statistics||{},runtime:row.runtime||{}};
   const metadata={campaign_schema_version:"2C.1",runtime_version:"2C.1",label};
   const checkpoint={checkpoint_id:cloudId("checkpoint"),campaign_id:campaignId,label,iteration:Number(row.iteration||0),phase:row.phase,status:row.status,revision:Number(row.revision||0),state_snapshot:stateSnapshot,graph_snapshot:graph,metadata,timing:{created_at:nowIso(),iteration:Number(row.iteration||0)},engine_versions:objectMapping(objectMapping(row.runtime).engine_versions),runner_versions:objectMapping(objectMapping(row.runtime).runner_versions),hashes:{state:await sha256Hex(canonicalEngineJson(stateSnapshot)),graph:await sha256Hex(canonicalEngineJson(graph)),metadata:await sha256Hex(canonicalEngineJson(metadata))},created_at:nowIso()};
   return supabaseRpc(env,"mystic_checkpoint_research_campaign",{p_campaign_id:campaignId,p_expected_revision:Number(row.revision||0),p_checkpoint:checkpoint,p_idempotency_key:idempotencyKey});
+}
+
+function cloudScientificJobSummary(row) {
+  return {
+    job_id:trimmed(row.job_id),campaign_id:trimmed(row.campaign_id),campaign_revision:Number(row.campaign_revision||0),
+    attachment_campaign_revision:Number(row.attachment_campaign_revision||0),job_type:trimmed(row.job_type),
+    engine_name:trimmed(row.engine_name),engine_version:trimmed(row.engine_version),status:trimmed(row.status),
+    attempt:Number(row.attempt||0),max_attempts:Number(row.max_attempts||0),ready_at:row.ready_at || "",created_at:row.created_at || "",
+    updated_at:row.updated_at || "",started_at:row.started_at || "",finished_at:row.finished_at || "",lease_owner:trimmed(row.lease_owner),
+    lease_expires_at:row.lease_expires_at || "",result_hash:trimmed(row.result_hash),failure_class:trimmed(row.failure_class),
+    error:trimmed(row.error),attachment_state:trimmed(row.attachment_status),attachment_error:trimmed(row.attachment_error),revision:Number(row.revision||0),
+  };
+}
+
+function publicCloudScientificJob(row,{leases=[],outbox=[],events=[],attachment=null}={}) {
+  const input=objectMapping(row.input_payload); const result=objectMapping(row.result); const resultPayload=objectMapping(result.result_payload);
+  return {
+    ...cloudScientificJobSummary(row),
+    input_metadata:{hash:trimmed(row.input_hash),keys:Object.keys(input).sort(),byte_limit:131072},
+    lease:{owner:trimmed(row.lease_owner),acquired_at:row.lease_acquired_at || "",expires_at:row.lease_expires_at || "",cancellation_requested:Boolean(row.cancellation_requested)},
+    result_metadata:{hash:trimmed(row.result_hash),keys:Object.keys(resultPayload).sort(),engine_name:trimmed(result.engine_name,row.engine_name),engine_version:trimmed(result.engine_version,row.engine_version)},
+    failure:row.failure || null,
+    attachment:attachment ? {job_id:attachment.job_id,campaign_id:attachment.campaign_id,campaign_revision:Number(attachment.campaign_revision||0),attachment_key:attachment.attachment_key,result_hash:attachment.result_hash,artifact_id:attachment.artifact_id,attached_at:attachment.attached_at,schema_version:attachment.schema_version} : null,
+    failure_attachment_state:trimmed(row.failure_attachment_state),failure_attachment_error:trimmed(row.failure_attachment_error),
+    lease_history:leases.map((lease)=>({lease_id:lease.lease_id,lease_owner:lease.lease_owner,acquired_at:lease.acquired_at,expires_at:lease.expires_at,heartbeat_count:Number(lease.heartbeat_count||0),released_at:lease.released_at || "",release_reason:lease.release_reason || ""})),
+    outbox:outbox.map((event)=>({event_id:event.event_id,status:event.status,attempt:Number(event.attempt||0),dispatched_at:event.dispatched_at || "",acknowledged_at:event.acknowledged_at || "",safe_error:event.safe_error || ""})),
+    events:events.map((event)=>({event_id:event.event_id,event_type:event.event_type,status:event.status,revision:Number(event.revision||0),summary:event.summary,metadata:objectMapping(event.metadata),created_at:event.created_at})),
+    provenance:{input_hash:trimmed(row.input_hash),result_hash:trimmed(row.result_hash),campaign_revision:Number(row.campaign_revision||0),job_revision:Number(row.revision||0),schema_version:trimmed(row.schema_version,"2C.2A")},
+    schema_version:trimmed(row.schema_version,"2C.2A"),
+  };
+}
+
+async function loadPublicCloudScientificJob(env,jobId) {
+  const row=await supabaseSelectOne(env,"lab_scientific_jobs",{job_id:`eq.${jobId}`});
+  if (!row) throw new Error("scientific_job_not_found");
+  const [leases,outbox,events,attachment]=await Promise.all([
+    supabaseSelectRows(env,"lab_scientific_job_leases",{job_id:`eq.${jobId}`},{order:"acquired_at.asc"}),
+    supabaseSelectRows(env,"lab_scientific_job_outbox_events",{job_id:`eq.${jobId}`},{order:"created_at.asc"}),
+    supabaseSelectRows(env,"lab_scientific_job_events",{job_id:`eq.${jobId}`},{order:"created_at.asc",params:{limit:"200"}}),
+    supabaseSelectOne(env,"lab_scientific_job_attachments",{job_id:`eq.${jobId}`}),
+  ]);
+  return publicCloudScientificJob(row,{leases,outbox,events,attachment});
 }
 
 async function callCloudTool(name, args, env, state) {
@@ -4702,6 +4789,37 @@ async function callCloudTool(name, args, env, state) {
       supabaseSelectRows(env,"lab_campaign_checkpoints",{campaign_id:`eq.${row.campaign_id}`},{select:"checkpoint_id"}),
     ]);
     return {...objectMapping(row.statistics),phase:row.phase,status:row.status,revision:Number(row.revision||0),iteration:Number(row.iteration||0),budget:objectMapping(row.budget),graph_node_count:new Set(nodes.map((item)=>item.node_id)).size,graph_edge_count:edges.length,checkpoint_count:checkpoints.length,evidence_count:Array.isArray(row.evidence)?row.evidence.length:0,experiment_count:Array.isArray(row.experiments)?row.experiments.length:0,failure_count:Array.isArray(row.failures)?row.failures.length:0};
+  }
+  if (name === "lab_job_create") {
+    const campaignId=trimmed(args.campaign_id); const campaign=await supabaseSelectOne(env,"lab_research_campaigns",{campaign_id:`eq.${campaignId}`});
+    if (!campaign) throw new Error("campaign_not_found");
+    const engine=await supabaseSelectOne(env,"lab_engine_registry",{engine_id:`eq.${trimmed(args.engine_name)}`});
+    if (!engine || !engine.enabled || engine.deprecated) throw new EnginePublicError("engine_not_available","The selected engine is not available for durable scientific jobs.",409);
+    const normalizedInput=boundedEngineInput(engine.engine_id,objectMapping(args.input_payload));
+    const inputHash=await sha256Hex(canonicalEngineJson(normalizedInput)); const idempotencyKey=trimmed(args.idempotency_key);
+    const jobId=idempotencyKey ? `job_${(await sha256Hex(`mystic-scientific-job:${campaignId}:${idempotencyKey}`)).slice(0,32)}` : cloudId("job");
+    await supabaseRpc(env,"mystic_create_scientific_job",{p_job_id:jobId,p_campaign_id:campaignId,p_campaign_revision:Number(campaign.revision||0),p_job_type:"engine_execution",p_engine_name:engine.engine_id,p_engine_version:engine.version,p_input_payload:normalizedInput,p_input_hash:inputHash,p_max_attempts:Number.isInteger(args.max_attempts)?args.max_attempts:3,p_idempotency_key:idempotencyKey,p_correlation_id:trimmed(args.correlation_id)||jobId,p_experiment_id:trimmed(args.experiment_id),p_schema_version:"2C.2A"});
+    return loadPublicCloudScientificJob(env,jobId);
+  }
+  if (name === "lab_job_get") return loadPublicCloudScientificJob(env,trimmed(args.job_id));
+  if (name === "lab_job_list") {
+    const rows=await supabaseSelectRows(env,"lab_scientific_jobs",{...(trimmed(args.status)?{status:`eq.${trimmed(args.status)}`}:{}),...(trimmed(args.campaign_id)?{campaign_id:`eq.${trimmed(args.campaign_id)}`}:{})},{order:"created_at.desc",params:{limit:String(limit)}});
+    return {jobs:rows.map(cloudScientificJobSummary),count:rows.length};
+  }
+  if (name === "lab_job_cancel") {
+    await supabaseRpc(env,"mystic_cancel_scientific_job",{p_job_id:trimmed(args.job_id)});
+    return loadPublicCloudScientificJob(env,trimmed(args.job_id));
+  }
+  if (name === "lab_job_retry") {
+    await supabaseRpc(env,"mystic_retry_scientific_job",{p_job_id:trimmed(args.job_id),p_retry_base_seconds:5,p_retry_max_seconds:3600});
+    return loadPublicCloudScientificJob(env,trimmed(args.job_id));
+  }
+  if (name === "lab_job_statistics") {
+    const rows=await supabaseSelectRows(env,"lab_scientific_jobs",{...(trimmed(args.campaign_id)?{campaign_id:`eq.${trimmed(args.campaign_id)}`}:{})},{order:"created_at.desc",params:{limit:"500"}});
+    const counts={PENDING:0,READY:0,LEASED:0,RUNNING:0,SUCCEEDED:0,FAILED:0,RETRY_WAIT:0,CANCELLED:0,DEAD_LETTER:0};
+    for (const row of rows) counts[trimmed(row.status)] = (counts[trimmed(row.status)] || 0) + 1;
+    const attempts=rows.map((row)=>Number(row.attempt||0));
+    return {campaign_id:trimmed(args.campaign_id),job_count:rows.length,pending_jobs:counts.PENDING,ready_jobs:counts.READY,leased_jobs:counts.LEASED,running_jobs:counts.RUNNING,succeeded_jobs:counts.SUCCEEDED,failed_jobs:counts.FAILED,retry_wait_jobs:counts.RETRY_WAIT,cancelled_jobs:counts.CANCELLED,dead_letter_jobs:counts.DEAD_LETTER,expired_leases_recovered:rows.reduce((total,row)=>total+(trimmed(row.failure_class)==="LEASE_EXPIRED"?1:0),0),duplicate_completions_rejected:rows.reduce((total,row)=>total+Number(row.duplicate_completion_rejected_count||0),0),duplicate_completions_ignored:rows.reduce((total,row)=>total+Number(row.duplicate_completion_count||0),0),result_replays_ignored:rows.reduce((total,row)=>total+Number(row.result_replay_count||0),0),conflicting_results_rejected:rows.reduce((total,row)=>total+Number(row.conflicting_result_count||0),0),reconciliation_actions:rows.reduce((total,row)=>total+Number(row.reconciliation_count||0),0),average_attempts:rows.length ? Math.round((attempts.reduce((total,value)=>total+value,0)/rows.length)*1000)/1000 : 0};
   }
   if (name === "lab_engine_list") {
     const rows = await supabaseSelectRows(env, "lab_engine_registry", { ...(trimmed(args.domain) ? { domain: `eq.${trimmed(args.domain)}` } : {}), ...(args.enabled_only !== false ? { enabled: "eq.true" } : {}) }, { order: "engine_id.asc", params: { limit: String(Math.min(50, limit)) } });

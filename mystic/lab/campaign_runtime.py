@@ -19,6 +19,10 @@ from mystic.lab.campaign import (
     ResearchCampaign,
     CampaignGoal,
     ResearchQuestion,
+    ScientificJobReference,
+    ScientificJobAttachmentReference,
+    Artifact,
+    Failure,
     canonical_hash,
     utc_now_iso,
     validate_transition,
@@ -371,6 +375,215 @@ class CampaignRuntime:
         campaign = self.get(campaign_id)
         return campaign.graph.to_dict(latest_only=latest_only) if campaign.graph else {}
 
+    def register_scientific_job_intent(
+        self,
+        *,
+        campaign_id: str,
+        job_id: str,
+        job_type: str,
+        engine_name: str,
+        engine_version: str,
+        source_campaign_revision: int,
+        experiment_id: str = "",
+        idempotency_key: str = "",
+    ) -> ScientificJobReference:
+        """Record an execution intent before any worker can lease the associated job."""
+        for name, value, maximum in (
+            ("job_id", job_id, 160),
+            ("job_type", job_type, 80),
+            ("engine_name", engine_name, 160),
+            ("engine_version", engine_version, 80),
+            ("experiment_id", experiment_id, 160),
+            ("idempotency_key", idempotency_key, 240),
+        ):
+            self._validate_text(name, value, 0 if name in {"experiment_id", "idempotency_key"} else 1, maximum)
+        if not isinstance(source_campaign_revision, int) or source_campaign_revision < 0:
+            raise ValueError("source_campaign_revision must be a non-negative integer")
+        campaign = self.get(campaign_id)
+        existing = next((item for item in campaign.scientific_jobs if item.job_id == job_id), None)
+        if existing is not None:
+            if (
+                existing.job_type == job_type
+                and existing.engine_name == engine_name
+                and existing.engine_version == engine_version
+                and existing.source_campaign_revision == source_campaign_revision
+                and existing.experiment_id == experiment_id
+            ):
+                return existing
+            raise CampaignConflictError("Scientific job ID already belongs to another campaign intent")
+        if self._idempotent(campaign, "scientific_job_intent", idempotency_key):
+            raise CampaignConflictError("Scientific job idempotency record is missing its intent")
+        if campaign.status != CampaignStatus.ACTIVE:
+            raise IllegalCampaignTransition(f"Cannot create a scientific job from {campaign.status.value}")
+        if campaign.revision != source_campaign_revision:
+            raise CampaignConflictError(
+                f"Scientific job source revision is stale: expected {source_campaign_revision}, found {campaign.revision}"
+            )
+        if experiment_id and not any(item.experiment_id == experiment_id for item in campaign.experiments):
+            raise CampaignNotFoundError(f"Experiment not found for scientific job: {experiment_id}")
+        expected_revision = campaign.revision
+        self._touch(campaign)
+        reference = ScientificJobReference(
+            campaign_id=campaign_id,
+            job_id=job_id,
+            job_type=job_type,
+            engine_name=engine_name,
+            engine_version=engine_version,
+            source_campaign_revision=source_campaign_revision,
+            attachment_campaign_revision=campaign.revision,
+            experiment_id=experiment_id,
+            status="READY",
+        )
+        campaign.scientific_jobs.append(reference)
+        self._sync_statistics(campaign)
+        campaign.timeline.append(
+            event_type="SCIENTIFIC_JOB_INTENT_CREATED",
+            phase=campaign.phase,
+            status=campaign.status,
+            summary="Scientific engine job intent recorded for durable dispatch.",
+            revision=campaign.revision,
+            metadata={
+                "job_id": job_id,
+                "engine_name": engine_name,
+                "engine_version": engine_version,
+                "source_campaign_revision": source_campaign_revision,
+            },
+        )
+        self._record_idempotency(campaign, "scientific_job_intent", idempotency_key)
+        self.storage.save(campaign, expected_revision=expected_revision)
+        return reference
+
+    def attach_scientific_job_result(
+        self,
+        *,
+        campaign_id: str,
+        job_id: str,
+        result_hash: str,
+        expected_campaign_revision: int,
+        engine_name: str,
+        engine_version: str,
+        attachment_key: str,
+    ) -> ScientificJobAttachmentReference:
+        """Apply one validated job result to campaign state exactly once logically."""
+        for name, value, maximum in (
+            ("job_id", job_id, 160),
+            ("engine_name", engine_name, 160),
+            ("engine_version", engine_version, 80),
+            ("attachment_key", attachment_key, 240),
+        ):
+            self._validate_text(name, value, 1, maximum)
+        if not isinstance(result_hash, str) or len(result_hash) != 64 or any(char not in "0123456789abcdef" for char in result_hash):
+            raise ValueError("result_hash must be a SHA-256 hex digest")
+        if not isinstance(expected_campaign_revision, int) or expected_campaign_revision < 0:
+            raise ValueError("expected_campaign_revision must be a non-negative integer")
+        campaign = self.get(campaign_id)
+        existing = next((item for item in campaign.scientific_job_attachments if item.job_id == job_id), None)
+        if existing is not None:
+            if existing.result_hash == result_hash and existing.attachment_key == attachment_key:
+                return existing
+            raise CampaignConflictError("Conflicting scientific job result attachment was rejected")
+        reference = next((item for item in campaign.scientific_jobs if item.job_id == job_id), None)
+        if reference is None:
+            raise CampaignConflictError("Scientific job is not referenced by the current campaign revision")
+        if reference.attachment_campaign_revision != expected_campaign_revision:
+            raise CampaignConflictError("Scientific job attachment revision does not match its campaign intent")
+        if campaign.status != CampaignStatus.ACTIVE:
+            raise IllegalCampaignTransition(f"Cannot attach a scientific job result to {campaign.status.value}")
+        if campaign.revision != expected_campaign_revision:
+            raise CampaignConflictError(
+                f"Scientific job result is stale for campaign revision {campaign.revision}"
+            )
+        expected_revision = campaign.revision
+        artifact = Artifact(
+            campaign_id=campaign_id,
+            artifact_type="scientific_job_result",
+            name=f"Scientific job {job_id} result",
+            uri=f"mystic://scientific-jobs/{job_id}/result",
+            content_hash=result_hash,
+            media_type="application/json",
+        )
+        campaign.artifacts.append(artifact)
+        reference.status = "SUCCEEDED"
+        self._touch(campaign)
+        attachment = ScientificJobAttachmentReference(
+            campaign_id=campaign_id,
+            job_id=job_id,
+            attachment_key=attachment_key,
+            result_hash=result_hash,
+            artifact_id=artifact.artifact_id,
+            attached_campaign_revision=campaign.revision,
+        )
+        campaign.scientific_job_attachments.append(attachment)
+        self._sync_statistics(campaign)
+        campaign.timeline.append(
+            event_type="SCIENTIFIC_JOB_RESULT_ATTACHED",
+            phase=campaign.phase,
+            status=campaign.status,
+            summary="Scientific job result attached exactly once to campaign state.",
+            revision=campaign.revision,
+            metadata={
+                "job_id": job_id,
+                "result_hash": result_hash,
+                "artifact_id": artifact.artifact_id,
+                "engine_name": engine_name,
+                "engine_version": engine_version,
+            },
+        )
+        self._record_idempotency(campaign, "scientific_job_attachment", attachment_key)
+        self.storage.save(campaign, expected_revision=expected_revision)
+        return attachment
+
+    def record_scientific_job_failure(
+        self,
+        *,
+        campaign_id: str,
+        job_id: str,
+        expected_campaign_revision: int,
+        failure_class: str,
+        safe_error: str,
+        retryable: bool,
+    ) -> Failure:
+        """Archive a terminal job failure through the campaign runtime, never a worker write."""
+        self._validate_text("job_id", job_id, 1, 160)
+        self._validate_text("failure_class", failure_class, 1, 80)
+        self._validate_text("safe_error", safe_error, 1, 1000)
+        if not isinstance(expected_campaign_revision, int) or expected_campaign_revision < 0:
+            raise ValueError("expected_campaign_revision must be a non-negative integer")
+        campaign = self.get(campaign_id)
+        existing = next((item for item in campaign.failures if item.source_id == job_id), None)
+        if existing is not None:
+            if existing.failure_type == failure_class and existing.summary == safe_error:
+                return existing
+            raise CampaignConflictError("Conflicting scientific job failure was rejected")
+        reference = next((item for item in campaign.scientific_jobs if item.job_id == job_id), None)
+        if reference is None or reference.attachment_campaign_revision != expected_campaign_revision:
+            raise CampaignConflictError("Scientific job failure is stale for the current campaign revision")
+        if campaign.status != CampaignStatus.ACTIVE or campaign.revision != expected_campaign_revision:
+            raise CampaignConflictError("Campaign cannot accept the terminal scientific job failure")
+        expected_revision = campaign.revision
+        failure = Failure(
+            campaign_id=campaign_id,
+            failure_type=failure_class,
+            summary=safe_error,
+            source_id=job_id,
+            retryable=retryable,
+            archived=True,
+        )
+        campaign.failures.append(failure)
+        reference.status = "FAILED"
+        self._touch(campaign)
+        self._sync_statistics(campaign)
+        campaign.timeline.append(
+            event_type="SCIENTIFIC_JOB_FAILURE_ARCHIVED",
+            phase=campaign.phase,
+            status=campaign.status,
+            summary="Terminal scientific job failure archived through the campaign runtime.",
+            revision=campaign.revision,
+            metadata={"job_id": job_id, "failure_class": failure_class},
+        )
+        self.storage.save(campaign, expected_revision=expected_revision)
+        return failure
+
     def add_knowledge_node(
         self,
         campaign_id: str,
@@ -547,3 +760,5 @@ class CampaignRuntime:
         campaign.statistics.evidence_count = len(campaign.evidence)
         campaign.statistics.experiment_count = len(campaign.experiments)
         campaign.statistics.failure_count = len(campaign.failures)
+        campaign.statistics.scientific_job_count = len(campaign.scientific_jobs)
+        campaign.statistics.scientific_job_attachment_count = len(campaign.scientific_job_attachments)

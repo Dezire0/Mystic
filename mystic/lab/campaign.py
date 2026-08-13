@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 import hashlib
 import json
+import re
 from typing import Any, ClassVar
 import uuid
 
@@ -182,6 +183,8 @@ class CampaignStatistics:
     evidence_count: int = 0
     experiment_count: int = 0
     failure_count: int = 0
+    scientific_job_count: int = 0
+    scientific_job_attachment_count: int = 0
     started_at: str = field(default_factory=utc_now_iso)
     completed_at: str = ""
     last_transition_at: str = ""
@@ -308,6 +311,52 @@ class Artifact:
     media_type: str = "application/octet-stream"
     artifact_id: str = field(default_factory=lambda: new_id("artifact"))
     created_at: str = field(default_factory=utc_now_iso)
+
+
+@dataclass(slots=True)
+class ScientificJobReference:
+    """Campaign-owned intent reference; workers never mutate this aggregate directly."""
+
+    campaign_id: str
+    job_id: str
+    job_type: str
+    engine_name: str
+    engine_version: str
+    source_campaign_revision: int
+    attachment_campaign_revision: int
+    experiment_id: str = ""
+    status: str = "READY"
+    reference_id: str = field(default_factory=lambda: new_id("job_ref"))
+    created_at: str = field(default_factory=utc_now_iso)
+
+    def __post_init__(self) -> None:
+        if not self.campaign_id or not self.job_id or not self.job_type or not self.engine_name or not self.engine_version:
+            raise ValueError("Scientific job references require campaign, job, type, engine, and version")
+        if self.source_campaign_revision < 0 or self.attachment_campaign_revision < 0:
+            raise ValueError("Scientific job revisions must be non-negative")
+        if self.status not in {"READY", "SUCCEEDED", "FAILED", "CANCELLED", "STALE"}:
+            raise ValueError("Scientific job reference status is invalid")
+
+
+@dataclass(slots=True)
+class ScientificJobAttachmentReference:
+    campaign_id: str
+    job_id: str
+    attachment_key: str
+    result_hash: str
+    artifact_id: str
+    attached_campaign_revision: int
+    status: str = "ATTACHED"
+    attachment_id: str = field(default_factory=lambda: new_id("job_attachment"))
+    created_at: str = field(default_factory=utc_now_iso)
+
+    def __post_init__(self) -> None:
+        if not self.campaign_id or not self.job_id or not self.attachment_key or not self.artifact_id:
+            raise ValueError("Scientific job attachments require stable identifiers")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.result_hash):
+            raise ValueError("Scientific job attachment result_hash must be a SHA-256 digest")
+        if self.attached_campaign_revision < 0 or self.status != "ATTACHED":
+            raise ValueError("Scientific job attachment is invalid")
 
 
 @dataclass(slots=True)
@@ -540,6 +589,8 @@ class ResearchCampaign:
     failures: list[Failure] = field(default_factory=list)
     decisions: list[Decision] = field(default_factory=list)
     artifacts: list[Artifact] = field(default_factory=list)
+    scientific_jobs: list[ScientificJobReference] = field(default_factory=list)
+    scientific_job_attachments: list[ScientificJobAttachmentReference] = field(default_factory=list)
     checkpoints: list[Checkpoint] = field(default_factory=list)
     graph: CampaignGraph | None = None
     timeline: CampaignTimeline | None = None
@@ -559,6 +610,8 @@ class ResearchCampaign:
         "failures": Failure,
         "decisions": Decision,
         "artifacts": Artifact,
+        "scientific_jobs": ScientificJobReference,
+        "scientific_job_attachments": ScientificJobAttachmentReference,
         "checkpoints": Checkpoint,
     }
 

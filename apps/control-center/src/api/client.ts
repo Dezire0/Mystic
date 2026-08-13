@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { campaignGraphSchema, campaignListSchema, campaignSchema, campaignTimelineSchema, providerListSchema, safeErrorSchema, sceneEnvelopeSchema, type Provider } from "./contracts";
+import { campaignGraphSchema, campaignListSchema, campaignSchema, campaignTimelineSchema, providerListSchema, safeErrorSchema, sceneEnvelopeSchema, scientificJobListSchema, scientificJobSchema, type Provider } from "./contracts";
 import type { SceneDocument } from "../engine/scene-types";
 import { engineArtifactSchema, engineJobSchema, engineManifestSchema, engineRunSchema, type EngineArtifact, type EngineJob, type EngineManifest, type EngineRun } from "../engine-results/descriptor-schema";
 
@@ -31,6 +31,12 @@ export const api = {
   campaignGraph: (campaignId: string) => request(`/api/campaigns/${encodeURIComponent(campaignId)}/graph`, campaignGraphSchema),
   campaignTimeline: (campaignId: string) => request(`/api/campaigns/${encodeURIComponent(campaignId)}/timeline`, campaignTimelineSchema),
   campaignStatistics: (campaignId: string) => request(`/api/campaigns/${encodeURIComponent(campaignId)}/statistics`, z.record(z.string(), z.unknown())),
+  scientificJobs: (campaignId?: string) => request(`/api/jobs${campaignId ? `?campaign_id=${encodeURIComponent(campaignId)}` : ""}`, scientificJobListSchema),
+  scientificJob: (jobId: string) => request(`/api/jobs/${encodeURIComponent(jobId)}`, scientificJobSchema),
+  createScientificJob: (body: { campaign_id: string; engine_name: string; input_payload: Record<string, unknown>; experiment_id?: string; max_attempts?: number }) => request("/api/jobs", scientificJobSchema, { method: "POST", body: JSON.stringify({ ...body, idempotency_key: crypto.randomUUID() }) }),
+  cancelScientificJob: (jobId: string) => request(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, scientificJobSchema, { method: "POST", body: "{}" }),
+  retryScientificJob: (jobId: string) => request(`/api/jobs/${encodeURIComponent(jobId)}/retry`, scientificJobSchema, { method: "POST", body: "{}" }),
+  scientificJobStatistics: (campaignId?: string) => request(`/api/job-statistics${campaignId ? `?campaign_id=${encodeURIComponent(campaignId)}` : ""}`, z.record(z.string(), z.unknown())),
   getResearch: (sessionId: string) => request(`/api/research/${encodeURIComponent(sessionId)}`, z.record(z.string(), z.unknown())),
   advanceResearch: (sessionId: string) => request(`/api/research/${encodeURIComponent(sessionId)}/advance`, z.record(z.string(), z.unknown()), { method: "POST", body: "{}" }),
   reportResearch: (sessionId: string) => request(`/api/research/${encodeURIComponent(sessionId)}/report`, z.record(z.string(), z.unknown()), { method: "POST", body: "{}" }),

@@ -12,6 +12,7 @@ from mystic.debate.runner import DebateRunner
 from mystic.final_answer_verifier import extract_candidate_tuples, verify_final_answer
 from mystic.lab.runner import LabRunner
 from mystic.lab.campaign_runtime import CampaignRuntime
+from mystic.lab.scientific_job_runtime import ScientificJobRuntime
 from mystic.mcp.import_verification import (
     default_verification_artifact_path,
     load_import_verification,
@@ -50,6 +51,12 @@ LAB_TOOL_NAMES = (
     "lab_campaign_graph",
     "lab_campaign_timeline",
     "lab_campaign_statistics",
+    "lab_job_create",
+    "lab_job_get",
+    "lab_job_list",
+    "lab_job_cancel",
+    "lab_job_retry",
+    "lab_job_statistics",
     "lab_session_create",
     "lab_session_get",
     "lab_session_advance",
@@ -119,6 +126,10 @@ class MysticToolbox:
             research_table_runner=self.research_table_runner,
         )
         self.campaign_runtime = CampaignRuntime(self.root_path)
+        self.scientific_job_runtime = ScientificJobRuntime(
+            self.root_path,
+            campaign_runtime=self.campaign_runtime,
+        )
         self.provider_connect = self.lab_runner.provider_connect
         self._ensure_data_dirs()
 
@@ -169,6 +180,12 @@ class MysticToolbox:
                 "lab_campaign_graph": "ready",
                 "lab_campaign_timeline": "ready",
                 "lab_campaign_statistics": "ready",
+                "lab_job_create": "ready",
+                "lab_job_get": "ready",
+                "lab_job_list": "ready",
+                "lab_job_cancel": "ready",
+                "lab_job_retry": "ready",
+                "lab_job_statistics": "ready",
                 "lab_session_create": "ready",
                 "lab_session_get": "ready",
                 "lab_session_advance": "ready",
@@ -208,6 +225,8 @@ class MysticToolbox:
             "storage_status": storage_status,
             "campaign_storage_status": self.campaign_runtime.storage.describe_status(),
             "campaign_storage_root": str(self.campaign_runtime.storage.base_dir),
+            "scientific_job_storage_status": self.scientific_job_runtime.storage.describe_status(),
+            "scientific_job_storage_root": str(self.scientific_job_runtime.storage.base_dir),
             "lab_storage_root": str(storage_status.get("storage_root", self.data_root / "lab_sessions")),
             "remote_mcp_public_endpoint": remote_mcp_public_endpoint,
             "oauth_configured": oauth_configured,
@@ -240,6 +259,7 @@ class MysticToolbox:
             "oauth_configured": self._oauth_configured(),
             "phase_1_tools": list(PHASE_1_TOOL_NAMES),
             "campaign_runtime": self.campaign_runtime.storage.describe_status(),
+            "scientific_job_runtime": self.scientific_job_runtime.storage.describe_status(),
         }
 
     def mystic_verify_answer(
@@ -620,6 +640,81 @@ class MysticToolbox:
 
     def lab_campaign_statistics(self, *, campaign_id: str) -> dict[str, Any]:
         return self.campaign_runtime.statistics(campaign_id)
+
+    def lab_job_create(
+        self,
+        *,
+        campaign_id: str,
+        engine_name: str,
+        input_payload: dict[str, Any],
+        experiment_id: str = "",
+        max_attempts: int = 3,
+        idempotency_key: str = "",
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        """Operator intent only; lease and worker operations are intentionally internal."""
+        job = self.scientific_job_runtime.create_job(
+            campaign_id=campaign_id,
+            engine_name=engine_name,
+            input_payload=input_payload,
+            experiment_id=experiment_id,
+            max_attempts=max_attempts,
+            idempotency_key=idempotency_key,
+            correlation_id=correlation_id,
+        )
+        return self.scientific_job_runtime.public_payload(job)
+
+    def lab_job_get(self, *, job_id: str) -> dict[str, Any]:
+        return self.scientific_job_runtime.public_payload(self.scientific_job_runtime.get(job_id))
+
+    def lab_job_list(
+        self,
+        *,
+        limit: int = 50,
+        status: str = "",
+        campaign_id: str = "",
+    ) -> dict[str, Any]:
+        jobs = self.scientific_job_runtime.list(
+            limit=limit,
+            status=status or None,
+            campaign_id=campaign_id or None,
+        )
+        return {
+            "jobs": [self._scientific_job_summary(job) for job in jobs],
+            "count": len(jobs),
+        }
+
+    def lab_job_cancel(self, *, job_id: str) -> dict[str, Any]:
+        return self.scientific_job_runtime.public_payload(self.scientific_job_runtime.cancel(job_id))
+
+    def lab_job_retry(self, *, job_id: str) -> dict[str, Any]:
+        return self.scientific_job_runtime.public_payload(self.scientific_job_runtime.retry(job_id))
+
+    def lab_job_statistics(self, *, campaign_id: str = "") -> dict[str, Any]:
+        return self.scientific_job_runtime.statistics(campaign_id=campaign_id or None)
+
+    @staticmethod
+    def _scientific_job_summary(job: Any) -> dict[str, Any]:
+        return {
+            "job_id": job.job_id,
+            "campaign_id": job.campaign_id,
+            "engine_name": job.engine_name,
+            "engine_version": job.engine_version,
+            "status": job.status.value,
+            "attempt": job.attempt,
+            "max_attempts": job.max_attempts,
+            "ready_at": job.ready_at,
+            "created_at": job.created_at,
+            "started_at": job.started_at,
+            "finished_at": job.finished_at,
+            "lease_owner": job.lease_owner,
+            "lease_expires_at": job.lease_expires_at,
+            "result_hash": job.result_hash,
+            "failure_class": job.failure_class,
+            "error": job.error,
+            "attachment_state": job.attachment.status.value if job.attachment else "",
+            "revision": job.revision,
+        }
 
     @staticmethod
     def _campaign_summary(campaign: Any) -> dict[str, Any]:

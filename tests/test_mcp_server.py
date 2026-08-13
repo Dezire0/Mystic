@@ -54,6 +54,24 @@ class _StubToolbox:
     def lab_campaign_statistics(self, **_: object) -> dict:
         return {"campaign_id": "campaign-test", "transition_count": 0}
 
+    def lab_job_create(self, **_: object) -> dict:
+        return {"job_id": "job-test", "status": "READY"}
+
+    def lab_job_get(self, **_: object) -> dict:
+        return {"job_id": "job-test", "status": "READY"}
+
+    def lab_job_list(self, **_: object) -> dict:
+        return {"jobs": [], "count": 0}
+
+    def lab_job_cancel(self, **_: object) -> dict:
+        return {"job_id": "job-test", "status": "CANCELLED"}
+
+    def lab_job_retry(self, **_: object) -> dict:
+        return {"job_id": "job-test", "status": "RETRY_WAIT"}
+
+    def lab_job_statistics(self, **_: object) -> dict:
+        return {"job_count": 0}
+
     def lab_session_create(self, **_: object) -> dict:
         return {"session_id": "lab-test"}
 
@@ -180,6 +198,12 @@ class MCPServerTests(unittest.TestCase):
                 "lab_campaign_graph",
                 "lab_campaign_timeline",
                 "lab_campaign_statistics",
+                "lab_job_create",
+                "lab_job_get",
+                "lab_job_list",
+                "lab_job_cancel",
+                "lab_job_retry",
+                "lab_job_statistics",
                 "lab_session_create",
                 "lab_session_get",
                 "lab_session_advance",
@@ -264,6 +288,16 @@ class MCPServerTests(unittest.TestCase):
         )
         assert response is not None
         self.assertEqual(response["result"]["structuredContent"], {"verdict": "UNKNOWN"})
+
+    def test_job_tool_rejects_unknown_fields_and_internal_worker_operations_stay_private(self):
+        server = MysticMCPServer(toolbox=_StubToolbox())
+        response = server.handle_request(
+            {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "lab_job_create", "arguments": {"campaign_id": "campaign-test", "engine_name": "physics.simple_projectile", "input_payload": {}, "lease_token": "not-public"}}}
+        )
+        assert response is not None
+        self.assertEqual(response["error"]["code"], -32000)
+        self.assertIn("lease_token", response["error"]["message"])
+        self.assertNotIn("lab_job_acquire", [tool["name"] for tool in server.handle_request({"jsonrpc": "2.0", "id": 7, "method": "tools/list"})["result"]["tools"]])
 
 
 if __name__ == "__main__":
