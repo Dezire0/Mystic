@@ -11,6 +11,12 @@ MIGRATION = (
     / "migrations"
     / "20260807010000_durable_scientific_job_runtime_phase2c2a.sql"
 )
+REPAIR_MIGRATION = (
+    Path(__file__).resolve().parents[1]
+    / "supabase"
+    / "migrations"
+    / "20260807011500_durable_scientific_job_runtime_phase2c2a_rpc_ambiguity_repair.sql"
+)
 
 
 class ScientificJobMigrationTests(unittest.TestCase):
@@ -63,6 +69,21 @@ class ScientificJobMigrationTests(unittest.TestCase):
         self.assertIn("scientific_job_result_hash_mismatch", self.sql)
         self.assertIn("scientific_job_experiment_not_found", self.sql)
         self.assertIn("current_job.experiment_id = p_experiment_id", self.sql)
+
+    def test_queue_rpc_output_variables_never_shadow_unqualified_columns(self) -> None:
+        repair = REPAIR_MIGRATION.read_text(encoding="utf-8").lower()
+        for fragment in (
+            "candidate.status = 'ready'",
+            "candidate.attempt < candidate.max_attempts",
+            "target.attempt+1",
+            "target.event_id=current_event.event_id",
+            "outbox_event.status in ('pending','failed')",
+            "for update of outbox_event skip locked",
+        ):
+            self.assertIn(fragment, self.sql)
+            self.assertIn(fragment, repair)
+        self.assertIn("grant execute on function public.mystic_acquire_scientific_job_lease", repair)
+        self.assertIn("from public, anon, authenticated", repair)
 
 
 if __name__ == "__main__":  # pragma: no cover
