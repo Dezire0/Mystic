@@ -14,7 +14,6 @@ from mystic.lab.engines.visualization import validate_visualization
 from mystic.lab.scientific_job import (
     MAX_JOB_RESULT_BYTES,
     ScientificJob,
-    ScientificJobFailureClass,
     ScientificJobLeaseError,
     ScientificJobRequest,
     ScientificJobResult,
@@ -156,17 +155,14 @@ class ScientificEngineJobAdapter:
 
     @staticmethod
     def failure_from_exception(job_id: str, error: Exception) -> tuple[str, str, bool]:
-        if isinstance(error, EngineError):
-            if error.code == "engine_cancelled":
-                return ScientificJobFailureClass.CANCELLED.value, error.message, False
-            if error.code in {"engine_execution_failed", "engine_runner_offline"}:
-                return ScientificJobFailureClass.ENGINE_TRANSIENT.value, error.message, True
-            return ScientificJobFailureClass.ENGINE_PERMANENT.value, error.message, False
-        return (
-            ScientificJobFailureClass.INTERNAL.value,
-            "The trusted scientific engine could not complete this job.",
-            True,
-        )
+        # Imported lazily to keep the durable runtime usable without starting
+        # the standalone worker service. The classifier never exposes a stack
+        # trace or arbitrary exception string to durable public job state.
+        from mystic.lab.worker.retry import classify_execution_error
+
+        del job_id
+        classification = classify_execution_error(error)
+        return classification.failure_class, classification.safe_error, classification.retryable
 
 
 class ScientificJobWorker:
@@ -190,6 +186,28 @@ class ScientificJobWorker:
         if lease is None:
             return None
         job, lease_token = lease
+        return self.execute_acquired(
+            job,
+            worker_id=worker_id,
+            lease_token=lease_token,
+            lease_seconds=lease_seconds,
+        )
+
+    def execute_acquired(
+        self,
+        job: ScientificJob,
+        *,
+        worker_id: str,
+        lease_token: str,
+        lease_seconds: int = 60,
+    ) -> ScientificJob:
+        """Execute one already-leased job through the durable runtime only.
+
+        The service layer acquires before scheduling so it can account for
+        capacity without placing a job in a process-memory queue.  The opaque
+        lease capability remains transient and is never returned from this
+        method or included in diagnostics.
+        """
         try:
             running = self.runtime.start(job.job_id, worker_id=worker_id, lease_token=lease_token)
         except ScientificJobLeaseError:

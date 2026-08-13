@@ -33,9 +33,19 @@ export const scientificJobSchema = scientificJobSummarySchema.extend({
   lease_history: z.array(campaignEntitySchema).optional(), outbox: z.array(campaignEntitySchema).optional(), events: z.array(campaignEntitySchema).optional(), provenance: campaignEntitySchema.optional(),
 });
 export const scientificJobListSchema = z.object({ jobs: z.array(scientificJobSummarySchema), count: z.number() });
+export const scientificWorkerSchema = z.object({
+  worker_id: z.string(), worker_version: z.string(), runtime_version: z.string(), process_start_time: z.string(), status: z.string(),
+  uptime_seconds: z.number().nonnegative(), capacity: z.number().int().positive(), active_jobs: z.number().int().nonnegative(),
+  supported_engines: z.array(z.string()), supported_engine_versions: z.array(z.string()), resource_classes: z.array(z.string()),
+  last_poll_at: z.string(), last_successful_backend_contact: z.string(), completed_count: z.number().int().nonnegative(),
+  failed_count: z.number().int().nonnegative(), cancelled_count: z.number().int().nonnegative(), stale_lease_count: z.number().int().nonnegative(),
+  reconciliation_count: z.number().int().nonnegative(), safe_last_error: z.string(),
+}).passthrough();
+export const scientificWorkerListSchema = z.object({ workers: z.array(scientificWorkerSchema), count: z.number() });
 export type Provider = z.infer<typeof providerSchema>;
 export type SceneEnvelope = z.infer<typeof sceneEnvelopeSchema>;
 export type Campaign = z.infer<typeof campaignSchema>;
 export type CampaignSummary = z.infer<typeof campaignSummarySchema>;
 export type ScientificJob = z.infer<typeof scientificJobSchema>;
 export type ScientificJobSummary = z.infer<typeof scientificJobSummarySchema>;
+export type ScientificWorker = z.infer<typeof scientificWorkerSchema>;

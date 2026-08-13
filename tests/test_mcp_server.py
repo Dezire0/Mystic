@@ -204,6 +204,8 @@ class MCPServerTests(unittest.TestCase):
                 "lab_job_cancel",
                 "lab_job_retry",
                 "lab_job_statistics",
+                "lab_worker_list",
+                "lab_worker_get",
                 "lab_session_create",
                 "lab_session_get",
                 "lab_session_advance",

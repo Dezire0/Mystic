@@ -29,6 +29,8 @@ Reference docs:
 - [Job leasing](docs/job_leasing.md)
 - [Job reconciliation and outbox](docs/job_reconciliation.md)
 - [Exactly-once logical result attachment](docs/exactly_once_result_attachment.md)
+- [Trusted scientific job worker](docs/scientific_job_worker.md)
+- [Scientific job worker deployment design](docs/scientific_job_worker_deployment.md)
 
 ## Autonomous Scientist research campaigns (Phase 2C.1)
 
@@ -40,7 +42,13 @@ Campaigns move from `PLANNING` through background research, knowledge, hypothesi
 
 Phase 2C.2A adds a separate, restart-safe `ScientificJob` execution substrate. A campaign records a constrained execution intent; a durable outbox makes it discoverable; a trusted worker proves lease ownership to start, heartbeat, complete, or fail it; and the result is attached back through the campaign runtime exactly once at the logical application layer. It does not alter the Phase 2A engine queue, add an LLM agent, or promise exactly-once physical engine execution.
 
-Jobs are versioned, integrity-hashed, retry-bounded, lease-reclaimed, and auditable. Public MCP intentionally exposes only `lab_job_create`, `lab_job_get`, `lab_job_list`, `lab_job_cancel`, `lab_job_retry`, and `lab_job_statistics`; lease, worker, completion, attachment, and reconciliation APIs remain internal. The Control Center provides the Job Queue and job-detail/dead-letter views at `/jobs`. See [the job runtime guide](docs/scientific_job_runtime.md) for the physical-execution versus logical-attachment guarantee and migration/RLS details.
+Jobs are versioned, integrity-hashed, retry-bounded, lease-reclaimed, and auditable. Public **job-control** MCP intentionally exposes only `lab_job_create`, `lab_job_get`, `lab_job_list`, `lab_job_cancel`, `lab_job_retry`, and `lab_job_statistics`; lease, completion, attachment, and reconciliation APIs remain internal. Phase 2C.2B later adds separate read-only redacted worker-health views, never worker mutations. The Control Center provides the Job Queue and job-detail/dead-letter views at `/jobs`. See [the job runtime guide](docs/scientific_job_runtime.md) for the physical-execution versus logical-attachment guarantee and migration/RLS details.
+
+## Trusted scientific job worker (Phase 2C.2B)
+
+Phase 2C.2B supplies the standalone trusted worker that polls the Phase 2C.2A durable outbox, acquires a bounded lease, heartbeats it, executes only an allowlisted built-in engine through the existing adapter, validates/persists the structured outcome, and lets the runtime attach it to a campaign exactly once. It is execution infrastructure only: no LLM director, hypothesis generator, model selector, experiment planner, referee, report writer, or autonomous next-action decision is included.
+
+The worker requires a dedicated credential verifier and is not an MCP mutation surface. `lab_worker_list` and `lab_worker_get` are read-only redacted health views for the Control Center `/workers` pages; acquire, heartbeat, start, complete, fail, drain, and reconciliation mutation operations remain private. Use [the worker guide](docs/scientific_job_worker.md) and [deployment design](docs/scientific_job_worker_deployment.md) before a non-production service acceptance run. Physical engine execution can repeat across a crash; accepted campaign result application remains idempotent/logically exactly once.
 
 The current LAB status is intentionally conservative:
 

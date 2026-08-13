@@ -13,6 +13,7 @@ from mystic.final_answer_verifier import extract_candidate_tuples, verify_final_
 from mystic.lab.runner import LabRunner
 from mystic.lab.campaign_runtime import CampaignRuntime
 from mystic.lab.scientific_job_runtime import ScientificJobRuntime
+from mystic.lab.worker.status_store import WorkerStatusNotFoundError, WorkerStatusStorage
 from mystic.mcp.import_verification import (
     default_verification_artifact_path,
     load_import_verification,
@@ -57,6 +58,8 @@ LAB_TOOL_NAMES = (
     "lab_job_cancel",
     "lab_job_retry",
     "lab_job_statistics",
+    "lab_worker_list",
+    "lab_worker_get",
     "lab_session_create",
     "lab_session_get",
     "lab_session_advance",
@@ -130,6 +133,7 @@ class MysticToolbox:
             self.root_path,
             campaign_runtime=self.campaign_runtime,
         )
+        self.worker_status_storage = WorkerStatusStorage(self.root_path)
         self.provider_connect = self.lab_runner.provider_connect
         self._ensure_data_dirs()
 
@@ -186,6 +190,8 @@ class MysticToolbox:
                 "lab_job_cancel": "ready",
                 "lab_job_retry": "ready",
                 "lab_job_statistics": "ready",
+                "lab_worker_list": "ready",
+                "lab_worker_get": "ready",
                 "lab_session_create": "ready",
                 "lab_session_get": "ready",
                 "lab_session_advance": "ready",
@@ -652,7 +658,7 @@ class MysticToolbox:
         idempotency_key: str = "",
         correlation_id: str = "",
     ) -> dict[str, Any]:
-        """Operator intent only; lease and worker operations are intentionally internal."""
+        """Create asynchronous operator intent; execution and attachment stay internal."""
         job = self.scientific_job_runtime.create_job(
             campaign_id=campaign_id,
             engine_name=engine_name,
@@ -693,6 +699,18 @@ class MysticToolbox:
     def lab_job_statistics(self, *, campaign_id: str = "") -> dict[str, Any]:
         return self.scientific_job_runtime.statistics(campaign_id=campaign_id or None)
 
+    def lab_worker_list(self, *, limit: int = 50) -> dict[str, Any]:
+        """Read redacted trusted-worker health; it cannot control a worker."""
+        workers = self.worker_status_storage.list(limit=limit)
+        return {"workers": workers, "count": len(workers)}
+
+    def lab_worker_get(self, *, worker_id: str) -> dict[str, Any]:
+        """Read one fixed-schema, redacted trusted-worker health record."""
+        try:
+            return self.worker_status_storage.get(worker_id)
+        except WorkerStatusNotFoundError as exc:
+            raise KeyError("Scientific worker status was not found") from exc
+
     @staticmethod
     def _scientific_job_summary(job: Any) -> dict[str, Any]:
         return {
@@ -705,6 +723,7 @@ class MysticToolbox:
             "max_attempts": job.max_attempts,
             "ready_at": job.ready_at,
             "created_at": job.created_at,
+            "updated_at": job.updated_at,
             "started_at": job.started_at,
             "finished_at": job.finished_at,
             "lease_owner": job.lease_owner,

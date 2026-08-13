@@ -277,6 +277,17 @@ TOOL_SCHEMAS = {
         "properties": {"campaign_id": {"type": "string", "maxLength": 160}},
         "additionalProperties": False,
     },
+    "lab_worker_list": {
+        "type": "object",
+        "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 100}},
+        "additionalProperties": False,
+    },
+    "lab_worker_get": {
+        "type": "object",
+        "properties": {"worker_id": {"type": "string", "minLength": 1, "maxLength": 160}},
+        "required": ["worker_id"],
+        "additionalProperties": False,
+    },
     "lab_session_create": {
         "type": "object",
         "properties": {
@@ -754,7 +765,7 @@ TOOL_DEFINITIONS = [
     ),
     _tool_definition(
         "lab_job_create",
-        "Create one durable engine-execution intent for an active campaign; workers cannot be controlled through this public tool.",
+        "Create asynchronous durable engine-execution intent; poll job get/list for validated completion. Workers cannot be controlled through this public tool.",
         title="Create Scientific Job",
     ),
     _tool_definition(
@@ -771,18 +782,30 @@ TOOL_DEFINITIONS = [
     ),
     _tool_definition(
         "lab_job_cancel",
-        "Request safe cancellation of a scientific job without bypassing lease validation.",
+        "Request safe cancellation of an asynchronous scientific job without bypassing lease validation.",
         title="Cancel Scientific Job",
     ),
     _tool_definition(
         "lab_job_retry",
-        "Apply deterministic retry policy to a failed scientific job.",
+        "Apply bounded deterministic retry policy to a failed scientific job.",
         title="Retry Scientific Job",
     ),
     _tool_definition(
         "lab_job_statistics",
         "Read scientific job runtime counts and idempotency/reconciliation metrics.",
         title="Get Scientific Job Statistics",
+        read_only=True,
+    ),
+    _tool_definition(
+        "lab_worker_list",
+        "List redacted health records published by trusted scientific workers; this cannot dispatch or control them.",
+        title="List Scientific Workers",
+        read_only=True,
+    ),
+    _tool_definition(
+        "lab_worker_get",
+        "Read one redacted trusted scientific worker health record; lease capabilities and credentials are never returned.",
+        title="Get Scientific Worker",
         read_only=True,
     ),
     _tool_definition(
@@ -981,6 +1004,8 @@ PUBLIC_TOOL_NAMES = [
     "lab_job_cancel",
     "lab_job_retry",
     "lab_job_statistics",
+    "lab_worker_list",
+    "lab_worker_get",
     "lab_session_create",
     "lab_session_get",
     "lab_session_advance",
