@@ -215,6 +215,122 @@ def SessionDetailPage(*, sessions: list[dict[str, Any]]) -> str:
     )
 
 
+def SpecialistsPage(*, specialists: list[dict[str, Any]]) -> str:
+    cards = []
+    for item in specialists:
+        usage = item.get("usage", {})
+        specialist_id = str(item.get("specialist_id", ""))
+        cards.append(
+            "<article class='panel'>"
+            f"<h2><a href='/specialists/{escape(specialist_id)}'>{escape(specialist_id)}</a></h2>"
+            "<div class='meta-row'>"
+            f"<span class='badge'>{escape(str(item.get('role', '')))}</span>"
+            f"<span class='badge'>{escape(str(item.get('provider', '')))}</span>"
+            f"<span class='badge'>{escape(str(item.get('health', '')))}</span>"
+            f"<span class='badge'>{escape(str(item.get('benchmark_status', '')))}</span>"
+            f"<span class='badge'>{escape(str(item.get('classification', '')))}</span>"
+            "</div>"
+            f"<p class='small muted'>Latency class: {escape(str(item.get('expected_latency_class', 'unknown')))} · Cost class: {escape(str(item.get('expected_cost_class', 'unknown')))}</p>"
+            f"<p class='small'>Usage: {escape(str(usage.get('calls', 0)))} calls · observed average latency: {float(usage.get('average_latency_ms', 0.0)):.1f} ms · fallback rate: {float(usage.get('fallback_rate', 0.0)):.0%}</p>"
+            f"<p class='small muted'>{escape('; '.join(str(value) for value in item.get('limitations', [])))}</p>"
+            "</article>"
+        )
+    body = "<section class='grid'>" + "".join(cards or ["<article class='panel'><p class='muted'>No specialist registry entries are available.</p></article>"]) + "</section>"
+    return layout(
+        title="Specialists",
+        subtitle="Bounded evidence instruments. GPT remains the research controller; no unverified specialist is treated as live or superior.",
+        body=body,
+        nav="<div class='page-nav'><a class='action' href='/evidence'>Evidence Provenance</a><a class='action' href='/research-table/start'>Research Table</a></div>",
+    )
+
+
+def SpecialistDetailPage(*, specialist: dict[str, Any], usage: dict[str, Any]) -> str:
+    capability_chips = "".join(f"<span class='chip'>{escape(str(value))}</span>" for value in specialist.get("capabilities", []))
+    fallback_chips = "".join(f"<span class='chip'>{escape(str(value))}</span>" for value in specialist.get("fallback_ids", []))
+    limitations = "".join(f"<li>{escape(str(value))}</li>" for value in specialist.get("limitations", []))
+    fallback_content = fallback_chips or "<span class='muted'>No approved fallback.</span>"
+    recent = "".join(
+        "<li>"
+        f"{escape(str(item.get('created_at', '')))} · {escape(str(item.get('operation', '')))} · {escape(str(item.get('status', '')))}"
+        "</li>"
+        for item in usage.get("recent", [])
+    )
+    recent_content = recent or "<li class='muted'>No calls recorded.</li>"
+    body = (
+        "<section class='grid'>"
+        "<article class='panel'>"
+        f"<h2>{escape(str(specialist.get('specialist_id', '')))}</h2>"
+        "<div class='meta-row'>"
+        f"<span class='badge'>{escape(str(specialist.get('role', '')))}</span>"
+        f"<span class='badge'>{escape(str(specialist.get('provider', '')))}</span>"
+        f"<span class='badge'>{escape(str(specialist.get('health', '')))}</span>"
+        f"<span class='badge'>{escape(str(specialist.get('benchmark_status', '')))}</span>"
+        f"<span class='badge'>{escape(str(specialist.get('classification', '')))}</span>"
+        "</div>"
+        f"<p class='small muted'>Model: {escape(str(specialist.get('model_id', '')))} · version: {escape(str(specialist.get('version', '')))}</p>"
+        "<h3>Capabilities</h3>"
+        f"<div class='meta-row'>{capability_chips or '<span class="muted">No capability metadata.</span>'}</div>"
+        "<h3>Routing status</h3>"
+        f"<p>Enabled: {escape(str(specialist.get('enabled', False)))} · trust: {escape(str(specialist.get('trust_level', '')))} · last verified: {escape(str(specialist.get('last_verified_at', 'not verified')))}</p>"
+        "<h3>Limitations</h3>"
+        f"<ul>{limitations or '<li>No limitations recorded.</li>'}</ul>"
+        "</article>"
+        "<div class='stack'>"
+        "<section class='panel'><h2>Benchmark evidence</h2>"
+        f"<p>Quality: {float(specialist.get('benchmark_quality', 0.0)):.3f} · reliability: {float(specialist.get('reliability', 0.0)):.3f}</p>"
+        f"<p class='muted'>Status: {escape(str(specialist.get('benchmark_status', '')))}. Fixture results do not approve a named candidate.</p></section>"
+        "<section class='panel'><h2>Fallbacks</h2>"
+        f"<div class='meta-row'>{fallback_content}</div></section>"
+        "<section class='panel'><h2>Recent safe usage</h2>"
+        f"<p>Calls: {escape(str(usage.get('calls', 0)))} · failures: {escape(str(usage.get('failures', 0)))} · observed average latency: {float(usage.get('average_latency_ms', 0.0)):.1f} ms · fallback rate: {float(usage.get('fallback_rate', 0.0)):.0%}</p>"
+        f"<ul class='small'>{recent_content}</ul></section>"
+        "</div></section>"
+    )
+    return layout(
+        title="Specialist Detail",
+        subtitle="Safe registry metadata and usage only. This page cannot configure credentials or invoke a model.",
+        body=body,
+        nav="<div class='page-nav'><a class='action' href='/specialists'>All Specialists</a><a class='action' href='/evidence'>Evidence Provenance</a></div>",
+    )
+
+
+def EvidencePage(*, evidence: list[dict[str, Any]]) -> str:
+    cards = []
+    for item in evidence:
+        def provenance_label(step: dict[str, Any]) -> str:
+            specialist = str(step.get("specialist_id", ""))
+            suffix = f" · {escape(specialist)}" if specialist else ""
+            return f"<li>{escape(str(step.get('stage', '')))} · {escape(str(step.get('location', '')))}{suffix}</li>"
+
+        path = "".join(
+            provenance_label(step)
+            for step in item.get("provenance", [])
+            if isinstance(step, dict)
+        )
+        provenance_content = path or "<li class='muted'>No provenance steps recorded.</li>"
+        cards.append(
+            "<article class='panel'>"
+            f"<h2>{escape(str(item.get('title', 'Untitled evidence')))}</h2>"
+            "<div class='meta-row'>"
+            f"<span class='badge'>{escape(str(item.get('source_type', '')))}</span>"
+            f"<span class='badge'>{escape(str(item.get('location', '')))}</span>"
+            f"<span class='badge'>retrieval: {escape(str(item.get('retrieval_score', 'not searched')))}</span>"
+            f"<span class='badge'>rerank: {escape(str(item.get('rerank_score', 'not reranked')))}</span>"
+            "</div>"
+            f"<p class='small muted'>Source: {escape(str(item.get('source_id', '')))} · document: {escape(str(item.get('document_id', '')))}</p>"
+            "<h3>Provenance path</h3>"
+            f"<ol class='small'>{provenance_content}</ol>"
+            "</article>"
+        )
+    body = "<section class='stack'>" + "".join(cards or ["<article class='panel'><p class='muted'>No indexed evidence is available. Ingested document bodies are intentionally not shown here.</p></article>"]) + "</section>"
+    return layout(
+        title="Evidence Provenance",
+        subtitle="Source → parser/OCR when required → chunk → embedding → retrieval → rerank → ResearchCampaign reference.",
+        body=body,
+        nav="<div class='page-nav'><a class='action' href='/specialists'>Specialists</a><a class='action' href='/research-table/start'>Research Table</a></div>",
+    )
+
+
 def ProviderAuthPage(*, model_id: str, status: dict[str, Any]) -> str:
     body = (
         "<section class='grid'>"
