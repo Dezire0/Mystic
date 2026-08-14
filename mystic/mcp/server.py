@@ -35,7 +35,15 @@ class MysticMCPServer:
         if method == "ping":
             return self._response(request_id, {})
         if method == "tools/list":
-            return self._response(request_id, {"tools": PUBLIC_TOOL_DEFINITIONS})
+            # Test doubles and compatibility deployments may intentionally expose a
+            # strict subset of the local toolbox. Never advertise a handler that
+            # the active runtime does not implement.
+            tools = [
+                tool
+                for tool in PUBLIC_TOOL_DEFINITIONS
+                if callable(getattr(self.toolbox, str(tool["name"]), None))
+            ]
+            return self._response(request_id, {"tools": tools})
         if method == "tools/call":
             params = payload.get("params", {})
             name = params.get("name")

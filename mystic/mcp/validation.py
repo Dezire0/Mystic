@@ -22,6 +22,9 @@ def validate_json_schema(instance: Any, schema: dict[str, Any], *, path: str = "
         min_length = schema.get("minLength")
         if min_length is not None and len(instance) < int(min_length):
             errors.append(f"{path} must be at least {min_length} characters long")
+        max_length = schema.get("maxLength")
+        if max_length is not None and len(instance) > int(max_length):
+            errors.append(f"{path} must be at most {max_length} characters long")
     elif matched_type == "integer":
         errors.extend(_validate_number(instance, schema, path=path))
     elif matched_type == "number":

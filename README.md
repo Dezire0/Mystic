@@ -42,6 +42,19 @@ Phase 2C.2A adds a separate, restart-safe `ScientificJob` execution substrate. A
 
 Jobs are versioned, integrity-hashed, retry-bounded, lease-reclaimed, and auditable. Public MCP intentionally exposes only `lab_job_create`, `lab_job_get`, `lab_job_list`, `lab_job_cancel`, `lab_job_retry`, and `lab_job_statistics`; lease, worker, completion, attachment, and reconciliation APIs remain internal. The Control Center provides the Job Queue and job-detail/dead-letter views at `/jobs`. See [the job runtime guide](docs/scientific_job_runtime.md) for the physical-execution versus logical-attachment guarantee and migration/RLS details.
 
+## Specialist intelligence foundation (Phase 2D.1)
+
+Phase 2D.1 introduces a vendor-neutral specialist-instrument foundation. GPT/the Mystic Research Controller remains responsible for research judgement, hypotheses, experiment planning, contradiction handling, campaign control, and conclusions. Specialists are bounded retrieval, reranking, OCR, parsing, and document-layout instruments; they are not a second scientist or a parallel chatbot swarm.
+
+- `SpecialistModelRegistry` holds candidate metadata, benchmark status/classification, capability limits, fallbacks, health, licence details, and safe usage data.
+- `SpecialistRouter` chooses by task/capability, modality, language, domain, benchmark quality, reliability, latency, cost, and input limit—not model size or vendor name.
+- The initial NVIDIA candidate stack is registered but disabled and unclassified pending a declared live benchmark and baseline comparison. The default local path sends no NVIDIA request and does not claim candidate performance.
+- Clean text ingestion and the provenance-aware retrieval pipeline are implemented behind approved specialists. Scanned, image-based, or visually complex documents return an explicit `specialist_required` state while required OCR/parser/VL specialists remain disabled.
+- Local MCP exposes bounded specialist/evidence inspection, matching, fixture benchmarks, ingestion, retrieval, reranking, and campaign evidence attachment. It does not expose arbitrary provider or model invocation. The deployed Cloudflare Worker tool manifest is unchanged in this phase.
+- Local Control Center pages are available at `/specialists`, `/specialists/:id`, and `/evidence`; they show safe registry state and provenance without displaying document bodies by default.
+
+The deterministic fixture benchmark validates metric and pipeline wiring only. It is not a live NVIDIA benchmark and cannot enable or classify a named candidate. See [the Phase 2D architecture](docs/mystic_lab_phase2d_specialists.md) for the benchmark gate, provenance model, security boundary, and recommended Phase 2D.2 rollout.
+
 The current LAB status is intentionally conservative:
 
 - session orchestration is implemented
