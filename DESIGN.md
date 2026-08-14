@@ -93,4 +93,4 @@
 ## Open questions
 
 - [ ] Which authenticated Control Center/BFF is authoritative for deploying these local views? Owner: platform; impact: Phase 2D.2 rollout.
-- [ ] What benchmark thresholds and corpus governance approve live specialist use? Owner: research platform; impact: model enablement.
+- [x] What benchmark thresholds and corpus governance approve live specialist use? Phase 2D.2 records a versioned corpus digest and requires an explicit live-versus-baseline gate; real-document OCR/layout assets remain a prerequisite for OCR activation. Owner: research platform; impact: model enablement.

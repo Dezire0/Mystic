@@ -30,6 +30,9 @@ mystic_data/reports/*
 mystic_data/e2e/*
 mystic_data/metrics/*
 mystic_data/training/*
+mystic_data/specialist_benchmarks/*
+mystic_data/specialist_usage/*
+mystic_data/specialist_evidence/*
 mystic_data/datasets/*
 mystic_data/state/*
 mystic_gpu_train_package*.tar.gz
@@ -60,6 +63,9 @@ mystic_data/training/raven/
 !mystic_data/e2e/.gitkeep
 !mystic_data/metrics/.gitkeep
 !mystic_data/training/.gitkeep
+!mystic_data/specialist_benchmarks/.gitkeep
+!mystic_data/specialist_usage/.gitkeep
+!mystic_data/specialist_evidence/.gitkeep
 !mystic_data/datasets/.gitkeep
 !mystic_data/state/.gitkeep
 !mystic_data/metadata/

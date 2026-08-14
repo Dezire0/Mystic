@@ -741,7 +741,11 @@ class MysticToolbox:
     def lab_specialist_get(self, *, specialist_id: str) -> dict[str, Any]:
         model = self.specialist_runtime.registry.get(specialist_id)
         usage = self.specialist_runtime.usage.summary(specialist_id=specialist_id) if self.specialist_runtime.usage else {}
-        return {"specialist": model.safe_dict(), "usage": usage}
+        return {
+            "specialist": model.safe_dict(),
+            "usage": usage,
+            "benchmark_results": self.specialist_benchmarks.list_results(specialist_id=specialist_id, limit=10),
+        }
 
     def lab_specialist_match(
         self,

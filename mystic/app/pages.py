@@ -244,7 +244,7 @@ def SpecialistsPage(*, specialists: list[dict[str, Any]]) -> str:
     )
 
 
-def SpecialistDetailPage(*, specialist: dict[str, Any], usage: dict[str, Any]) -> str:
+def SpecialistDetailPage(*, specialist: dict[str, Any], usage: dict[str, Any], benchmarks: list[dict[str, Any]] | None = None) -> str:
     capability_chips = "".join(f"<span class='chip'>{escape(str(value))}</span>" for value in specialist.get("capabilities", []))
     fallback_chips = "".join(f"<span class='chip'>{escape(str(value))}</span>" for value in specialist.get("fallback_ids", []))
     limitations = "".join(f"<li>{escape(str(value))}</li>" for value in specialist.get("limitations", []))
@@ -256,6 +256,14 @@ def SpecialistDetailPage(*, specialist: dict[str, Any], usage: dict[str, Any]) -
         for item in usage.get("recent", [])
     )
     recent_content = recent or "<li class='muted'>No calls recorded.</li>"
+    benchmark_rows = "".join(
+        "<li>"
+        f"{escape(str(item.get('created_at', '')))} · {escape(str(item.get('category', '')))} · "
+        f"{escape(str(item.get('execution_mode', '')))} · failure rate: {float(item.get('failure_rate', 0.0)):.0%}"
+        "</li>"
+        for item in (benchmarks or [])
+    )
+    benchmark_content = benchmark_rows or "<li class='muted'>No persisted benchmark result. Fixture results cannot approve a named candidate.</li>"
     body = (
         "<section class='grid'>"
         "<article class='panel'>"
@@ -278,7 +286,8 @@ def SpecialistDetailPage(*, specialist: dict[str, Any], usage: dict[str, Any]) -
         "<div class='stack'>"
         "<section class='panel'><h2>Benchmark evidence</h2>"
         f"<p>Quality: {float(specialist.get('benchmark_quality', 0.0)):.3f} · reliability: {float(specialist.get('reliability', 0.0)):.3f}</p>"
-        f"<p class='muted'>Status: {escape(str(specialist.get('benchmark_status', '')))}. Fixture results do not approve a named candidate.</p></section>"
+        f"<p class='muted'>Status: {escape(str(specialist.get('benchmark_status', '')))}. Fixture results do not approve a named candidate.</p>"
+        f"<ul class='small'>{benchmark_content}</ul></section>"
         "<section class='panel'><h2>Fallbacks</h2>"
         f"<div class='meta-row'>{fallback_content}</div></section>"
         "<section class='panel'><h2>Recent safe usage</h2>"

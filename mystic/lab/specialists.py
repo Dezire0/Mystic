@@ -8,12 +8,17 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
+import base64
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 from time import perf_counter
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from mystic.lab.schema import utc_now_iso
 
@@ -200,22 +205,76 @@ class SpecialistProvider(Protocol):
 
 
 class NvidiaNIMSpecialistProvider:
-    """Configuration-gated NVIDIA NIM adapter.
+    """Narrow, opt-in HTTP adapter for approved NVIDIA NIM capabilities.
 
-    Phase 2D.1 intentionally stops before provider-specific inference serializers.
-    A configured deployment must still add a reviewed serializer and live benchmark
-    before remote execution can be enabled.
+    The adapter intentionally accepts only registry-selected model/operation pairs.
+    It never exposes a generic URL, request body, or model invocation surface to
+    MCP.  A deployment has to opt in with ``MYSTIC_NVIDIA_NIM_EXECUTION_ENABLED``;
+    credentials remain in the server process and are redacted from result records.
     """
 
     provider_id = "nvidia_nim"
+    serializer_version = "phase2d2-nim-v1"
+    _ROLE_ENDPOINT_VARIABLE = {
+        SpecialistRole.TEXT_EMBEDDING.value: "MYSTIC_NVIDIA_NIM_EMBED_BASE_URL",
+        SpecialistRole.VISUAL_EMBEDDING.value: "MYSTIC_NVIDIA_NIM_EMBED_BASE_URL",
+        SpecialistRole.TEXT_RERANKING.value: "MYSTIC_NVIDIA_NIM_RERANK_BASE_URL",
+        SpecialistRole.VISUAL_RERANKING.value: "MYSTIC_NVIDIA_NIM_RERANK_BASE_URL",
+        SpecialistRole.OCR.value: "MYSTIC_NVIDIA_NIM_OCR_BASE_URL",
+    }
+    _WAVE_1_MODEL_OPERATIONS = {
+        "nvidia.nemotron-3-embed-1b": ("nvidia/nemotron-3-embed-1b", "embed"),
+        "nvidia.llama-nemotron-rerank-1b-v2": ("nvidia/llama-nemotron-rerank-1b-v2", "rerank"),
+        "nvidia.nemotron-ocr-v2": ("nvidia/nemotron-ocr-v2", "ocr"),
+    }
+    _DEFAULT_ALLOWED_HOSTS = {
+        "integrate.api.nvidia.com",
+        "ai.api.nvidia.com",
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }
+    _MAX_TEXT_CHARS = 120_000
+    _MAX_BATCH_ITEMS = 50
+    _MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
-    def __init__(self, *, environment: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        environment: Mapping[str, str] | None = None,
+        post_json: Callable[[str, dict[str, str], bytes, float], tuple[int, Mapping[str, Any]]] | None = None,
+    ) -> None:
         self.environment = environment if environment is not None else os.environ
+        self._post_json = post_json or self._urllib_post_json
 
     def health(self) -> str:
-        key = str(self.environment.get("MYSTIC_NVIDIA_NIM_API_KEY", "")).strip()
-        base_url = str(self.environment.get("MYSTIC_NVIDIA_NIM_BASE_URL", "")).strip()
-        return SpecialistHealth.HEALTHY.value if key and base_url else SpecialistHealth.UNVERIFIED.value
+        """Return configuration readiness without making a probe request."""
+        if not _truthy(self.environment.get("MYSTIC_NVIDIA_NIM_EXECUTION_ENABLED", "")):
+            return SpecialistHealth.UNVERIFIED.value
+        return SpecialistHealth.HEALTHY.value if any(self._configured_role(role) for role in self._ROLE_ENDPOINT_VARIABLE) else SpecialistHealth.UNVERIFIED.value
+
+    def health_for(self, model: SpecialistModel) -> str:
+        if not _truthy(self.environment.get("MYSTIC_NVIDIA_NIM_EXECUTION_ENABLED", "")):
+            return SpecialistHealth.UNVERIFIED.value
+        if model.specialist_id not in self._WAVE_1_MODEL_OPERATIONS:
+            return SpecialistHealth.UNVERIFIED.value
+        return SpecialistHealth.HEALTHY.value if self._configured_role(model.role) else SpecialistHealth.UNVERIFIED.value
+
+    def safe_configuration(self) -> dict[str, Any]:
+        endpoints: dict[str, str] = {}
+        for role in sorted(self._ROLE_ENDPOINT_VARIABLE):
+            base_url = self._base_url_for_role(role)
+            if base_url:
+                endpoints[role] = str(urlparse(base_url).hostname or "")
+        return {
+            "provider": self.provider_id,
+            "serializer_version": self.serializer_version,
+            "execution_enabled": _truthy(self.environment.get("MYSTIC_NVIDIA_NIM_EXECUTION_ENABLED", "")),
+            "api_key_configured": bool(str(self.environment.get("MYSTIC_NVIDIA_NIM_API_KEY", "")).strip()),
+            "endpoint_hosts": endpoints,
+            "timeout_seconds": self._timeout_seconds(),
+            "allowed_host_policy": "NVIDIA API, loopback, or explicitly configured MYSTIC_NVIDIA_NIM_ALLOWED_HOSTS",
+        }
 
     def execute(
         self,
@@ -224,24 +283,274 @@ class NvidiaNIMSpecialistProvider:
         operation: str,
         payload: Mapping[str, Any],
     ) -> SpecialistExecutionResult:
-        del payload
-        if self.health() != SpecialistHealth.HEALTHY.value:
-            return SpecialistExecutionResult(
-                specialist_id=model.specialist_id,
-                provider=self.provider_id,
-                operation=operation,
-                status="failed",
-                failure_type=SpecialistFailureType.PROVIDER_OFFLINE.value,
-                safe_error="NVIDIA NIM is not configured for specialist execution.",
+        expected = self._WAVE_1_MODEL_OPERATIONS.get(model.specialist_id)
+        if expected != (model.model_id, operation):
+            return self._failure(
+                model,
+                operation,
+                SpecialistFailureType.UNSUPPORTED_INPUT,
+                "NVIDIA NIM provider accepts only fixed Phase 2D.2 Wave 1 specialist operations.",
             )
+        if not _truthy(self.environment.get("MYSTIC_NVIDIA_NIM_EXECUTION_ENABLED", "")):
+            return self._failure(
+                model,
+                operation,
+                SpecialistFailureType.MODEL_DISABLED,
+                "NVIDIA NIM execution is disabled by server configuration.",
+            )
+        try:
+            endpoint, body = self._request_for(model=model, operation=operation, payload=payload)
+        except ValueError as exc:
+            return self._failure(model, operation, SpecialistFailureType.UNSUPPORTED_INPUT, str(exc))
+        if endpoint is None:
+            return self._failure(
+                model,
+                operation,
+                SpecialistFailureType.PROVIDER_OFFLINE,
+                "No approved NVIDIA NIM endpoint is configured for this specialist role.",
+            )
+        endpoint_host = (urlparse(endpoint).hostname or "").lower()
+        if endpoint_host not in {"localhost", "127.0.0.1", "::1"} and not str(
+            self.environment.get("MYSTIC_NVIDIA_NIM_API_KEY", "")
+        ).strip():
+            return self._failure(
+                model,
+                operation,
+                SpecialistFailureType.PROVIDER_OFFLINE,
+                "NVIDIA NIM remote endpoint requires a server-side API key.",
+            )
+        headers = {"accept": "application/json", "content-type": "application/json"}
+        api_key = str(self.environment.get("MYSTIC_NVIDIA_NIM_API_KEY", "")).strip()
+        if api_key:
+            headers["authorization"] = f"Bearer {api_key}"
+        try:
+            status, response = self._post_json(
+                endpoint,
+                headers,
+                json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+                self._timeout_seconds(),
+            )
+        except TimeoutError:
+            return self._failure(model, operation, SpecialistFailureType.TIMEOUT, "NVIDIA NIM request timed out.")
+        except HTTPError as exc:
+            return self._http_failure(model, operation, exc.code)
+        except URLError:
+            return self._failure(model, operation, SpecialistFailureType.PROVIDER_OFFLINE, "NVIDIA NIM endpoint is unavailable.")
+        except OSError:
+            return self._failure(model, operation, SpecialistFailureType.PROVIDER_OFFLINE, "NVIDIA NIM transport failed.")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return self._failure(model, operation, SpecialistFailureType.INVALID_OUTPUT, "NVIDIA NIM returned an invalid response.")
+        if status < 200 or status >= 300:
+            return self._http_failure(model, operation, status)
+        try:
+            output = self._normalize_response(model=model, operation=operation, response=response)
+        except (KeyError, TypeError, ValueError):
+            return self._failure(model, operation, SpecialistFailureType.INVALID_OUTPUT, "NVIDIA NIM response did not match the expected specialist contract.")
+        return SpecialistExecutionResult(
+            specialist_id=model.specialist_id,
+            provider=self.provider_id,
+            operation=operation,
+            status="ok",
+            output=output,
+            estimated_cost=None,
+        )
+
+    def _request_for(
+        self,
+        *,
+        model: SpecialistModel,
+        operation: str,
+        payload: Mapping[str, Any],
+    ) -> tuple[str | None, dict[str, Any]]:
+        base_url = self._base_url_for_role(model.role)
+        if not base_url:
+            return None, {}
+        if model.role == SpecialistRole.TEXT_EMBEDDING.value and operation == "embed":
+            texts = _text_batch(payload)
+            input_type = str(payload.get("input_type", "passage"))
+            if input_type not in {"query", "passage"}:
+                raise ValueError("Embedding input_type must be query or passage.")
+            return _nim_endpoint(base_url, "v1/embeddings"), {
+                "model": model.model_id,
+                "input": texts if len(texts) > 1 else texts[0],
+                "input_type": input_type,
+                "encoding_format": "float",
+                "truncate": "NONE",
+            }
+        if model.role == SpecialistRole.TEXT_RERANKING.value and operation == "rerank":
+            query = _bounded_text(payload.get("query"), field="query")
+            passages_value = payload.get("passages")
+            if not isinstance(passages_value, list) or not passages_value or len(passages_value) > self._MAX_BATCH_ITEMS:
+                raise ValueError("Reranking requires 1-50 text passages.")
+            passages = [_bounded_text(value, field="passage") for value in passages_value]
+            if len(query) + sum(len(value) for value in passages) > self._MAX_TEXT_CHARS:
+                raise ValueError("Reranking request exceeds the approved text budget.")
+            return _nim_endpoint(base_url, "v1/ranking"), {
+                "model": model.model_id,
+                "query": {"text": query},
+                "passages": [{"text": passage} for passage in passages],
+                "truncate": "END",
+            }
+        if model.role == SpecialistRole.OCR.value and operation == "ocr":
+            image_urls = _image_batch(payload, max_bytes=self._MAX_IMAGE_BYTES, max_items=self._MAX_BATCH_ITEMS)
+            merge_level = str(payload.get("merge_level", "paragraph"))
+            if merge_level not in {"word", "sentence", "paragraph"}:
+                raise ValueError("OCR merge_level must be word, sentence, or paragraph.")
+            return _nim_endpoint(base_url, "v1/ocr"), {
+                "input": [{"type": "image_url", "url": item} for item in image_urls],
+                "merge_levels": [merge_level] * len(image_urls),
+            }
+        raise ValueError("The selected NVIDIA specialist does not support this operation.")
+
+    def _normalize_response(
+        self,
+        *,
+        model: SpecialistModel,
+        operation: str,
+        response: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        if model.role == SpecialistRole.TEXT_EMBEDDING.value and operation == "embed":
+            rows = response.get("data")
+            if not isinstance(rows, list) or not rows:
+                raise ValueError("Missing embedding data")
+            ordered = sorted(rows, key=lambda row: int(row.get("index", 0)))
+            embeddings = [
+                [float(value) for value in row["embedding"]]
+                for row in ordered
+                if isinstance(row, Mapping) and isinstance(row.get("embedding"), list) and row["embedding"]
+            ]
+            if len(embeddings) != len(rows):
+                raise ValueError("Invalid embedding vector")
+            return {"embedding": embeddings[0], "embeddings": embeddings, "usage": _safe_usage(response.get("usage"))}
+        if model.role == SpecialistRole.TEXT_RERANKING.value and operation == "rerank":
+            rows = response.get("data", response.get("rankings"))
+            if not isinstance(rows, list):
+                raise ValueError("Missing ranking data")
+            scores_by_index: dict[int, float] = {}
+            for row in rows:
+                if not isinstance(row, Mapping):
+                    raise ValueError("Invalid ranking row")
+                index = int(row["index"])
+                score = row.get("logit", row.get("score"))
+                if not isinstance(score, (int, float)):
+                    raise ValueError("Invalid ranking score")
+                scores_by_index[index] = float(score)
+            if sorted(scores_by_index) != list(range(len(scores_by_index))):
+                raise ValueError("Ranking response omitted or duplicated candidate indices")
+            return {"scores": [scores_by_index[index] for index in range(len(scores_by_index))], "usage": _safe_usage(response.get("usage"))}
+        if model.role == SpecialistRole.OCR.value and operation == "ocr":
+            rows = response.get("data")
+            if not isinstance(rows, list):
+                raise ValueError("Missing OCR data")
+            pages: list[dict[str, Any]] = []
+            for item in rows:
+                if not isinstance(item, Mapping):
+                    raise ValueError("Invalid OCR page")
+                detections: list[dict[str, Any]] = []
+                for detection in item.get("text_detections", []):
+                    if not isinstance(detection, Mapping):
+                        continue
+                    prediction = detection.get("text_prediction", {})
+                    if not isinstance(prediction, Mapping) or not isinstance(prediction.get("text"), str):
+                        continue
+                    confidence = prediction.get("confidence")
+                    box = detection.get("bounding_box", {})
+                    detections.append(
+                        {
+                            "text": prediction["text"],
+                            "confidence": float(confidence) if isinstance(confidence, (int, float)) else None,
+                            "bounding_box": box if isinstance(box, Mapping) else {},
+                        }
+                    )
+                pages.append({"index": int(item.get("index", len(pages))), "text": "\n".join(row["text"] for row in detections), "detections": detections})
+            if not pages:
+                raise ValueError("OCR response contained no page records")
+            return {"text": pages[0]["text"], "pages": pages, "usage": _safe_usage(response.get("usage"))}
+        raise ValueError("Unsupported response contract")
+
+    def _base_url_for_role(self, role: str) -> str:
+        variable = self._ROLE_ENDPOINT_VARIABLE.get(role)
+        raw = str(self.environment.get(variable or "", "") or self.environment.get("MYSTIC_NVIDIA_NIM_BASE_URL", "")).strip()
+        if not raw:
+            return ""
+        parsed = urlparse(raw)
+        allowed_hosts = self._allowed_hosts()
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme not in {"https", "http"} or not host or parsed.username or parsed.password:
+            return ""
+        if parsed.scheme == "http" and host not in {"localhost", "127.0.0.1", "::1"}:
+            return ""
+        if host not in allowed_hosts:
+            return ""
+        return raw.rstrip("/")
+
+    def _allowed_hosts(self) -> set[str]:
+        configured = {
+            item.strip().lower()
+            for item in str(self.environment.get("MYSTIC_NVIDIA_NIM_ALLOWED_HOSTS", "")).split(",")
+            if item.strip()
+        }
+        return self._DEFAULT_ALLOWED_HOSTS | configured
+
+    def _configured_role(self, role: str) -> bool:
+        base_url = self._base_url_for_role(role)
+        if not base_url:
+            return False
+        host = (urlparse(base_url).hostname or "").lower()
+        if host in {"localhost", "127.0.0.1", "::1"}:
+            return True
+        return bool(str(self.environment.get("MYSTIC_NVIDIA_NIM_API_KEY", "")).strip())
+
+    def _timeout_seconds(self) -> float:
+        raw = str(self.environment.get("MYSTIC_NVIDIA_NIM_TIMEOUT_SECONDS", "30")).strip()
+        try:
+            value = float(raw)
+        except ValueError:
+            return 30.0
+        return min(max(value, 1.0), 60.0)
+
+    def _failure(
+        self,
+        model: SpecialistModel,
+        operation: str,
+        failure_type: SpecialistFailureType,
+        safe_error: str,
+    ) -> SpecialistExecutionResult:
         return SpecialistExecutionResult(
             specialist_id=model.specialist_id,
             provider=self.provider_id,
             operation=operation,
             status="failed",
-            failure_type=SpecialistFailureType.MODEL_DISABLED.value,
-            safe_error="Remote specialist execution is disabled pending a reviewed serializer and live benchmark.",
+            failure_type=failure_type.value,
+            safe_error=safe_error,
         )
+
+    def _http_failure(self, model: SpecialistModel, operation: str, status: int) -> SpecialistExecutionResult:
+        if status == 429:
+            kind = SpecialistFailureType.RATE_LIMITED
+            message = "NVIDIA NIM request was rate limited."
+        elif status in {408, 504}:
+            kind = SpecialistFailureType.TIMEOUT
+            message = "NVIDIA NIM request timed out."
+        elif status in {401, 403, 404, 502, 503} or status >= 500:
+            kind = SpecialistFailureType.PROVIDER_OFFLINE
+            message = "NVIDIA NIM endpoint rejected or could not serve the request."
+        else:
+            kind = SpecialistFailureType.INVALID_OUTPUT
+            message = "NVIDIA NIM rejected the bounded specialist request."
+        return self._failure(model, operation, kind, message)
+
+    @staticmethod
+    def _urllib_post_json(url: str, headers: dict[str, str], body: bytes, timeout: float) -> tuple[int, Mapping[str, Any]]:
+        request = Request(url, data=body, headers=headers, method="POST")
+        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - endpoint is allowlisted from server configuration.
+            payload = response.read(16 * 1024 * 1024 + 1)
+            if len(payload) > 16 * 1024 * 1024:
+                raise ValueError("NVIDIA NIM response exceeded the approved size limit")
+            decoded = json.loads(payload.decode("utf-8"))
+            if not isinstance(decoded, Mapping):
+                raise ValueError("NVIDIA NIM response must be a JSON object")
+            return int(response.status), decoded
 
 
 class SpecialistModelRegistry:
@@ -437,6 +746,87 @@ class SpecialistUsageLedger:
         return rows
 
 
+class SpecialistApprovalStore:
+    """Persists only evidence-backed activation metadata, never provider secrets."""
+
+    def __init__(self, root_path: str | Path) -> None:
+        self.path = Path(root_path) / "mystic_data" / "specialist_benchmarks" / "approvals.json"
+
+    def record(
+        self,
+        *,
+        model: SpecialistModel,
+        benchmark_id: str,
+        benchmark_result_hash: str,
+        quality_metric: str,
+    ) -> dict[str, Any]:
+        if not model.benchmark_approved or not model.enabled:
+            raise ValueError("Only enabled, benchmark-approved specialists can be persisted as active")
+        record = {
+            "specialist_id": model.specialist_id,
+            "benchmark_id": _safe_registry_identifier(benchmark_id),
+            "benchmark_result_hash": _safe_registry_hash(benchmark_result_hash),
+            "benchmark_status": model.benchmark_status,
+            "classification": model.classification,
+            "benchmark_quality": model.benchmark_quality,
+            "reliability": model.reliability,
+            "quality_metric": _safe_registry_identifier(quality_metric),
+            "verified_at": model.last_verified_at,
+            "recorded_at": utc_now_iso(),
+        }
+        records = [item for item in self._read() if item.get("specialist_id") != model.specialist_id]
+        records.append(record)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        temporary.replace(self.path)
+        return record
+
+    def apply(self, registry: SpecialistModelRegistry) -> list[str]:
+        applied: list[str] = []
+        for record in self._read():
+            try:
+                specialist_id = _safe_registry_identifier(str(record["specialist_id"]))
+                benchmark_id = _safe_registry_identifier(str(record["benchmark_id"]))
+                expected_hash = _safe_registry_hash(str(record["benchmark_result_hash"]))
+                result_path = self.path.parent / f"{benchmark_id}.json"
+                if not result_path.exists() or hashlib.sha256(result_path.read_bytes()).hexdigest() != expected_hash:
+                    continue
+                result = json.loads(result_path.read_text(encoding="utf-8"))
+                if (
+                    not isinstance(result, Mapping)
+                    or result.get("specialist_id") != specialist_id
+                    or result.get("execution_mode") != "live"
+                    or not result.get("corpus_hash")
+                    or not result.get("baseline_id")
+                    or result.get("provenance_preserved") is not True
+                ):
+                    continue
+                model = registry.update_benchmark(
+                    specialist_id,
+                    benchmark_status=BenchmarkStatus.APPROVED.value,
+                    classification=str(record["classification"]),
+                    benchmark_quality=float(record["benchmark_quality"]),
+                    reliability=float(record["reliability"]),
+                    verified_at=str(record["verified_at"]),
+                )
+                if model.health == SpecialistHealth.HEALTHY.value:
+                    registry.enable(specialist_id)
+                    applied.append(specialist_id)
+            except (KeyError, TypeError, ValueError):
+                continue
+        return applied
+
+    def _read(self) -> list[dict[str, Any]]:
+        if not self.path.exists():
+            return []
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        return [dict(item) for item in payload if isinstance(item, Mapping)] if isinstance(payload, list) else []
+
+
 class SpecialistRuntime:
     def __init__(
         self,
@@ -450,12 +840,16 @@ class SpecialistRuntime:
         self.providers = dict(providers or {"nvidia_nim": NvidiaNIMSpecialistProvider()})
         self.usage = SpecialistUsageLedger(root_path) if root_path is not None else None
         self.refresh_health()
+        self.approvals = SpecialistApprovalStore(root_path) if root_path is not None else None
+        if self.approvals is not None:
+            self.approvals.apply(self.registry)
 
     def refresh_health(self) -> None:
         for model in self.registry.list():
             provider = self.providers.get(model.provider)
             if provider is not None and not model.enabled:
-                model.health = provider.health()
+                health_for = getattr(provider, "health_for", None)
+                model.health = health_for(model) if callable(health_for) else provider.health()
 
     def execute(
         self,
@@ -732,3 +1126,78 @@ def _bounded_fraction(name: str, value: float) -> float:
     if not isinstance(value, (int, float)) or not 0.0 <= float(value) <= 1.0:
         raise ValueError(f"{name} must be between zero and one")
     return float(value)
+
+
+def _truthy(value: object) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _nim_endpoint(base_url: str, path: str) -> str:
+    """Join a configured NIM origin to a fixed capability endpoint.
+
+    Operators configure an origin (for example ``https://integrate.api.nvidia.com``
+    or ``http://127.0.0.1:8000``), not a model-controlled arbitrary path.
+    """
+    parsed = urlparse(base_url)
+    prefix = parsed.path.rstrip("/")
+    if prefix.endswith("/v1"):
+        prefix = prefix[:-3]
+    return f"{parsed.scheme}://{parsed.netloc}{prefix}/{path.lstrip('/')}"
+
+
+def _bounded_text(value: object, *, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must be a non-empty text string.")
+    if len(value) > NvidiaNIMSpecialistProvider._MAX_TEXT_CHARS:
+        raise ValueError(f"{field} exceeds the approved text budget.")
+    return value
+
+
+def _text_batch(payload: Mapping[str, Any]) -> list[str]:
+    if "texts" in payload:
+        values = payload.get("texts")
+        if not isinstance(values, list) or not values or len(values) > NvidiaNIMSpecialistProvider._MAX_BATCH_ITEMS:
+            raise ValueError("Embedding texts must contain 1-50 text strings.")
+        texts = [_bounded_text(value, field="text") for value in values]
+    else:
+        texts = [_bounded_text(payload.get("text"), field="text")]
+    if sum(len(value) for value in texts) > NvidiaNIMSpecialistProvider._MAX_TEXT_CHARS:
+        raise ValueError("Embedding request exceeds the approved text budget.")
+    return texts
+
+
+def _image_batch(payload: Mapping[str, Any], *, max_bytes: int, max_items: int) -> list[str]:
+    values = payload.get("images", [payload.get("image")])
+    if not isinstance(values, list) or not values or len(values) > max_items:
+        raise ValueError("OCR requires 1-50 PNG or JPEG image data URLs.")
+    result: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or not value.startswith(("data:image/png;base64,", "data:image/jpeg;base64,")):
+            raise ValueError("OCR accepts only PNG or JPEG image data URLs.")
+        encoded = value.split(",", 1)[1]
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except ValueError as exc:
+            raise ValueError("OCR image data URL is not valid base64.") from exc
+        if not raw or len(raw) > max_bytes:
+            raise ValueError("OCR image exceeds the approved byte limit.")
+        result.append(value)
+    return result
+
+
+def _safe_usage(value: object) -> dict[str, float]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): float(item) for key, item in value.items() if isinstance(item, (int, float))}
+
+
+def _safe_registry_identifier(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", value):
+        raise ValueError("Registry approval identifier contains unsupported characters")
+    return value
+
+
+def _safe_registry_hash(value: str) -> str:
+    if not re.fullmatch(r"[a-f0-9]{64}", value):
+        raise ValueError("Registry approval result hash must be a SHA-256 digest")
+    return value

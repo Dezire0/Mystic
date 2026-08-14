@@ -279,7 +279,8 @@ def create_app(
             if toolbox.specialist_runtime.usage
             else {}
         )
-        return SpecialistDetailPage(specialist=specialist, usage=usage)
+        benchmarks = toolbox.specialist_benchmarks.list_results(specialist_id=specialist_id, limit=10)
+        return SpecialistDetailPage(specialist=specialist, usage=usage, benchmarks=benchmarks)
 
     @app.get("/evidence", response_class=HTMLResponse)
     def evidence():

@@ -84,4 +84,26 @@ The local Control Center adds read-only `/specialists`, `/specialists/{id}`, and
 
 ## Phase 2D.2 recommendation
 
-Supply a versioned scientific retrieval/OCR benchmark corpus and a deliberately configured NIM or local provider. Run live candidates through the harness, record reproducible cost/latency/availability, approve only candidates meeting thresholds, then add the corresponding provider-specific execution serializer and an authenticated cloud rollout plan.
+## Phase 2D.2 live-evaluation gate
+
+Phase 2D.2 adds a versioned corpus manifest at `benchmarks/phase2d/v1/corpus.json`, a bounded NIM serializer, a reproducible baseline/evaluation runner, and persisted approval records. It does **not** activate a candidate merely because an endpoint returns data.
+
+`python scripts/run_specialist_benchmarks.py` records only the non-specialist lexical baseline. `python scripts/run_specialist_benchmarks.py --live` may call only the fixed Wave 1 models—`nvidia.nemotron-3-embed-1b`, `nvidia.llama-nemotron-rerank-1b-v2`, and `nvidia.nemotron-ocr-v2`—and only when the operator has enabled the server-side provider configuration. This command is deliberately not exposed through MCP or the browser.
+
+The corpus records its ID, version, SHA-256 digest, inputs, relevance labels, languages, source references, parsing/layout/table labels, visual-document labels, and required evidence lineage. Benchmark result artifacts store that corpus identity plus safe provider configuration, request count, latency samples, throughput, failure rate, estimated cost when supplied by a provider, and whether provenance was preserved. Credentials, authorization headers, raw endpoint paths, and raw document bodies are excluded.
+
+The initial corpus contains English and Korean scientific retrieval cases with public source references. Its OCR/table/layout/visual records deliberately declare `asset_status: required_before_live_run`: Phase 2D.2 will not pass a generated control or an absent image off as a rights-cleared, manually-labelled real-document evaluation. Supply versioned holdout assets and labels before running or activating OCR, parsing, table, layout, or visual candidates.
+
+### Provider boundary
+
+`NvidiaNIMSpecialistProvider` accepts only registry-selected `embed`, `rerank`, and `ocr` calls. It requires `MYSTIC_NVIDIA_NIM_EXECUTION_ENABLED=true`; endpoint origins come from role-specific `MYSTIC_NVIDIA_NIM_{EMBED,RERANK,OCR}_BASE_URL` variables or the shared `MYSTIC_NVIDIA_NIM_BASE_URL`. HTTPS is required for remote hosts, HTTP is restricted to loopback, and non-default self-hosted hosts must be explicitly listed in `MYSTIC_NVIDIA_NIM_ALLOWED_HOSTS`. `MYSTIC_NVIDIA_NIM_API_KEY` stays server-side and is required for remote endpoints. Timeouts are bounded by `MYSTIC_NVIDIA_NIM_TIMEOUT_SECONDS` (1–60 seconds).
+
+The adapters implement NVIDIA's fixed capability endpoints: embeddings at `/v1/embeddings` with explicit `query` or `passage` input type; reranking at `/v1/ranking`; and OCR at `/v1/ocr` with bounded base64 PNG/JPEG data URLs. Provider responses are normalized into only the narrow contract needed by Mystic. Failures remain explicit (`unavailable`, `timeout`, `rate_limited`, `invalid_output`, `unsupported_input`, `model_disabled`, or `provider_offline`) and never produce fabricated evidence.
+
+### Baseline, classification, and activation
+
+Wave 1 compares retrieval and reranking with Mystic's existing lexical non-specialist baseline on the exact same corpus. This is not a claim that GPT was evaluated; GPT remains the controller and the benchmark baseline is stated explicitly. OCR may be classified `ESSENTIAL` only after a real document asset demonstrates at least 0.90 character accuracy with preserved provenance. A `SUPERIOR` result requires at least a 0.03 quality improvement; an `ACCELERATOR` requires quality within 0.01 of baseline plus at least 25% lower measured cost or latency. A failure rate above 5% or missing provenance is `REJECTED`; no measured advantage is `REDUNDANT`.
+
+When and only when the live gate passes, the registry receives the derived classification, the router can enable the healthy candidate, and `mystic_data/specialist_benchmarks/approvals.json` records its result hash, benchmark ID, quality metric, reliability, and timestamp. On restart, approval metadata is reapplied only while the provider is healthy. Every normal retrieval/evidence use then records the actual executing model and fallback lineage in the existing provenance chain.
+
+Secondary candidates—parser, VL embedding/reranking, page elements, table structure, and code embedding—remain disabled. Their corpus cases and metrics are prepared, but they require their own live baseline comparisons and rights-cleared evaluation assets before Phase 2D.2 can assess them.
