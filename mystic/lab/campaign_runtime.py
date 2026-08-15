@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
+import re
 from typing import Any, Callable, Protocol
 import uuid
 
@@ -19,6 +20,7 @@ from mystic.lab.campaign import (
     ResearchCampaign,
     CampaignGoal,
     ResearchQuestion,
+    Evidence,
     ScientificJobReference,
     ScientificJobAttachmentReference,
     Artifact,
@@ -583,6 +585,102 @@ class CampaignRuntime:
         )
         self.storage.save(campaign, expected_revision=expected_revision)
         return failure
+
+    def record_specialist_evidence(self, *, campaign_id: str, evidence: dict[str, Any]) -> dict[str, Any]:
+        """Attach a bounded, traceable evidence reference without adding research policy.
+
+        The detailed source text and provenance remain in the specialist evidence
+        store.  Campaign state keeps a reviewable excerpt, content hash, artifact,
+        and graph reference so a rollback retains the relevant evidence lineage.
+        """
+        if not isinstance(evidence, dict):
+            raise ValueError("specialist evidence must be an object")
+        required = ("evidence_id", "source_id", "source_type", "title", "location", "text", "content_hash", "document_id")
+        if any(not isinstance(evidence.get(name), str) or not str(evidence[name]).strip() for name in required):
+            raise ValueError("specialist evidence has missing required provenance fields")
+        content_hash = str(evidence["content_hash"])
+        if not re.fullmatch(r"[0-9a-f]{64}", content_hash):
+            raise ValueError("specialist evidence content_hash must be a SHA-256 digest")
+        text = str(evidence["text"])
+        if len(text) > 8_000:
+            raise ValueError("specialist evidence text exceeds 8000 characters")
+        campaign = self.get(campaign_id)
+        existing = next(
+            (
+                item
+                for item in campaign.evidence
+                if item.source_id == str(evidence["source_id"]) and item.content_hash == content_hash
+            ),
+            None,
+        )
+        if existing is not None:
+            artifact = next((item for item in campaign.artifacts if item.content_hash == content_hash), None)
+            return {
+                "campaign_id": campaign_id,
+                "evidence": asdict(existing),
+                "artifact": asdict(artifact) if artifact else {},
+                "duplicate": True,
+            }
+        if campaign.status not in {CampaignStatus.ACTIVE, CampaignStatus.PAUSED}:
+            raise IllegalCampaignTransition(f"Cannot attach specialist evidence to {campaign.status.value}")
+        if len(campaign.graph.latest_nodes()) >= campaign.budget.max_graph_nodes:
+            raise CampaignBudgetExceeded("Campaign graph node budget is exhausted")
+        expected_revision = campaign.revision
+        summary = f"{evidence['title']} ({evidence['location']}): {text}"
+        attached = Evidence(
+            campaign_id=campaign_id,
+            summary=summary,
+            evidence_type="specialist_retrieval",
+            source_id=str(evidence["source_id"]),
+            content_hash=content_hash,
+        )
+        campaign.evidence.append(attached)
+        artifact = Artifact(
+            campaign_id=campaign_id,
+            artifact_type="specialist_evidence",
+            name=f"Evidence {evidence['evidence_id']}",
+            uri=f"mystic://evidence/{evidence['evidence_id']}",
+            content_hash=content_hash,
+            media_type="application/json",
+        )
+        campaign.artifacts.append(artifact)
+        node = campaign.graph.add_node(
+            "evidence",
+            {
+                "campaign_evidence_id": attached.evidence_id,
+                "evidence_id": str(evidence["evidence_id"]),
+                "source_id": str(evidence["source_id"]),
+                "document_id": str(evidence["document_id"]),
+                "location": str(evidence["location"]),
+                "content_hash": content_hash,
+                "specialist_models_used": list(evidence.get("specialist_models_used", [])),
+                "warnings": list(evidence.get("warnings", [])),
+            },
+        )
+        self._touch(campaign)
+        self._sync_statistics(campaign)
+        campaign.timeline.append(
+            event_type="SPECIALIST_EVIDENCE_ATTACHED",
+            phase=campaign.phase,
+            status=campaign.status,
+            summary="Traceable specialist evidence attached without changing research policy.",
+            revision=campaign.revision,
+            metadata={
+                "evidence_id": str(evidence["evidence_id"]),
+                "campaign_evidence_id": attached.evidence_id,
+                "artifact_id": artifact.artifact_id,
+                "knowledge_node_id": node.node_id,
+                "source_id": str(evidence["source_id"]),
+            },
+        )
+        self.storage.save(campaign, expected_revision=expected_revision)
+        return {
+            "campaign_id": campaign_id,
+            "evidence": asdict(attached),
+            "artifact": asdict(artifact),
+            "knowledge_node": asdict(node),
+            "duplicate": False,
+        }
 
     def add_knowledge_node(
         self,

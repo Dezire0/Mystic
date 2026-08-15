@@ -12,6 +12,9 @@ from mystic.debate.runner import DebateRunner
 from mystic.final_answer_verifier import extract_candidate_tuples, verify_final_answer
 from mystic.lab.runner import LabRunner
 from mystic.lab.campaign_runtime import CampaignRuntime
+from mystic.lab.evidence import DocumentIngestRequest, SpecialistEvidenceService
+from mystic.lab.specialist_benchmarks import SpecialistBenchmarkHarness
+from mystic.lab.specialists import SpecialistRuntime, SpecialistTaskRequest
 from mystic.lab.scientific_job_runtime import ScientificJobRuntime
 from mystic.mcp.import_verification import (
     default_verification_artifact_path,
@@ -57,6 +60,17 @@ LAB_TOOL_NAMES = (
     "lab_job_cancel",
     "lab_job_retry",
     "lab_job_statistics",
+    "lab_specialist_list",
+    "lab_specialist_get",
+    "lab_specialist_match",
+    "lab_specialist_health",
+    "lab_specialist_benchmark",
+    "lab_document_ingest",
+    "lab_document_get",
+    "lab_evidence_get",
+    "lab_evidence_attach_campaign",
+    "lab_retrieval_search",
+    "lab_retrieval_rerank",
     "lab_session_create",
     "lab_session_get",
     "lab_session_advance",
@@ -130,6 +144,15 @@ class MysticToolbox:
             self.root_path,
             campaign_runtime=self.campaign_runtime,
         )
+        self.specialist_runtime = SpecialistRuntime(root_path=self.root_path)
+        self.specialist_benchmarks = SpecialistBenchmarkHarness(
+            root_path=self.root_path,
+            registry=self.specialist_runtime.registry,
+        )
+        self.specialist_evidence = SpecialistEvidenceService(
+            root_path=self.root_path,
+            runtime=self.specialist_runtime,
+        )
         self.provider_connect = self.lab_runner.provider_connect
         self._ensure_data_dirs()
 
@@ -186,6 +209,17 @@ class MysticToolbox:
                 "lab_job_cancel": "ready",
                 "lab_job_retry": "ready",
                 "lab_job_statistics": "ready",
+                "lab_specialist_list": "ready",
+                "lab_specialist_get": "ready",
+                "lab_specialist_match": "ready",
+                "lab_specialist_health": "ready",
+                "lab_specialist_benchmark": "ready",
+                "lab_document_ingest": "ready",
+                "lab_document_get": "ready",
+                "lab_evidence_get": "ready",
+                "lab_evidence_attach_campaign": "ready",
+                "lab_retrieval_search": "ready",
+                "lab_retrieval_rerank": "ready",
                 "lab_session_create": "ready",
                 "lab_session_get": "ready",
                 "lab_session_advance": "ready",
@@ -227,6 +261,8 @@ class MysticToolbox:
             "campaign_storage_root": str(self.campaign_runtime.storage.base_dir),
             "scientific_job_storage_status": self.scientific_job_runtime.storage.describe_status(),
             "scientific_job_storage_root": str(self.scientific_job_runtime.storage.base_dir),
+            "specialist_registry": self.specialist_runtime.registry.safe_summary(),
+            "specialist_usage": self.specialist_runtime.usage.summary() if self.specialist_runtime.usage else {},
             "lab_storage_root": str(storage_status.get("storage_root", self.data_root / "lab_sessions")),
             "remote_mcp_public_endpoint": remote_mcp_public_endpoint,
             "oauth_configured": oauth_configured,
@@ -260,6 +296,7 @@ class MysticToolbox:
             "phase_1_tools": list(PHASE_1_TOOL_NAMES),
             "campaign_runtime": self.campaign_runtime.storage.describe_status(),
             "scientific_job_runtime": self.scientific_job_runtime.storage.describe_status(),
+            "specialist_registry": self.specialist_runtime.registry.safe_summary(),
         }
 
     def mystic_verify_answer(
@@ -692,6 +729,156 @@ class MysticToolbox:
 
     def lab_job_statistics(self, *, campaign_id: str = "") -> dict[str, Any]:
         return self.scientific_job_runtime.statistics(campaign_id=campaign_id or None)
+
+    def lab_specialist_list(self, *, role: str = "", enabled: bool | None = None) -> dict[str, Any]:
+        specialists = self.specialist_runtime.registry.list(role=role, enabled=enabled)
+        return {
+            "specialists": [item.safe_dict() for item in specialists],
+            "count": len(specialists),
+            "usage": self.specialist_runtime.usage.summary() if self.specialist_runtime.usage else {},
+        }
+
+    def lab_specialist_get(self, *, specialist_id: str) -> dict[str, Any]:
+        model = self.specialist_runtime.registry.get(specialist_id)
+        usage = self.specialist_runtime.usage.summary(specialist_id=specialist_id) if self.specialist_runtime.usage else {}
+        return {"specialist": model.safe_dict(), "usage": usage}
+
+    def lab_specialist_match(
+        self,
+        *,
+        task: str,
+        modality: str = "text",
+        language: str = "en",
+        domain: str = "general",
+        quality_priority: float = 0.8,
+        latency_priority: float = 0.5,
+        cost_priority: float = 1.0,
+        input_units: int = 0,
+    ) -> dict[str, Any]:
+        request = SpecialistTaskRequest(
+            task=task,
+            modality=modality,
+            language=language,
+            domain=domain,
+            quality_priority=quality_priority,
+            latency_priority=latency_priority,
+            cost_priority=cost_priority,
+            input_units=input_units,
+        )
+        return self.specialist_runtime.router.match(request).safe_dict()
+
+    def lab_specialist_health(self, *, specialist_id: str = "") -> dict[str, Any]:
+        self.specialist_runtime.refresh_health()
+        if specialist_id:
+            model = self.specialist_runtime.registry.get(specialist_id)
+            provider = self.specialist_runtime.providers.get(model.provider)
+            return {
+                "specialist_id": model.specialist_id,
+                "model_health": model.health,
+                "provider": model.provider,
+                "provider_health": provider.health() if provider else "unavailable",
+                "enabled": model.enabled,
+                "benchmark_status": model.benchmark_status,
+            }
+        return {
+            "providers": {
+                name: provider.health() for name, provider in sorted(self.specialist_runtime.providers.items())
+            },
+            "specialists": [
+                {
+                    "specialist_id": item.specialist_id,
+                    "health": item.health,
+                    "enabled": item.enabled,
+                    "benchmark_status": item.benchmark_status,
+                }
+                for item in self.specialist_runtime.registry.list()
+            ],
+        }
+
+    def lab_specialist_benchmark(self, *, fixture: str = "retrieval_smoke") -> dict[str, Any]:
+        if fixture != "retrieval_smoke":
+            raise ValueError("Only the deterministic retrieval_smoke fixture is available in Phase 2D.1")
+        result = self.specialist_benchmarks.fixture_smoke()
+        return {
+            "result": result.safe_dict(),
+            "classification": "unclassified",
+            "warning": "Fixture metrics validate harness wiring only; no named specialist was evaluated or enabled.",
+        }
+
+    def lab_document_ingest(
+        self,
+        *,
+        source_id: str,
+        source_type: str,
+        title: str,
+        mime_type: str,
+        content: str,
+        pages: list[dict[str, Any]] | None = None,
+        scanned: bool = False,
+        visually_complex: bool = False,
+        language: str = "en",
+        domain: str = "general",
+    ) -> dict[str, Any]:
+        result = self.specialist_evidence.ingest(
+            DocumentIngestRequest(
+                source_id=source_id,
+                source_type=source_type,
+                title=title,
+                mime_type=mime_type,
+                content=content,
+                pages=list(pages or []),
+                scanned=scanned,
+                visually_complex=visually_complex,
+                language=language,
+                domain=domain,
+            )
+        )
+        return result.safe_dict(include_text=False)
+
+    def lab_document_get(self, *, document_id: str) -> dict[str, Any]:
+        return self.specialist_evidence.store.get_document_summary(document_id)
+
+    def lab_evidence_get(self, *, evidence_id: str, include_text: bool = False) -> dict[str, Any]:
+        return self.specialist_evidence.store.get_evidence(evidence_id).safe_dict(include_text=include_text)
+
+    def lab_evidence_attach_campaign(self, *, campaign_id: str, evidence_id: str) -> dict[str, Any]:
+        return self.specialist_evidence.attach_to_campaign(
+            campaign_runtime=self.campaign_runtime,
+            campaign_id=campaign_id,
+            evidence_id=evidence_id,
+        )
+
+    def lab_retrieval_search(
+        self,
+        *,
+        query: str,
+        language: str = "en",
+        domain: str = "general",
+        candidate_limit: int = 50,
+        result_limit: int = 10,
+    ) -> dict[str, Any]:
+        return self.specialist_evidence.search(
+            query=query,
+            language=language,
+            domain=domain,
+            candidate_limit=candidate_limit,
+            result_limit=result_limit,
+        )
+
+    def lab_retrieval_rerank(
+        self,
+        *,
+        query: str,
+        evidence_ids: list[str],
+        language: str = "en",
+        domain: str = "general",
+    ) -> dict[str, Any]:
+        return self.specialist_evidence.rerank(
+            query=query,
+            evidence_ids=evidence_ids,
+            language=language,
+            domain=domain,
+        )
 
     @staticmethod
     def _scientific_job_summary(job: Any) -> dict[str, Any]:
@@ -1193,6 +1380,11 @@ class MysticToolbox:
             "adapters",
             "cycles",
             "archive",
+            "specialist_evidence/documents",
+            "specialist_evidence/index",
+            "specialist_evidence/job_links",
+            "specialist_benchmarks",
+            "specialist_usage",
         ]:
             (self.data_root / relative).mkdir(parents=True, exist_ok=True)
 

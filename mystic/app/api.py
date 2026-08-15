@@ -28,7 +28,10 @@ from mystic.app.pages import (
     ResearchTableSessionPage,
     ResearchTableStartPage,
     SessionDetailPage,
+    SpecialistDetailPage,
+    SpecialistsPage,
     TeacherLabelsPage,
+    EvidencePage,
 )
 from mystic.app.components import ProviderAuthCard
 from mystic.mcp.tools import MysticToolbox
@@ -251,6 +254,37 @@ def create_app(
     def session_detail():
         sessions = _collect_session_index(root_path)
         return SessionDetailPage(sessions=sessions)
+
+    @app.get("/specialists", response_class=HTMLResponse)
+    def specialists():
+        entries = []
+        for model in toolbox.specialist_runtime.registry.list():
+            item = model.safe_dict()
+            item["usage"] = (
+                toolbox.specialist_runtime.usage.summary(specialist_id=model.specialist_id)
+                if toolbox.specialist_runtime.usage
+                else {}
+            )
+            entries.append(item)
+        return SpecialistsPage(specialists=entries)
+
+    @app.get("/specialists/{specialist_id}", response_class=HTMLResponse)
+    def specialist_detail(specialist_id: str):
+        try:
+            specialist = toolbox.specialist_runtime.registry.get(specialist_id).safe_dict()
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        usage = (
+            toolbox.specialist_runtime.usage.summary(specialist_id=specialist_id)
+            if toolbox.specialist_runtime.usage
+            else {}
+        )
+        return SpecialistDetailPage(specialist=specialist, usage=usage)
+
+    @app.get("/evidence", response_class=HTMLResponse)
+    def evidence():
+        entries = [item.safe_dict(include_text=False) for item in toolbox.specialist_evidence.store.list_evidence(limit=100)]
+        return EvidencePage(evidence=entries)
 
     @app.post("/sessions")
     def create_session(payload: dict):

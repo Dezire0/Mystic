@@ -1,6 +1,22 @@
 from mystic.lab.provider_connect import ProviderAuthFlow, ProviderConnection, ProviderConnectManager
 from mystic.lab.provider_router import ModelCallRecord, ProviderRouter
 from mystic.lab.reality_anchor import normalize_claim_status
+from mystic.lab.evidence import (
+    DeterministicFixtureSpecialistProvider,
+    DocumentIngestRequest,
+    EvidenceStore,
+    NormalizedEvidence,
+    SpecialistEvidenceService,
+)
+from mystic.lab.specialist_benchmarks import SpecialistBenchmarkHarness, SpecialistBenchmarkResult
+from mystic.lab.specialists import (
+    NvidiaNIMSpecialistProvider,
+    SpecialistModel,
+    SpecialistModelRegistry,
+    SpecialistRouter,
+    SpecialistRuntime,
+    SpecialistTaskRequest,
+)
 from mystic.lab.runner import LabRunner
 from mystic.lab.scene import LabScene, LabSceneBundle, LabSceneObject, LabSimulation
 from mystic.lab.session import (
@@ -17,6 +33,9 @@ from mystic.lab.storage import LabStorage
 
 __all__ = [
     "Claim",
+    "DeterministicFixtureSpecialistProvider",
+    "DocumentIngestRequest",
+    "EvidenceStore",
     "Experiment",
     "Failure",
     "LabReport",
@@ -35,6 +54,16 @@ __all__ = [
     "ProviderConnection",
     "ProviderConnectManager",
     "ProviderRouter",
+    "NvidiaNIMSpecialistProvider",
+    "NormalizedEvidence",
+    "SpecialistBenchmarkHarness",
+    "SpecialistBenchmarkResult",
+    "SpecialistEvidenceService",
+    "SpecialistModel",
+    "SpecialistModelRegistry",
+    "SpecialistRouter",
+    "SpecialistRuntime",
+    "SpecialistTaskRequest",
     "normalize_claim_status",
 ]
 from mystic.lab.campaign import (
