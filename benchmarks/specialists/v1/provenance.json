@@ -1,0 +1,285 @@
+{
+  "documents": [
+    {
+      "license": "CC0-1.0",
+      "source_id": "physics-newton-force",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "physics-projectile-motion",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "physics-kinetic-energy",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "physics-heat-transfer",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "physics-electric-circuit",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "physics-wave-frequency",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "physics-friction",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "physics-pressure-fluid",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "math-derivative",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "math-integral",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "math-matrix-transform",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "math-probability",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "math-eigenvalue",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "math-optimization",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "math-error-propagation",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "math-fourier",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "eng-beam-load",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "eng-fatigue-cycle",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "eng-feedback-control",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "eng-sensor-calibration",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "eng-signal-filter",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "eng-pump-flow",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "eng-material-yield",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "eng-heat-exchanger",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "bio-cell-membrane",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "bio-enzyme-rate",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "bio-dna-replication",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "bio-photosynthesis",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "bio-epidemiology",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "chem-ideal-gas",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "chem-acid-base",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "chem-reaction-rate",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "chem-spectroscopy",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "earth-water-cycle",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "earth-carbon-cycle",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "earth-mars-atmosphere-ko",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "earth-seismic-wave",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "comp-binary-search",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "comp-graph-shortest",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "comp-numerical-stability",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "energy-solar-cell",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "energy-battery",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "metrology-si-units",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "astronomy-transit",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    },
+    {
+      "license": "CC0-1.0",
+      "source_id": "stat-hypothesis-test",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+    }
+  ],
+  "lineage_cases": [
+    {
+      "case_id": "text-retrieval-lineage",
+      "location": "passage:physics-newton-force",
+      "required_stages": [
+        "source",
+        "normalize",
+        "chunk",
+        "embedding",
+        "retrieval",
+        "rerank"
+      ],
+      "source_id": "physics-newton-force"
+    },
+    {
+      "case_id": "ocr-page-lineage",
+      "location": "page:1/region:table-row-1",
+      "required_stages": [
+        "source",
+        "page",
+        "ocr",
+        "region",
+        "normalized_chunk",
+        "embedding",
+        "retrieval",
+        "rerank"
+      ],
+      "source_id": "mystic-synthetic-ocr-force-table"
+    }
+  ],
+  "pages": [
+    {
+      "asset_path": "assets/ocr-normal-paragraph.png",
+      "generation": "generate_assets.py",
+      "license": "CC0-1.0",
+      "source_id": "mystic-synthetic-ocr-normal-paragraph"
+    },
+    {
+      "asset_path": "assets/ocr-two-column.png",
+      "generation": "generate_assets.py",
+      "license": "CC0-1.0",
+      "source_id": "mystic-synthetic-ocr-two-column"
+    },
+    {
+      "asset_path": "assets/ocr-force-table.png",
+      "generation": "generate_assets.py",
+      "license": "CC0-1.0",
+      "source_id": "mystic-synthetic-ocr-force-table"
+    },
+    {
+      "asset_path": "assets/ocr-multilingual.png",
+      "generation": "generate_assets.py",
+      "license": "CC0-1.0",
+      "source_id": "mystic-synthetic-ocr-multilingual"
+    }
+  ]
+}

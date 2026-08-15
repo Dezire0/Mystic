@@ -10,6 +10,7 @@ from mystic.lab.evidence import (
 )
 from mystic.lab.specialist_benchmarks import SpecialistBenchmarkHarness, SpecialistBenchmarkResult
 from mystic.lab.specialists import (
+    LocalOpenAICompatibleEmbeddingProvider,
     NvidiaNIMSpecialistProvider,
     SpecialistModel,
     SpecialistModelRegistry,
@@ -48,6 +49,7 @@ __all__ = [
     "LabSimulation",
     "LabStorage",
     "LabTurn",
+    "LocalOpenAICompatibleEmbeddingProvider",
     "ModelCallRecord",
     "MemoryEdge",
     "ProviderAuthFlow",

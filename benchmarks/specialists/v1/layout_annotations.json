@@ -1,0 +1,260 @@
+{
+  "parsing_cases": [
+    {
+      "asset_path": "assets/ocr-normal-paragraph.png",
+      "case_id": "parse-ocr-normal-paragraph",
+      "expected_layout": {
+        "elements": [
+          {
+            "id": "heading-1",
+            "kind": "heading",
+            "text": "Thermal Calibration Note"
+          },
+          {
+            "id": "paragraph-1",
+            "kind": "paragraph",
+            "text": "A sensor was held at 25 C for 60 s before recording."
+          },
+          {
+            "id": "paragraph-2",
+            "kind": "paragraph",
+            "text": "The reference voltage was 2.0 V and current was 0.5 A."
+          },
+          {
+            "id": "equation-1",
+            "kind": "equation",
+            "text": "Power equation: P = V I"
+          }
+        ],
+        "table_columns": 0,
+        "table_rows": 0,
+        "tables": {}
+      },
+      "expected_reading_order": [
+        "heading-1",
+        "paragraph-1",
+        "paragraph-2",
+        "equation-1"
+      ],
+      "page": 1,
+      "source_id": "mystic-synthetic-ocr-normal-paragraph"
+    },
+    {
+      "asset_path": "assets/ocr-two-column.png",
+      "case_id": "parse-ocr-two-column",
+      "expected_layout": {
+        "elements": [
+          {
+            "id": "heading-1",
+            "kind": "heading",
+            "text": "Bridge Fatigue Survey"
+          },
+          {
+            "id": "left-1",
+            "kind": "paragraph",
+            "text": "Left column: Cycles reached 120000 before inspection."
+          },
+          {
+            "id": "left-2",
+            "kind": "paragraph",
+            "text": "Left column: Crack length was 1.2 mm."
+          },
+          {
+            "id": "right-1",
+            "kind": "paragraph",
+            "text": "Right column: Stress amplitude was 180 MPa."
+          },
+          {
+            "id": "right-2",
+            "kind": "paragraph",
+            "text": "Right column: Interval was 30 days."
+          }
+        ],
+        "table_columns": 0,
+        "table_rows": 0,
+        "tables": {}
+      },
+      "expected_reading_order": [
+        "heading-1",
+        "left-1",
+        "left-2",
+        "right-1",
+        "right-2"
+      ],
+      "page": 1,
+      "source_id": "mystic-synthetic-ocr-two-column"
+    },
+    {
+      "asset_path": "assets/ocr-force-table.png",
+      "case_id": "parse-ocr-force-table",
+      "expected_layout": {
+        "elements": [
+          {
+            "id": "heading-1",
+            "kind": "heading",
+            "text": "Force Table"
+          },
+          {
+            "id": "equation-1",
+            "kind": "equation",
+            "text": "Equation: F = m a"
+          },
+          {
+            "id": "table-header-mass",
+            "kind": "table",
+            "text": "Mass"
+          },
+          {
+            "id": "table-header-force",
+            "kind": "table",
+            "text": "Force"
+          },
+          {
+            "id": "table-header-acceleration",
+            "kind": "table",
+            "text": "Acceleration"
+          },
+          {
+            "id": "table-row-1-mass",
+            "kind": "table",
+            "text": "2 kg"
+          },
+          {
+            "id": "table-row-1-force",
+            "kind": "table",
+            "text": "10 N"
+          },
+          {
+            "id": "table-row-1-acceleration",
+            "kind": "table",
+            "text": "5 m/s2"
+          },
+          {
+            "id": "table-row-2-mass",
+            "kind": "table",
+            "text": "5 kg"
+          },
+          {
+            "id": "table-row-2-force",
+            "kind": "table",
+            "text": "25 N"
+          },
+          {
+            "id": "table-row-2-acceleration",
+            "kind": "table",
+            "text": "5 m/s2"
+          }
+        ],
+        "table_columns": 3,
+        "table_rows": 3,
+        "tables": {
+          "force-table": {
+            "cells": [
+              "Mass",
+              "Force",
+              "Acceleration",
+              "2 kg",
+              "10 N",
+              "5 kg",
+              "25 N"
+            ],
+            "columns": 3,
+            "rows": 3
+          }
+        }
+      },
+      "expected_reading_order": [
+        "heading-1",
+        "equation-1",
+        "table-header-mass",
+        "table-header-force",
+        "table-header-acceleration",
+        "table-row-1-mass",
+        "table-row-1-force",
+        "table-row-1-acceleration",
+        "table-row-2-mass",
+        "table-row-2-force",
+        "table-row-2-acceleration"
+      ],
+      "page": 1,
+      "source_id": "mystic-synthetic-ocr-force-table"
+    },
+    {
+      "asset_path": "assets/ocr-multilingual.png",
+      "case_id": "parse-ocr-multilingual",
+      "expected_layout": {
+        "elements": [
+          {
+            "id": "heading-1",
+            "kind": "heading",
+            "text": "다국어 센서 기록"
+          },
+          {
+            "id": "paragraph-1",
+            "kind": "paragraph",
+            "text": "온도 Temperature: 23 C"
+          },
+          {
+            "id": "paragraph-2",
+            "kind": "paragraph",
+            "text": "압력 Pressure: 101.3 kPa"
+          },
+          {
+            "id": "paragraph-3",
+            "kind": "paragraph",
+            "text": "유량 Flow rate: 4.5 L/min"
+          }
+        ],
+        "table_columns": 0,
+        "table_rows": 0,
+        "tables": {}
+      },
+      "expected_reading_order": [
+        "heading-1",
+        "paragraph-1",
+        "paragraph-2",
+        "paragraph-3"
+      ],
+      "page": 1,
+      "source_id": "mystic-synthetic-ocr-multilingual"
+    }
+  ],
+  "visual_cases": [
+    {
+      "asset_paths": [
+        "assets/ocr-force-table.png",
+        "assets/ocr-normal-paragraph.png"
+      ],
+      "case_id": "visual-force-table",
+      "query": "Which page contains a bordered table of mass, force, and acceleration?",
+      "relevance": {
+        "ocr-force-table": 3,
+        "ocr-normal-paragraph": 0
+      }
+    },
+    {
+      "asset_paths": [
+        "assets/ocr-two-column.png",
+        "assets/ocr-force-table.png"
+      ],
+      "case_id": "visual-two-column",
+      "query": "Which page separates bridge observations into left and right columns?",
+      "relevance": {
+        "ocr-force-table": 0,
+        "ocr-two-column": 3
+      }
+    },
+    {
+      "asset_paths": [
+        "assets/ocr-multilingual.png",
+        "assets/ocr-normal-paragraph.png"
+      ],
+      "case_id": "visual-multilingual",
+      "query": "Which page has Korean sensor labels paired with pressure and flow units?",
+      "relevance": {
+        "ocr-multilingual": 3,
+        "ocr-normal-paragraph": 0
+      }
+    }
+  ]
+}

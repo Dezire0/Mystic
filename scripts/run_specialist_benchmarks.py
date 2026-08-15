@@ -17,10 +17,14 @@ from mystic.lab.specialist_evaluation import Wave1SpecialistEvaluator
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=str(REPOSITORY_ROOT), help="Mystic repository/data root")
-    parser.add_argument("--corpus", default="benchmarks/phase2d/v1/corpus.json", help="Versioned Phase 2D corpus JSON path")
+    parser.add_argument("--corpus", default="benchmarks/specialists/v1/corpus.json", help="Versioned Phase 2D corpus JSON path")
+    parser.add_argument("--readiness", action="store_true", help="Print redacted Wave 1 provider readiness without provider calls")
     parser.add_argument("--live", action="store_true", help="Run only the fixed Wave 1 provider calls when server configuration permits")
     arguments = parser.parse_args()
     evaluator = Wave1SpecialistEvaluator(root_path=arguments.root, corpus_path=arguments.corpus)
+    if arguments.readiness:
+        print(json.dumps(evaluator.readiness(), ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
     report = evaluator.run_live() if arguments.live else evaluator.run_baselines()
     print(json.dumps(report.safe_dict(), ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if report.status in {"baseline_recorded", "completed"} else 2

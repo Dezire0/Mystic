@@ -1,0 +1,125 @@
+{
+  "dataset_id": "mystic-specialists-synthetic-v1",
+  "dataset_sha256": "bde5b69a0b2630ddea5469ed0c383ec1c390c8d5fc0f1d010d917e84ac9ad72c",
+  "files": [
+    {
+      "artifact_type": "application/json",
+      "classification": "public_cc0",
+      "generation_stage": "synthetic_corpus_build",
+      "path": "corpus.json",
+      "retention": "repository_versioned",
+      "schema_version": "v1",
+      "sha256": "6cd2f75c35f45df845dfd5e3218291a58cefef0afaa41fa5cfa360d7a1c5a454"
+    },
+    {
+      "artifact_type": "application/json",
+      "classification": "public_cc0",
+      "generation_stage": "synthetic_corpus_build",
+      "path": "retrieval_queries.json",
+      "retention": "repository_versioned",
+      "schema_version": "v1",
+      "sha256": "074387b4ec279d1951aefe39921d982b99b081c17e16e23cb29e6b69659e4fc9"
+    },
+    {
+      "artifact_type": "application/json",
+      "classification": "public_cc0",
+      "generation_stage": "synthetic_corpus_build",
+      "path": "relevance_judgments.json",
+      "retention": "repository_versioned",
+      "schema_version": "v1",
+      "sha256": "fec5d09a1ffa856c4a5401df287c203ef26c9366891f415eb84a3af2082af72d"
+    },
+    {
+      "artifact_type": "application/json",
+      "classification": "public_cc0",
+      "generation_stage": "synthetic_corpus_build",
+      "path": "ocr_ground_truth.json",
+      "retention": "repository_versioned",
+      "schema_version": "v1",
+      "sha256": "5067b9926dda7f9be56e53891580303f3005aa9503468c62e420426a0ff31130"
+    },
+    {
+      "artifact_type": "application/json",
+      "classification": "public_cc0",
+      "generation_stage": "synthetic_corpus_build",
+      "path": "layout_annotations.json",
+      "retention": "repository_versioned",
+      "schema_version": "v1",
+      "sha256": "fe5f7f950cb9b10b1d78264302dd9431f1362fc61f03c1901690bfc6c9962f7f"
+    },
+    {
+      "artifact_type": "application/json",
+      "classification": "public_cc0",
+      "generation_stage": "synthetic_corpus_build",
+      "path": "visual_judgments.json",
+      "retention": "repository_versioned",
+      "schema_version": "v1",
+      "sha256": "8f644cb1e0fb2c3707cc3750b2e051bcc0a77c82939b82917678a252797b28a5"
+    },
+    {
+      "artifact_type": "application/json",
+      "classification": "public_cc0",
+      "generation_stage": "synthetic_corpus_build",
+      "path": "provenance.json",
+      "retention": "repository_versioned",
+      "schema_version": "v1",
+      "sha256": "c6d31380e3b84a955591444f675e01a1e1a0df3f0d1080742422c2c7296ac769"
+    },
+    {
+      "artifact_type": "text/markdown",
+      "classification": "public_cc0",
+      "generation_stage": "synthetic_corpus_build",
+      "path": "LICENSES.md",
+      "retention": "repository_versioned",
+      "schema_version": "v1",
+      "sha256": "0dcf6096c33ccc814e1f6e6b5006384ed0c414b0d95f8e0b3838e3bc3eceaf0b"
+    },
+    {
+      "artifact_type": "application/json",
+      "classification": "public_cc0",
+      "generation_stage": "synthetic_corpus_build",
+      "path": "records/lexical_baseline.phase2d-v1.0.1.json",
+      "retention": "repository_versioned",
+      "schema_version": "v1",
+      "sha256": "04d201da85b6615ca59432dd357fee8727953213ebf2df23e72609ed7cf6505f"
+    },
+    {
+      "artifact_type": "image/png",
+      "classification": "public_cc0",
+      "generation_stage": "synthetic_corpus_build",
+      "path": "assets/ocr-normal-paragraph.png",
+      "retention": "repository_versioned",
+      "schema_version": "v1",
+      "sha256": "16b3d57c269f72d181ccaef4dcb88364be584237bca4a44a18e09a1b65ac72d3"
+    },
+    {
+      "artifact_type": "image/png",
+      "classification": "public_cc0",
+      "generation_stage": "synthetic_corpus_build",
+      "path": "assets/ocr-two-column.png",
+      "retention": "repository_versioned",
+      "schema_version": "v1",
+      "sha256": "9c353346c7ac91acbb1bbf5d3d32eeb93873e1bcd5a50ff466abcd40c262190c"
+    },
+    {
+      "artifact_type": "image/png",
+      "classification": "public_cc0",
+      "generation_stage": "synthetic_corpus_build",
+      "path": "assets/ocr-force-table.png",
+      "retention": "repository_versioned",
+      "schema_version": "v1",
+      "sha256": "a3e241dc15096423fcd79e905505623f0adc3a0f39281c263dcded730dcef846"
+    },
+    {
+      "artifact_type": "image/png",
+      "classification": "public_cc0",
+      "generation_stage": "synthetic_corpus_build",
+      "path": "assets/ocr-multilingual.png",
+      "retention": "repository_versioned",
+      "schema_version": "v1",
+      "sha256": "b4f9eefe89d6d3a67dcd22ff3473303885b582e5d75101448b842a503167df27"
+    }
+  ],
+  "schema_version": "mystic-specialist-dataset-manifest-v1",
+  "version": "1.0.0"
+}

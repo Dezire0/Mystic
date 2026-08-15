@@ -1,0 +1,1595 @@
+{
+  "corpus_id": "mystic-specialists-synthetic-v1",
+  "dataset_manifest": "dataset_manifest.json",
+  "documents": [
+    {
+      "document_id": "physics-newton-force",
+      "domain": "physics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "physics-newton-force",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Newton second law states that net force equals mass multiplied by acceleration. In SI notation F = m a and force is measured in newtons.",
+      "title": "Net force"
+    },
+    {
+      "document_id": "physics-projectile-motion",
+      "domain": "physics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "physics-projectile-motion",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Ignoring air resistance, a projectile has constant horizontal velocity while gravity produces downward acceleration. Launch angle and speed affect range.",
+      "title": "Projectile motion"
+    },
+    {
+      "document_id": "physics-kinetic-energy",
+      "domain": "physics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "physics-kinetic-energy",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Kinetic energy is one half of mass times velocity squared. Doubling velocity increases kinetic energy by a factor of four.",
+      "title": "Kinetic energy"
+    },
+    {
+      "document_id": "physics-heat-transfer",
+      "domain": "physics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "physics-heat-transfer",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Conduction transfers heat through material contact, convection transfers heat with moving fluid, and radiation transfers energy by electromagnetic waves.",
+      "title": "Heat transfer"
+    },
+    {
+      "document_id": "physics-electric-circuit",
+      "domain": "physics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "physics-electric-circuit",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Ohm law relates voltage, current, and resistance: V = I R. A series circuit carries the same current through each component.",
+      "title": "Electric circuits"
+    },
+    {
+      "document_id": "physics-wave-frequency",
+      "domain": "physics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "physics-wave-frequency",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Wave speed equals frequency times wavelength. Higher frequency means more oscillations per second when wave speed is fixed.",
+      "title": "Wave frequency"
+    },
+    {
+      "document_id": "physics-friction",
+      "domain": "physics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "physics-friction",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Friction opposes relative motion between surfaces. Kinetic friction is often modeled as coefficient times normal force.",
+      "title": "Friction"
+    },
+    {
+      "document_id": "physics-pressure-fluid",
+      "domain": "physics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "physics-pressure-fluid",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Pressure is force divided by area. In a static fluid, pressure increases with depth according to density, gravity, and height.",
+      "title": "Fluid pressure"
+    },
+    {
+      "document_id": "math-derivative",
+      "domain": "mathematics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "math-derivative",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "A derivative measures instantaneous rate of change. The derivative of position with respect to time is velocity.",
+      "title": "Derivative"
+    },
+    {
+      "document_id": "math-integral",
+      "domain": "mathematics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "math-integral",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "A definite integral accumulates quantity over an interval. The area under a velocity versus time graph gives displacement.",
+      "title": "Integral"
+    },
+    {
+      "document_id": "math-matrix-transform",
+      "domain": "mathematics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "math-matrix-transform",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "A matrix can represent a linear transformation. Multiplying a vector by a rotation matrix changes its coordinates while preserving length.",
+      "title": "Matrix transformation"
+    },
+    {
+      "document_id": "math-probability",
+      "domain": "mathematics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "math-probability",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "For independent events, the probability that both occur is the product of their probabilities. A probability ranges from zero to one.",
+      "title": "Probability"
+    },
+    {
+      "document_id": "math-eigenvalue",
+      "domain": "mathematics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "math-eigenvalue",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "An eigenvector keeps its direction under a linear transformation, and its eigenvalue gives the scale factor applied to that vector.",
+      "title": "Eigenvalues"
+    },
+    {
+      "document_id": "math-optimization",
+      "domain": "mathematics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "math-optimization",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Optimization selects input values that minimize or maximize an objective subject to constraints. Gradient methods use local derivatives.",
+      "title": "Optimization"
+    },
+    {
+      "document_id": "math-error-propagation",
+      "domain": "mathematics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "math-error-propagation",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Independent measurement uncertainties combine through the sensitivity of a result to each input. Reporting units and uncertainty is essential.",
+      "title": "Uncertainty propagation"
+    },
+    {
+      "document_id": "math-fourier",
+      "domain": "mathematics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "math-fourier",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "A Fourier transform represents a signal by frequency components. Filtering can attenuate high-frequency noise while retaining a lower-frequency trend.",
+      "title": "Fourier components"
+    },
+    {
+      "document_id": "eng-beam-load",
+      "domain": "engineering",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "eng-beam-load",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "A loaded beam experiences bending moment and shear force. Support conditions and cross section determine deflection under a specified load.",
+      "title": "Beam load"
+    },
+    {
+      "document_id": "eng-fatigue-cycle",
+      "domain": "engineering",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "eng-fatigue-cycle",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Repeated stress can initiate and grow cracks below the static yield strength. Fatigue life depends on stress amplitude and cycle count.",
+      "title": "Fatigue cycles"
+    },
+    {
+      "document_id": "eng-feedback-control",
+      "domain": "engineering",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "eng-feedback-control",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "A feedback controller compares a measured output with a setpoint and adjusts an actuator to reduce error. Excess gain can cause oscillation.",
+      "title": "Feedback control"
+    },
+    {
+      "document_id": "eng-sensor-calibration",
+      "domain": "engineering",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "eng-sensor-calibration",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Calibration relates a sensor signal to a reference quantity. A calibration record should include offset, slope, units, and uncertainty.",
+      "title": "Sensor calibration"
+    },
+    {
+      "document_id": "eng-signal-filter",
+      "domain": "engineering",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "eng-signal-filter",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "A low-pass filter suppresses rapid fluctuations above a cutoff frequency. Filter choice trades noise reduction against response delay.",
+      "title": "Signal filtering"
+    },
+    {
+      "document_id": "eng-pump-flow",
+      "domain": "engineering",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "eng-pump-flow",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "A pump moves fluid by adding pressure head. Flow rate depends on the pump curve, pipe resistance, and fluid properties.",
+      "title": "Pump flow"
+    },
+    {
+      "document_id": "eng-material-yield",
+      "domain": "engineering",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "eng-material-yield",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Yield strength is the stress at which permanent deformation begins. Engineering stress is force divided by the original cross-sectional area.",
+      "title": "Material yield"
+    },
+    {
+      "document_id": "eng-heat-exchanger",
+      "domain": "engineering",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "eng-heat-exchanger",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "A heat exchanger transfers thermal energy between fluids separated by a wall. Temperature difference and surface area influence heat-transfer rate.",
+      "title": "Heat exchanger"
+    },
+    {
+      "document_id": "bio-cell-membrane",
+      "domain": "biology",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "bio-cell-membrane",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "A cell membrane is selectively permeable and regulates movement of water, ions, and molecules between the cell and its environment.",
+      "title": "Cell membrane"
+    },
+    {
+      "document_id": "bio-enzyme-rate",
+      "domain": "biology",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "bio-enzyme-rate",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Enzymes lower activation energy and can speed biochemical reactions. Reaction rate can level off when enzyme active sites are saturated.",
+      "title": "Enzyme rate"
+    },
+    {
+      "document_id": "bio-dna-replication",
+      "domain": "biology",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "bio-dna-replication",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "DNA replication copies genetic information using complementary base pairing. Each original strand can serve as a template for a new strand.",
+      "title": "DNA replication"
+    },
+    {
+      "document_id": "bio-photosynthesis",
+      "domain": "biology",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "bio-photosynthesis",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Photosynthesis uses light energy to convert carbon dioxide and water into chemical energy stored in sugars, releasing oxygen.",
+      "title": "Photosynthesis"
+    },
+    {
+      "document_id": "bio-epidemiology",
+      "domain": "biology",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "bio-epidemiology",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Incidence counts new cases in a population over time, while prevalence counts all existing cases at a specified time.",
+      "title": "Epidemiology"
+    },
+    {
+      "document_id": "chem-ideal-gas",
+      "domain": "chemistry",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "chem-ideal-gas",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "The ideal gas law is P V = n R T. At constant amount of gas, pressure and volume vary inversely when temperature is fixed.",
+      "title": "Ideal gas"
+    },
+    {
+      "document_id": "chem-acid-base",
+      "domain": "chemistry",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "chem-acid-base",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "A solution with lower pH has a greater hydrogen ion concentration. Buffers resist large pH changes when small amounts of acid or base are added.",
+      "title": "Acid and base"
+    },
+    {
+      "document_id": "chem-reaction-rate",
+      "domain": "chemistry",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "chem-reaction-rate",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Reaction rate depends on concentration, temperature, surface area, and catalysts. A catalyst changes rate without being consumed overall.",
+      "title": "Reaction rate"
+    },
+    {
+      "document_id": "chem-spectroscopy",
+      "domain": "chemistry",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "chem-spectroscopy",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Spectroscopy measures how matter absorbs, emits, or scatters light. A spectrum can identify chemical composition through characteristic features.",
+      "title": "Spectroscopy"
+    },
+    {
+      "document_id": "earth-water-cycle",
+      "domain": "earth_science",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "earth-water-cycle",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Evaporation changes liquid water into vapor, condensation forms liquid droplets, and precipitation returns water from clouds to the surface.",
+      "title": "Water cycle"
+    },
+    {
+      "document_id": "earth-carbon-cycle",
+      "domain": "earth_science",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "earth-carbon-cycle",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Carbon moves among atmosphere, oceans, organisms, and rocks. Photosynthesis removes carbon dioxide from air while respiration releases it.",
+      "title": "Carbon cycle"
+    },
+    {
+      "document_id": "earth-mars-atmosphere-ko",
+      "domain": "earth_science",
+      "language": "ko",
+      "license": "CC0-1.0",
+      "source_id": "earth-mars-atmosphere-ko",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "화성의 대기는 매우 얇고 대부분 이산화탄소로 이루어져 있다. 표면 기압은 지구보다 훨씬 낮다.",
+      "title": "화성의 대기"
+    },
+    {
+      "document_id": "earth-seismic-wave",
+      "domain": "earth_science",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "earth-seismic-wave",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "P waves are compressional seismic waves and usually travel faster than S waves. S waves do not travel through liquid outer core.",
+      "title": "Seismic waves"
+    },
+    {
+      "document_id": "comp-binary-search",
+      "domain": "computer_science",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "comp-binary-search",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Binary search repeatedly halves a sorted search interval. Its time complexity grows logarithmically with the number of elements.",
+      "title": "Binary search"
+    },
+    {
+      "document_id": "comp-graph-shortest",
+      "domain": "computer_science",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "comp-graph-shortest",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Dijkstra algorithm finds shortest paths with nonnegative edge weights by repeatedly selecting the unsettled node with smallest tentative distance.",
+      "title": "Shortest path"
+    },
+    {
+      "document_id": "comp-numerical-stability",
+      "domain": "computer_science",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "comp-numerical-stability",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Numerical algorithms can magnify rounding error. Stable formulations avoid subtracting nearly equal floating-point numbers when possible.",
+      "title": "Numerical stability"
+    },
+    {
+      "document_id": "energy-solar-cell",
+      "domain": "energy",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "energy-solar-cell",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "A photovoltaic cell converts light into electrical energy. Its output depends on illumination, temperature, and electrical load.",
+      "title": "Solar cell"
+    },
+    {
+      "document_id": "energy-battery",
+      "domain": "energy",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "energy-battery",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "Battery capacity is commonly expressed in ampere-hours. Internal resistance causes voltage drop under load and generates heat.",
+      "title": "Battery capacity"
+    },
+    {
+      "document_id": "metrology-si-units",
+      "domain": "metrology",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "metrology-si-units",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "The newton is the SI unit of force, the pascal is the SI unit of pressure, and the kelvin is an SI unit for thermodynamic temperature.",
+      "title": "SI units"
+    },
+    {
+      "document_id": "astronomy-transit",
+      "domain": "astronomy",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "astronomy-transit",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "A transit occurs when a planet passes in front of its star. The measured brightness dips slightly and can reveal planet size and orbit.",
+      "title": "Exoplanet transit"
+    },
+    {
+      "document_id": "stat-hypothesis-test",
+      "domain": "statistics",
+      "language": "en",
+      "license": "CC0-1.0",
+      "source_id": "stat-hypothesis-test",
+      "source_type": "project_authored_cc0",
+      "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1",
+      "text": "A statistical hypothesis test compares observed data with a null model. A p value is not the probability that the null hypothesis is true.",
+      "title": "Hypothesis test"
+    }
+  ],
+  "governance": {
+    "change_policy": "Any corpus, label, or asset edit requires a version increment and regenerated dataset manifest.",
+    "known_limitations": [
+      "Synthetic controlled pages are activation gates, not a substitute for later field-document validation.",
+      "Only Wave 1 live models are eligible for execution in Phase 2D.2."
+    ],
+    "purpose": "Offline reproducible specialist evaluation; output remains observation data."
+  },
+  "historical_baseline_record": "records/lexical_baseline.phase2d-v1.0.1.json",
+  "license": "CC0-1.0; see LICENSES.md. All passages and page images are project-authored synthetic evaluation material.",
+  "ocr_cases": [
+    {
+      "asset_path": "assets/ocr-normal-paragraph.png",
+      "case_id": "ocr-normal-paragraph",
+      "expected_layout": {
+        "elements": [
+          {
+            "id": "heading-1",
+            "kind": "heading",
+            "text": "Thermal Calibration Note"
+          },
+          {
+            "id": "paragraph-1",
+            "kind": "paragraph",
+            "text": "A sensor was held at 25 C for 60 s before recording."
+          },
+          {
+            "id": "paragraph-2",
+            "kind": "paragraph",
+            "text": "The reference voltage was 2.0 V and current was 0.5 A."
+          },
+          {
+            "id": "equation-1",
+            "kind": "equation",
+            "text": "Power equation: P = V I"
+          }
+        ],
+        "table_columns": 0,
+        "table_rows": 0,
+        "tables": {}
+      },
+      "expected_numeric_units": [
+        "25 C",
+        "60 s",
+        "2.0 V",
+        "0.5 A"
+      ],
+      "expected_reading_order": [
+        "Thermal Calibration Note",
+        "A sensor was held at 25 C for 60 s before recording.",
+        "The reference voltage was 2.0 V and current was 0.5 A.",
+        "Power equation: P = V I"
+      ],
+      "expected_table_cells": [],
+      "expected_text": "Thermal Calibration Note\nA sensor was held at 25 C for 60 s before recording.\nThe reference voltage was 2.0 V and current was 0.5 A.\nPower equation: P = V I",
+      "language": "en",
+      "page": 1,
+      "provenance": {
+        "generation": "generate_assets.py",
+        "license": "CC0-1.0",
+        "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+      },
+      "source_id": "mystic-synthetic-ocr-normal-paragraph",
+      "source_type": "project_authored_synthetic_page",
+      "title": "Thermal Calibration Note"
+    },
+    {
+      "asset_path": "assets/ocr-two-column.png",
+      "case_id": "ocr-two-column",
+      "expected_layout": {
+        "elements": [
+          {
+            "id": "heading-1",
+            "kind": "heading",
+            "text": "Bridge Fatigue Survey"
+          },
+          {
+            "id": "left-1",
+            "kind": "paragraph",
+            "text": "Left column: Cycles reached 120000 before inspection."
+          },
+          {
+            "id": "left-2",
+            "kind": "paragraph",
+            "text": "Left column: Crack length was 1.2 mm."
+          },
+          {
+            "id": "right-1",
+            "kind": "paragraph",
+            "text": "Right column: Stress amplitude was 180 MPa."
+          },
+          {
+            "id": "right-2",
+            "kind": "paragraph",
+            "text": "Right column: Interval was 30 days."
+          }
+        ],
+        "table_columns": 0,
+        "table_rows": 0,
+        "tables": {}
+      },
+      "expected_numeric_units": [
+        "120000",
+        "1.2 mm",
+        "180 MPa",
+        "30 days"
+      ],
+      "expected_reading_order": [
+        "Bridge Fatigue Survey",
+        "Left column: Cycles reached 120000 before inspection.",
+        "Left column: Crack length was 1.2 mm.",
+        "Right column: Stress amplitude was 180 MPa.",
+        "Right column: Interval was 30 days."
+      ],
+      "expected_table_cells": [],
+      "expected_text": "Bridge Fatigue Survey\nLeft column: Cycles reached 120000 before inspection.\nLeft column: Crack length was 1.2 mm.\nRight column: Stress amplitude was 180 MPa.\nRight column: Interval was 30 days.",
+      "language": "en",
+      "page": 1,
+      "provenance": {
+        "generation": "generate_assets.py",
+        "license": "CC0-1.0",
+        "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+      },
+      "source_id": "mystic-synthetic-ocr-two-column",
+      "source_type": "project_authored_synthetic_page",
+      "title": "Bridge Fatigue Survey"
+    },
+    {
+      "asset_path": "assets/ocr-force-table.png",
+      "case_id": "ocr-force-table",
+      "expected_layout": {
+        "elements": [
+          {
+            "id": "heading-1",
+            "kind": "heading",
+            "text": "Force Table"
+          },
+          {
+            "id": "equation-1",
+            "kind": "equation",
+            "text": "Equation: F = m a"
+          },
+          {
+            "id": "table-header-mass",
+            "kind": "table",
+            "text": "Mass"
+          },
+          {
+            "id": "table-header-force",
+            "kind": "table",
+            "text": "Force"
+          },
+          {
+            "id": "table-header-acceleration",
+            "kind": "table",
+            "text": "Acceleration"
+          },
+          {
+            "id": "table-row-1-mass",
+            "kind": "table",
+            "text": "2 kg"
+          },
+          {
+            "id": "table-row-1-force",
+            "kind": "table",
+            "text": "10 N"
+          },
+          {
+            "id": "table-row-1-acceleration",
+            "kind": "table",
+            "text": "5 m/s2"
+          },
+          {
+            "id": "table-row-2-mass",
+            "kind": "table",
+            "text": "5 kg"
+          },
+          {
+            "id": "table-row-2-force",
+            "kind": "table",
+            "text": "25 N"
+          },
+          {
+            "id": "table-row-2-acceleration",
+            "kind": "table",
+            "text": "5 m/s2"
+          }
+        ],
+        "table_columns": 3,
+        "table_rows": 3,
+        "tables": {
+          "force-table": {
+            "cells": [
+              "Mass",
+              "Force",
+              "Acceleration",
+              "2 kg",
+              "10 N",
+              "5 kg",
+              "25 N"
+            ],
+            "columns": 3,
+            "rows": 3
+          }
+        }
+      },
+      "expected_numeric_units": [
+        "2 kg",
+        "10 N",
+        "5 m/s2",
+        "5 kg",
+        "25 N"
+      ],
+      "expected_reading_order": [
+        "Force Table",
+        "Equation: F = m a",
+        "Mass",
+        "Force",
+        "Acceleration",
+        "2 kg",
+        "10 N",
+        "5 m/s2",
+        "5 kg",
+        "25 N",
+        "5 m/s2"
+      ],
+      "expected_table_cells": [
+        "Mass",
+        "Force",
+        "Acceleration",
+        "2 kg",
+        "10 N",
+        "5 kg",
+        "25 N"
+      ],
+      "expected_text": "Force Table\nEquation: F = m a\nMass\nForce\nAcceleration\n2 kg\n10 N\n5 m/s2\n5 kg\n25 N\n5 m/s2",
+      "language": "en",
+      "page": 1,
+      "provenance": {
+        "generation": "generate_assets.py",
+        "license": "CC0-1.0",
+        "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+      },
+      "source_id": "mystic-synthetic-ocr-force-table",
+      "source_type": "project_authored_synthetic_page",
+      "title": "Force Table"
+    },
+    {
+      "asset_path": "assets/ocr-multilingual.png",
+      "case_id": "ocr-multilingual",
+      "expected_layout": {
+        "elements": [
+          {
+            "id": "heading-1",
+            "kind": "heading",
+            "text": "다국어 센서 기록"
+          },
+          {
+            "id": "paragraph-1",
+            "kind": "paragraph",
+            "text": "온도 Temperature: 23 C"
+          },
+          {
+            "id": "paragraph-2",
+            "kind": "paragraph",
+            "text": "압력 Pressure: 101.3 kPa"
+          },
+          {
+            "id": "paragraph-3",
+            "kind": "paragraph",
+            "text": "유량 Flow rate: 4.5 L/min"
+          }
+        ],
+        "table_columns": 0,
+        "table_rows": 0,
+        "tables": {}
+      },
+      "expected_numeric_units": [
+        "23 C",
+        "101.3 kPa",
+        "4.5 L/min"
+      ],
+      "expected_reading_order": [
+        "다국어 센서 기록",
+        "온도 Temperature: 23 C",
+        "압력 Pressure: 101.3 kPa",
+        "유량 Flow rate: 4.5 L/min"
+      ],
+      "expected_table_cells": [],
+      "expected_text": "다국어 센서 기록\n온도 Temperature: 23 C\n압력 Pressure: 101.3 kPa\n유량 Flow rate: 4.5 L/min",
+      "language": "ko",
+      "page": 1,
+      "provenance": {
+        "generation": "generate_assets.py",
+        "license": "CC0-1.0",
+        "source_url": "https://github.com/Dezire0/Mystic/tree/main/benchmarks/specialists/v1"
+      },
+      "source_id": "mystic-synthetic-ocr-multilingual",
+      "source_type": "project_authored_synthetic_page",
+      "title": "다국어 센서 기록"
+    }
+  ],
+  "parsing_cases": [
+    {
+      "asset_path": "assets/ocr-normal-paragraph.png",
+      "case_id": "parse-ocr-normal-paragraph",
+      "expected_layout": {
+        "elements": [
+          {
+            "id": "heading-1",
+            "kind": "heading",
+            "text": "Thermal Calibration Note"
+          },
+          {
+            "id": "paragraph-1",
+            "kind": "paragraph",
+            "text": "A sensor was held at 25 C for 60 s before recording."
+          },
+          {
+            "id": "paragraph-2",
+            "kind": "paragraph",
+            "text": "The reference voltage was 2.0 V and current was 0.5 A."
+          },
+          {
+            "id": "equation-1",
+            "kind": "equation",
+            "text": "Power equation: P = V I"
+          }
+        ],
+        "table_columns": 0,
+        "table_rows": 0,
+        "tables": {}
+      },
+      "expected_reading_order": [
+        "heading-1",
+        "paragraph-1",
+        "paragraph-2",
+        "equation-1"
+      ],
+      "page": 1,
+      "source_id": "mystic-synthetic-ocr-normal-paragraph"
+    },
+    {
+      "asset_path": "assets/ocr-two-column.png",
+      "case_id": "parse-ocr-two-column",
+      "expected_layout": {
+        "elements": [
+          {
+            "id": "heading-1",
+            "kind": "heading",
+            "text": "Bridge Fatigue Survey"
+          },
+          {
+            "id": "left-1",
+            "kind": "paragraph",
+            "text": "Left column: Cycles reached 120000 before inspection."
+          },
+          {
+            "id": "left-2",
+            "kind": "paragraph",
+            "text": "Left column: Crack length was 1.2 mm."
+          },
+          {
+            "id": "right-1",
+            "kind": "paragraph",
+            "text": "Right column: Stress amplitude was 180 MPa."
+          },
+          {
+            "id": "right-2",
+            "kind": "paragraph",
+            "text": "Right column: Interval was 30 days."
+          }
+        ],
+        "table_columns": 0,
+        "table_rows": 0,
+        "tables": {}
+      },
+      "expected_reading_order": [
+        "heading-1",
+        "left-1",
+        "left-2",
+        "right-1",
+        "right-2"
+      ],
+      "page": 1,
+      "source_id": "mystic-synthetic-ocr-two-column"
+    },
+    {
+      "asset_path": "assets/ocr-force-table.png",
+      "case_id": "parse-ocr-force-table",
+      "expected_layout": {
+        "elements": [
+          {
+            "id": "heading-1",
+            "kind": "heading",
+            "text": "Force Table"
+          },
+          {
+            "id": "equation-1",
+            "kind": "equation",
+            "text": "Equation: F = m a"
+          },
+          {
+            "id": "table-header-mass",
+            "kind": "table",
+            "text": "Mass"
+          },
+          {
+            "id": "table-header-force",
+            "kind": "table",
+            "text": "Force"
+          },
+          {
+            "id": "table-header-acceleration",
+            "kind": "table",
+            "text": "Acceleration"
+          },
+          {
+            "id": "table-row-1-mass",
+            "kind": "table",
+            "text": "2 kg"
+          },
+          {
+            "id": "table-row-1-force",
+            "kind": "table",
+            "text": "10 N"
+          },
+          {
+            "id": "table-row-1-acceleration",
+            "kind": "table",
+            "text": "5 m/s2"
+          },
+          {
+            "id": "table-row-2-mass",
+            "kind": "table",
+            "text": "5 kg"
+          },
+          {
+            "id": "table-row-2-force",
+            "kind": "table",
+            "text": "25 N"
+          },
+          {
+            "id": "table-row-2-acceleration",
+            "kind": "table",
+            "text": "5 m/s2"
+          }
+        ],
+        "table_columns": 3,
+        "table_rows": 3,
+        "tables": {
+          "force-table": {
+            "cells": [
+              "Mass",
+              "Force",
+              "Acceleration",
+              "2 kg",
+              "10 N",
+              "5 kg",
+              "25 N"
+            ],
+            "columns": 3,
+            "rows": 3
+          }
+        }
+      },
+      "expected_reading_order": [
+        "heading-1",
+        "equation-1",
+        "table-header-mass",
+        "table-header-force",
+        "table-header-acceleration",
+        "table-row-1-mass",
+        "table-row-1-force",
+        "table-row-1-acceleration",
+        "table-row-2-mass",
+        "table-row-2-force",
+        "table-row-2-acceleration"
+      ],
+      "page": 1,
+      "source_id": "mystic-synthetic-ocr-force-table"
+    },
+    {
+      "asset_path": "assets/ocr-multilingual.png",
+      "case_id": "parse-ocr-multilingual",
+      "expected_layout": {
+        "elements": [
+          {
+            "id": "heading-1",
+            "kind": "heading",
+            "text": "다국어 센서 기록"
+          },
+          {
+            "id": "paragraph-1",
+            "kind": "paragraph",
+            "text": "온도 Temperature: 23 C"
+          },
+          {
+            "id": "paragraph-2",
+            "kind": "paragraph",
+            "text": "압력 Pressure: 101.3 kPa"
+          },
+          {
+            "id": "paragraph-3",
+            "kind": "paragraph",
+            "text": "유량 Flow rate: 4.5 L/min"
+          }
+        ],
+        "table_columns": 0,
+        "table_rows": 0,
+        "tables": {}
+      },
+      "expected_reading_order": [
+        "heading-1",
+        "paragraph-1",
+        "paragraph-2",
+        "paragraph-3"
+      ],
+      "page": 1,
+      "source_id": "mystic-synthetic-ocr-multilingual"
+    }
+  ],
+  "provenance_cases": [
+    {
+      "case_id": "text-retrieval-lineage",
+      "location": "passage:physics-newton-force",
+      "required_stages": [
+        "source",
+        "normalize",
+        "chunk",
+        "embedding",
+        "retrieval",
+        "rerank"
+      ],
+      "source_id": "physics-newton-force"
+    },
+    {
+      "case_id": "ocr-page-lineage",
+      "location": "page:1/region:table-row-1",
+      "required_stages": [
+        "source",
+        "page",
+        "ocr",
+        "region",
+        "normalized_chunk",
+        "embedding",
+        "retrieval",
+        "rerank"
+      ],
+      "source_id": "mystic-synthetic-ocr-force-table"
+    }
+  ],
+  "retrieval_cases": [
+    {
+      "candidate_ids": [
+        "physics-newton-force",
+        "metrology-si-units",
+        "eng-beam-load",
+        "physics-friction",
+        "math-derivative",
+        "eng-material-yield",
+        "physics-pressure-fluid",
+        "energy-battery"
+      ],
+      "case_id": "force-law",
+      "language": "en",
+      "query": "Which law connects net force, mass, and acceleration?",
+      "relevance": {
+        "energy-battery": 0,
+        "eng-beam-load": 0,
+        "eng-material-yield": 0,
+        "math-derivative": 0,
+        "metrology-si-units": 1,
+        "physics-friction": 0,
+        "physics-newton-force": 3,
+        "physics-pressure-fluid": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "physics-projectile-motion",
+        "physics-friction",
+        "eng-beam-load",
+        "physics-newton-force",
+        "math-integral",
+        "eng-feedback-control",
+        "earth-seismic-wave",
+        "energy-solar-cell"
+      ],
+      "case_id": "projectile-range",
+      "language": "en",
+      "query": "What changes the range of an ideal launched projectile?",
+      "relevance": {
+        "earth-seismic-wave": 0,
+        "energy-solar-cell": 0,
+        "eng-beam-load": 0,
+        "eng-feedback-control": 0,
+        "math-integral": 0,
+        "physics-friction": 0,
+        "physics-newton-force": 0,
+        "physics-projectile-motion": 3
+      }
+    },
+    {
+      "candidate_ids": [
+        "physics-electric-circuit",
+        "energy-battery",
+        "eng-signal-filter",
+        "physics-wave-frequency",
+        "chem-ideal-gas",
+        "eng-sensor-calibration",
+        "physics-newton-force",
+        "comp-binary-search"
+      ],
+      "case_id": "ohm-law",
+      "language": "en",
+      "query": "How are voltage, current, and resistance related in a simple circuit?",
+      "relevance": {
+        "chem-ideal-gas": 0,
+        "comp-binary-search": 0,
+        "energy-battery": 0,
+        "eng-sensor-calibration": 0,
+        "eng-signal-filter": 0,
+        "physics-electric-circuit": 3,
+        "physics-newton-force": 0,
+        "physics-wave-frequency": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "physics-wave-frequency",
+        "earth-seismic-wave",
+        "math-fourier",
+        "eng-signal-filter",
+        "physics-electric-circuit",
+        "physics-kinetic-energy",
+        "astronomy-transit",
+        "comp-graph-shortest"
+      ],
+      "case_id": "wave-frequency",
+      "language": "en",
+      "query": "What relation connects wave speed, frequency, and wavelength?",
+      "relevance": {
+        "astronomy-transit": 0,
+        "comp-graph-shortest": 0,
+        "earth-seismic-wave": 0,
+        "eng-signal-filter": 0,
+        "math-fourier": 0,
+        "physics-electric-circuit": 0,
+        "physics-kinetic-energy": 0,
+        "physics-wave-frequency": 3
+      }
+    },
+    {
+      "candidate_ids": [
+        "physics-heat-transfer",
+        "eng-heat-exchanger",
+        "eng-pump-flow",
+        "physics-pressure-fluid",
+        "energy-battery",
+        "chem-reaction-rate",
+        "physics-wave-frequency",
+        "earth-water-cycle"
+      ],
+      "case_id": "heat-transfer",
+      "language": "en",
+      "query": "Which mechanisms move thermal energy through contact, fluid motion, and radiation?",
+      "relevance": {
+        "chem-reaction-rate": 0,
+        "earth-water-cycle": 0,
+        "energy-battery": 0,
+        "eng-heat-exchanger": 1,
+        "eng-pump-flow": 0,
+        "physics-heat-transfer": 3,
+        "physics-pressure-fluid": 0,
+        "physics-wave-frequency": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "physics-pressure-fluid",
+        "chem-ideal-gas",
+        "eng-pump-flow",
+        "eng-beam-load",
+        "physics-newton-force",
+        "earth-water-cycle",
+        "energy-solar-cell",
+        "metrology-si-units"
+      ],
+      "case_id": "fluid-pressure",
+      "language": "en",
+      "query": "Why does pressure rise deeper in a stationary liquid?",
+      "relevance": {
+        "chem-ideal-gas": 1,
+        "earth-water-cycle": 0,
+        "energy-solar-cell": 0,
+        "eng-beam-load": 0,
+        "eng-pump-flow": 0,
+        "metrology-si-units": 0,
+        "physics-newton-force": 0,
+        "physics-pressure-fluid": 3
+      }
+    },
+    {
+      "candidate_ids": [
+        "math-derivative",
+        "math-integral",
+        "math-optimization",
+        "physics-projectile-motion",
+        "stat-hypothesis-test",
+        "math-error-propagation",
+        "comp-numerical-stability",
+        "math-matrix-transform"
+      ],
+      "case_id": "derivative-rate",
+      "language": "en",
+      "query": "Which mathematical concept gives instantaneous rate of change?",
+      "relevance": {
+        "comp-numerical-stability": 0,
+        "math-derivative": 3,
+        "math-error-propagation": 0,
+        "math-integral": 0,
+        "math-matrix-transform": 0,
+        "math-optimization": 0,
+        "physics-projectile-motion": 0,
+        "stat-hypothesis-test": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "math-integral",
+        "math-derivative",
+        "physics-projectile-motion",
+        "math-fourier",
+        "math-probability",
+        "eng-pump-flow",
+        "energy-battery",
+        "comp-graph-shortest"
+      ],
+      "case_id": "integral-displacement",
+      "language": "en",
+      "query": "What calculation accumulates displacement from a velocity-time curve?",
+      "relevance": {
+        "comp-graph-shortest": 0,
+        "energy-battery": 0,
+        "eng-pump-flow": 0,
+        "math-derivative": 0,
+        "math-fourier": 0,
+        "math-integral": 3,
+        "math-probability": 0,
+        "physics-projectile-motion": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "math-eigenvalue",
+        "math-matrix-transform",
+        "math-derivative",
+        "comp-graph-shortest",
+        "eng-feedback-control",
+        "stat-hypothesis-test",
+        "physics-wave-frequency",
+        "math-optimization"
+      ],
+      "case_id": "matrix-eigen",
+      "language": "en",
+      "query": "What vector retains direction under a linear transformation?",
+      "relevance": {
+        "comp-graph-shortest": 0,
+        "eng-feedback-control": 0,
+        "math-derivative": 0,
+        "math-eigenvalue": 3,
+        "math-matrix-transform": 2,
+        "math-optimization": 0,
+        "physics-wave-frequency": 0,
+        "stat-hypothesis-test": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "math-probability",
+        "stat-hypothesis-test",
+        "bio-epidemiology",
+        "math-error-propagation",
+        "comp-binary-search",
+        "chem-reaction-rate",
+        "math-optimization",
+        "astronomy-transit"
+      ],
+      "case_id": "probability-independent",
+      "language": "en",
+      "query": "How is the probability of two independent events calculated?",
+      "relevance": {
+        "astronomy-transit": 0,
+        "bio-epidemiology": 0,
+        "chem-reaction-rate": 0,
+        "comp-binary-search": 0,
+        "math-error-propagation": 0,
+        "math-optimization": 0,
+        "math-probability": 3,
+        "stat-hypothesis-test": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "math-optimization",
+        "math-derivative",
+        "eng-feedback-control",
+        "math-eigenvalue",
+        "comp-graph-shortest",
+        "eng-beam-load",
+        "stat-hypothesis-test",
+        "math-probability"
+      ],
+      "case_id": "constrained-optimization",
+      "language": "en",
+      "query": "What method chooses values that optimize an objective subject to constraints?",
+      "relevance": {
+        "comp-graph-shortest": 0,
+        "eng-beam-load": 0,
+        "eng-feedback-control": 0,
+        "math-derivative": 0,
+        "math-eigenvalue": 0,
+        "math-optimization": 3,
+        "math-probability": 0,
+        "stat-hypothesis-test": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "math-error-propagation",
+        "eng-sensor-calibration",
+        "metrology-si-units",
+        "comp-numerical-stability",
+        "math-probability",
+        "physics-kinetic-energy",
+        "stat-hypothesis-test",
+        "energy-battery"
+      ],
+      "case_id": "measurement-uncertainty",
+      "language": "en",
+      "query": "How should independent measurement uncertainty be propagated and reported?",
+      "relevance": {
+        "comp-numerical-stability": 0,
+        "energy-battery": 0,
+        "eng-sensor-calibration": 2,
+        "math-error-propagation": 3,
+        "math-probability": 0,
+        "metrology-si-units": 0,
+        "physics-kinetic-energy": 0,
+        "stat-hypothesis-test": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "eng-fatigue-cycle",
+        "eng-material-yield",
+        "eng-beam-load",
+        "physics-friction",
+        "physics-kinetic-energy",
+        "earth-seismic-wave",
+        "chem-reaction-rate",
+        "energy-battery"
+      ],
+      "case_id": "fatigue-cracks",
+      "language": "en",
+      "query": "What repeated loading process can grow cracks below yield strength?",
+      "relevance": {
+        "chem-reaction-rate": 0,
+        "earth-seismic-wave": 0,
+        "energy-battery": 0,
+        "eng-beam-load": 0,
+        "eng-fatigue-cycle": 3,
+        "eng-material-yield": 0,
+        "physics-friction": 0,
+        "physics-kinetic-energy": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "eng-sensor-calibration",
+        "eng-feedback-control",
+        "math-error-propagation",
+        "metrology-si-units",
+        "eng-signal-filter",
+        "physics-electric-circuit",
+        "bio-epidemiology",
+        "stat-hypothesis-test"
+      ],
+      "case_id": "sensor-calibration",
+      "language": "en",
+      "query": "Which record maps a sensor signal to a reference with slope, offset, units, and uncertainty?",
+      "relevance": {
+        "bio-epidemiology": 0,
+        "eng-feedback-control": 0,
+        "eng-sensor-calibration": 3,
+        "eng-signal-filter": 0,
+        "math-error-propagation": 0,
+        "metrology-si-units": 0,
+        "physics-electric-circuit": 0,
+        "stat-hypothesis-test": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "eng-signal-filter",
+        "math-fourier",
+        "physics-wave-frequency",
+        "eng-feedback-control",
+        "physics-electric-circuit",
+        "comp-numerical-stability",
+        "eng-sensor-calibration",
+        "earth-seismic-wave"
+      ],
+      "case_id": "low-pass-filter",
+      "language": "en",
+      "query": "What processing suppresses rapid fluctuations above a cutoff frequency?",
+      "relevance": {
+        "comp-numerical-stability": 0,
+        "earth-seismic-wave": 0,
+        "eng-feedback-control": 0,
+        "eng-sensor-calibration": 0,
+        "eng-signal-filter": 3,
+        "math-fourier": 1,
+        "physics-electric-circuit": 0,
+        "physics-wave-frequency": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "eng-pump-flow",
+        "physics-pressure-fluid",
+        "eng-heat-exchanger",
+        "chem-ideal-gas",
+        "eng-beam-load",
+        "earth-water-cycle",
+        "energy-solar-cell",
+        "physics-friction"
+      ],
+      "case_id": "pump-curve",
+      "language": "en",
+      "query": "What determines fluid flow rate through a pump and pipe system?",
+      "relevance": {
+        "chem-ideal-gas": 0,
+        "earth-water-cycle": 0,
+        "energy-solar-cell": 0,
+        "eng-beam-load": 0,
+        "eng-heat-exchanger": 0,
+        "eng-pump-flow": 3,
+        "physics-friction": 0,
+        "physics-pressure-fluid": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "eng-material-yield",
+        "eng-fatigue-cycle",
+        "physics-newton-force",
+        "eng-beam-load",
+        "physics-pressure-fluid",
+        "metrology-si-units",
+        "energy-battery",
+        "math-error-propagation"
+      ],
+      "case_id": "yield-strength",
+      "language": "en",
+      "query": "At what stress does permanent material deformation begin?",
+      "relevance": {
+        "energy-battery": 0,
+        "eng-beam-load": 0,
+        "eng-fatigue-cycle": 0,
+        "eng-material-yield": 3,
+        "math-error-propagation": 0,
+        "metrology-si-units": 0,
+        "physics-newton-force": 0,
+        "physics-pressure-fluid": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "bio-cell-membrane",
+        "bio-dna-replication",
+        "chem-acid-base",
+        "bio-photosynthesis",
+        "bio-enzyme-rate",
+        "earth-water-cycle",
+        "physics-electric-circuit",
+        "chem-spectroscopy"
+      ],
+      "case_id": "cell-membrane",
+      "language": "en",
+      "query": "What cell structure selectively regulates movement of ions and molecules?",
+      "relevance": {
+        "bio-cell-membrane": 3,
+        "bio-dna-replication": 0,
+        "bio-enzyme-rate": 0,
+        "bio-photosynthesis": 0,
+        "chem-acid-base": 0,
+        "chem-spectroscopy": 0,
+        "earth-water-cycle": 0,
+        "physics-electric-circuit": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "chem-reaction-rate",
+        "bio-enzyme-rate",
+        "chem-acid-base",
+        "chem-spectroscopy",
+        "physics-heat-transfer",
+        "energy-solar-cell",
+        "math-optimization",
+        "bio-photosynthesis"
+      ],
+      "case_id": "reaction-rate",
+      "language": "en",
+      "query": "Which factors change chemical reaction rate without changing net consumption of a catalyst?",
+      "relevance": {
+        "bio-enzyme-rate": 2,
+        "bio-photosynthesis": 0,
+        "chem-acid-base": 0,
+        "chem-reaction-rate": 3,
+        "chem-spectroscopy": 0,
+        "energy-solar-cell": 0,
+        "math-optimization": 0,
+        "physics-heat-transfer": 0
+      }
+    },
+    {
+      "candidate_ids": [
+        "earth-mars-atmosphere-ko",
+        "chem-ideal-gas",
+        "earth-water-cycle",
+        "astronomy-transit",
+        "physics-pressure-fluid",
+        "earth-carbon-cycle",
+        "metrology-si-units",
+        "energy-solar-cell"
+      ],
+      "case_id": "mars-atmosphere-ko",
+      "language": "ko",
+      "query": "화성 대기의 주성분과 표면 기압의 특징은 무엇입니까?",
+      "relevance": {
+        "astronomy-transit": 0,
+        "chem-ideal-gas": 0,
+        "earth-carbon-cycle": 0,
+        "earth-mars-atmosphere-ko": 3,
+        "earth-water-cycle": 0,
+        "energy-solar-cell": 0,
+        "metrology-si-units": 0,
+        "physics-pressure-fluid": 0
+      }
+    }
+  ],
+  "schema_version": "mystic-specialist-corpus-v1",
+  "version": "1.0.0",
+  "visual_cases": [
+    {
+      "asset_paths": [
+        "assets/ocr-force-table.png",
+        "assets/ocr-normal-paragraph.png"
+      ],
+      "case_id": "visual-force-table",
+      "query": "Which page contains a bordered table of mass, force, and acceleration?",
+      "relevance": {
+        "ocr-force-table": 3,
+        "ocr-normal-paragraph": 0
+      }
+    },
+    {
+      "asset_paths": [
+        "assets/ocr-two-column.png",
+        "assets/ocr-force-table.png"
+      ],
+      "case_id": "visual-two-column",
+      "query": "Which page separates bridge observations into left and right columns?",
+      "relevance": {
+        "ocr-force-table": 0,
+        "ocr-two-column": 3
+      }
+    },
+    {
+      "asset_paths": [
+        "assets/ocr-multilingual.png",
+        "assets/ocr-normal-paragraph.png"
+      ],
+      "case_id": "visual-multilingual",
+      "query": "Which page has Korean sensor labels paired with pressure and flow units?",
+      "relevance": {
+        "ocr-multilingual": 3,
+        "ocr-normal-paragraph": 0
+      }
+    }
+  ]
+}

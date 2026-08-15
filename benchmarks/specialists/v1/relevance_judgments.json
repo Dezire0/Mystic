@@ -1,0 +1,202 @@
+{
+  "cell-membrane": {
+    "bio-cell-membrane": 3,
+    "bio-dna-replication": 0,
+    "bio-enzyme-rate": 0,
+    "bio-photosynthesis": 0,
+    "chem-acid-base": 0,
+    "chem-spectroscopy": 0,
+    "earth-water-cycle": 0,
+    "physics-electric-circuit": 0
+  },
+  "constrained-optimization": {
+    "comp-graph-shortest": 0,
+    "eng-beam-load": 0,
+    "eng-feedback-control": 0,
+    "math-derivative": 0,
+    "math-eigenvalue": 0,
+    "math-optimization": 3,
+    "math-probability": 0,
+    "stat-hypothesis-test": 0
+  },
+  "derivative-rate": {
+    "comp-numerical-stability": 0,
+    "math-derivative": 3,
+    "math-error-propagation": 0,
+    "math-integral": 0,
+    "math-matrix-transform": 0,
+    "math-optimization": 0,
+    "physics-projectile-motion": 0,
+    "stat-hypothesis-test": 0
+  },
+  "fatigue-cracks": {
+    "chem-reaction-rate": 0,
+    "earth-seismic-wave": 0,
+    "energy-battery": 0,
+    "eng-beam-load": 0,
+    "eng-fatigue-cycle": 3,
+    "eng-material-yield": 0,
+    "physics-friction": 0,
+    "physics-kinetic-energy": 0
+  },
+  "fluid-pressure": {
+    "chem-ideal-gas": 1,
+    "earth-water-cycle": 0,
+    "energy-solar-cell": 0,
+    "eng-beam-load": 0,
+    "eng-pump-flow": 0,
+    "metrology-si-units": 0,
+    "physics-newton-force": 0,
+    "physics-pressure-fluid": 3
+  },
+  "force-law": {
+    "energy-battery": 0,
+    "eng-beam-load": 0,
+    "eng-material-yield": 0,
+    "math-derivative": 0,
+    "metrology-si-units": 1,
+    "physics-friction": 0,
+    "physics-newton-force": 3,
+    "physics-pressure-fluid": 0
+  },
+  "heat-transfer": {
+    "chem-reaction-rate": 0,
+    "earth-water-cycle": 0,
+    "energy-battery": 0,
+    "eng-heat-exchanger": 1,
+    "eng-pump-flow": 0,
+    "physics-heat-transfer": 3,
+    "physics-pressure-fluid": 0,
+    "physics-wave-frequency": 0
+  },
+  "integral-displacement": {
+    "comp-graph-shortest": 0,
+    "energy-battery": 0,
+    "eng-pump-flow": 0,
+    "math-derivative": 0,
+    "math-fourier": 0,
+    "math-integral": 3,
+    "math-probability": 0,
+    "physics-projectile-motion": 0
+  },
+  "low-pass-filter": {
+    "comp-numerical-stability": 0,
+    "earth-seismic-wave": 0,
+    "eng-feedback-control": 0,
+    "eng-sensor-calibration": 0,
+    "eng-signal-filter": 3,
+    "math-fourier": 1,
+    "physics-electric-circuit": 0,
+    "physics-wave-frequency": 0
+  },
+  "mars-atmosphere-ko": {
+    "astronomy-transit": 0,
+    "chem-ideal-gas": 0,
+    "earth-carbon-cycle": 0,
+    "earth-mars-atmosphere-ko": 3,
+    "earth-water-cycle": 0,
+    "energy-solar-cell": 0,
+    "metrology-si-units": 0,
+    "physics-pressure-fluid": 0
+  },
+  "matrix-eigen": {
+    "comp-graph-shortest": 0,
+    "eng-feedback-control": 0,
+    "math-derivative": 0,
+    "math-eigenvalue": 3,
+    "math-matrix-transform": 2,
+    "math-optimization": 0,
+    "physics-wave-frequency": 0,
+    "stat-hypothesis-test": 0
+  },
+  "measurement-uncertainty": {
+    "comp-numerical-stability": 0,
+    "energy-battery": 0,
+    "eng-sensor-calibration": 2,
+    "math-error-propagation": 3,
+    "math-probability": 0,
+    "metrology-si-units": 0,
+    "physics-kinetic-energy": 0,
+    "stat-hypothesis-test": 0
+  },
+  "ohm-law": {
+    "chem-ideal-gas": 0,
+    "comp-binary-search": 0,
+    "energy-battery": 0,
+    "eng-sensor-calibration": 0,
+    "eng-signal-filter": 0,
+    "physics-electric-circuit": 3,
+    "physics-newton-force": 0,
+    "physics-wave-frequency": 0
+  },
+  "probability-independent": {
+    "astronomy-transit": 0,
+    "bio-epidemiology": 0,
+    "chem-reaction-rate": 0,
+    "comp-binary-search": 0,
+    "math-error-propagation": 0,
+    "math-optimization": 0,
+    "math-probability": 3,
+    "stat-hypothesis-test": 0
+  },
+  "projectile-range": {
+    "earth-seismic-wave": 0,
+    "energy-solar-cell": 0,
+    "eng-beam-load": 0,
+    "eng-feedback-control": 0,
+    "math-integral": 0,
+    "physics-friction": 0,
+    "physics-newton-force": 0,
+    "physics-projectile-motion": 3
+  },
+  "pump-curve": {
+    "chem-ideal-gas": 0,
+    "earth-water-cycle": 0,
+    "energy-solar-cell": 0,
+    "eng-beam-load": 0,
+    "eng-heat-exchanger": 0,
+    "eng-pump-flow": 3,
+    "physics-friction": 0,
+    "physics-pressure-fluid": 0
+  },
+  "reaction-rate": {
+    "bio-enzyme-rate": 2,
+    "bio-photosynthesis": 0,
+    "chem-acid-base": 0,
+    "chem-reaction-rate": 3,
+    "chem-spectroscopy": 0,
+    "energy-solar-cell": 0,
+    "math-optimization": 0,
+    "physics-heat-transfer": 0
+  },
+  "sensor-calibration": {
+    "bio-epidemiology": 0,
+    "eng-feedback-control": 0,
+    "eng-sensor-calibration": 3,
+    "eng-signal-filter": 0,
+    "math-error-propagation": 0,
+    "metrology-si-units": 0,
+    "physics-electric-circuit": 0,
+    "stat-hypothesis-test": 0
+  },
+  "wave-frequency": {
+    "astronomy-transit": 0,
+    "comp-graph-shortest": 0,
+    "earth-seismic-wave": 0,
+    "eng-signal-filter": 0,
+    "math-fourier": 0,
+    "physics-electric-circuit": 0,
+    "physics-kinetic-energy": 0,
+    "physics-wave-frequency": 3
+  },
+  "yield-strength": {
+    "energy-battery": 0,
+    "eng-beam-load": 0,
+    "eng-fatigue-cycle": 0,
+    "eng-material-yield": 3,
+    "math-error-propagation": 0,
+    "metrology-si-units": 0,
+    "physics-newton-force": 0,
+    "physics-pressure-fluid": 0
+  }
+}

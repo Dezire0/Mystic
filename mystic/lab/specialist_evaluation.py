@@ -7,7 +7,7 @@ normal router can later honour.  It does not provide arbitrary model execution.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import hashlib
 from math import sqrt
 from pathlib import Path
@@ -34,7 +34,7 @@ WAVE_1 = {
     "reranking": "nvidia.llama-nemotron-rerank-1b-v2",
     "ocr": "nvidia.nemotron-ocr-v2",
 }
-DEFAULT_CORPUS = Path("benchmarks/phase2d/v1/corpus.json")
+DEFAULT_CORPUS = Path("benchmarks/specialists/v1/corpus.json")
 
 
 @dataclass(slots=True)
@@ -46,6 +46,7 @@ class Wave1EvaluationReport:
     results: list[dict[str, Any]]
     decisions: list[dict[str, Any]]
     blockers: list[str]
+    readiness: dict[str, Any] = field(default_factory=dict)
 
     def safe_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -129,6 +130,7 @@ class Wave1SpecialistEvaluator:
             results=results,
             decisions=[],
             blockers=[item for item in blockers if item],
+            readiness={"mode": "baseline", "network_calls": 0, "corpus": _corpus_summary(self.corpus)},
         )
 
     def run_live(self) -> Wave1EvaluationReport:
@@ -177,6 +179,7 @@ class Wave1SpecialistEvaluator:
             results=[*baseline_report.results, *(result.safe_dict() for result in results)],
             decisions=decisions,
             blockers=_unique(blockers),
+            readiness=readiness,
         )
 
     def _evaluate_embedding(self) -> SpecialistBenchmarkResult:
@@ -219,6 +222,7 @@ class Wave1SpecialistEvaluator:
             configuration=self._safe_provider_configuration(),
             request_count=2,
             latency_samples_ms=latency_samples,
+            usage=_usage_from_results([document_result, query_result]),
             provenance_preserved=True,
         )
 
@@ -227,9 +231,11 @@ class Wave1SpecialistEvaluator:
         latency_samples: list[float] = []
         failures = 0
         outputs: dict[str, list[float]] = {}
+        provider_results: list[SpecialistExecutionResult] = []
         for case in self.corpus.retrieval_cases:
             passages = [str(self.corpus.documents[identifier]["text"]) for identifier in case.relevance]
             result = self._execute(model, "rerank", {"query": case.query, "passages": passages})
+            provider_results.append(result)
             latency_samples.append(result.latency_ms)
             scores = result.output.get("scores") if result.succeeded else None
             if not isinstance(scores, list) or len(scores) != len(passages) or any(not isinstance(value, (int, float)) for value in scores):
@@ -257,6 +263,7 @@ class Wave1SpecialistEvaluator:
             configuration=self._safe_provider_configuration(),
             request_count=len(self.corpus.retrieval_cases),
             latency_samples_ms=latency_samples,
+            usage=_usage_from_results(provider_results),
             provenance_preserved=True,
         )
 
@@ -264,6 +271,7 @@ class Wave1SpecialistEvaluator:
         model = self.runtime.registry.get(WAVE_1["ocr"])
         latency_samples: list[float] = []
         failures = 0
+        provider_results: list[SpecialistExecutionResult] = []
 
         def extract(case: BenchmarkCase) -> tuple[str, dict[str, Any]]:
             nonlocal failures
@@ -273,13 +281,18 @@ class Wave1SpecialistEvaluator:
                 failures += 1
                 raise ValueError("OCR image asset is unavailable")
             result = self._execute(model, "ocr", {"image": image, "merge_level": "paragraph"})
+            provider_results.append(result)
             latency_samples.append(result.latency_ms)
             if not result.succeeded:
                 failures += 1
                 raise ValueError("OCR call failed")
             pages = result.output.get("pages")
             page = pages[0] if isinstance(pages, list) and pages and isinstance(pages[0], Mapping) else {}
-            return str(page.get("text", "")), {"detection_count": len(page.get("detections", []))}
+            detections = page.get("detections") if isinstance(page.get("detections"), list) else []
+            return str(page.get("text", "")), {
+                "detection_count": len(detections),
+                "reading_order": [str(item.get("text", "")) for item in detections if isinstance(item, Mapping)],
+            }
 
         return self.harness.evaluate_ocr(
             specialist_id=model.specialist_id,
@@ -292,6 +305,7 @@ class Wave1SpecialistEvaluator:
             configuration=self._safe_provider_configuration(),
             request_count=len(self.corpus.ocr_cases),
             latency_samples_ms=latency_samples,
+            usage=_usage_from_results(provider_results),
             provenance_preserved=True,
         )
 
@@ -355,6 +369,7 @@ def _corpus_summary(corpus: SpecialistBenchmarkCorpus) -> dict[str, Any]:
         "corpus_id": corpus.corpus_id,
         "version": corpus.version,
         "corpus_hash": corpus.corpus_hash,
+        "dataset_hash": corpus.dataset_hash,
         "cases": {
             "retrieval": len(corpus.retrieval_cases),
             "ocr": len(corpus.ocr_cases),
@@ -413,3 +428,15 @@ def _unique(values: list[str]) -> list[str]:
 
 def _result_from_dict(value: Mapping[str, Any]) -> SpecialistBenchmarkResult:
     return SpecialistBenchmarkResult(**dict(value))
+
+
+def _usage_from_results(results: list[SpecialistExecutionResult]) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    for result in results:
+        usage = result.output.get("usage") if result.succeeded else None
+        if not isinstance(usage, Mapping):
+            continue
+        for key, value in usage.items():
+            if isinstance(value, (int, float)):
+                totals[str(key)] = totals.get(str(key), 0.0) + float(value)
+    return totals

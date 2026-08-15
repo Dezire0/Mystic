@@ -1,0 +1,14 @@
+{
+  "visual-force-table": {
+    "ocr-force-table": 3,
+    "ocr-normal-paragraph": 0
+  },
+  "visual-multilingual": {
+    "ocr-multilingual": 3,
+    "ocr-normal-paragraph": 0
+  },
+  "visual-two-column": {
+    "ocr-force-table": 0,
+    "ocr-two-column": 3
+  }
+}

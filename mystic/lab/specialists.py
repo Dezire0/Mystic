@@ -266,13 +266,29 @@ class NvidiaNIMSpecialistProvider:
             base_url = self._base_url_for_role(role)
             if base_url:
                 endpoints[role] = str(urlparse(base_url).hostname or "")
+        credential_present = bool(str(self.environment.get("MYSTIC_NVIDIA_NIM_API_KEY", "")).strip())
+        endpoint_configured = bool(endpoints)
+        wave_1_roles = (
+            SpecialistRole.TEXT_EMBEDDING.value,
+            SpecialistRole.TEXT_RERANKING.value,
+            SpecialistRole.OCR.value,
+        )
         return {
             "provider": self.provider_id,
             "serializer_version": self.serializer_version,
             "execution_enabled": _truthy(self.environment.get("MYSTIC_NVIDIA_NIM_EXECUTION_ENABLED", "")),
-            "api_key_configured": bool(str(self.environment.get("MYSTIC_NVIDIA_NIM_API_KEY", "")).strip()),
+            "nim_configured": all(self._configured_role(role) for role in wave_1_roles),
+            "credential_present": credential_present,
+            "endpoint_configured": endpoint_configured,
+            "api_key_configured": credential_present,
             "endpoint_hosts": endpoints,
+            "selected_models": {
+                "embedding": self._WAVE_1_MODEL_OPERATIONS["nvidia.nemotron-3-embed-1b"][0],
+                "reranking": self._WAVE_1_MODEL_OPERATIONS["nvidia.llama-nemotron-rerank-1b-v2"][0],
+                "ocr": self._WAVE_1_MODEL_OPERATIONS["nvidia.nemotron-ocr-v2"][0],
+            },
             "timeout_seconds": self._timeout_seconds(),
+            "retry_policy": "none",
             "allowed_host_policy": "NVIDIA API, loopback, or explicitly configured MYSTIC_NVIDIA_NIM_ALLOWED_HOSTS",
         }
 
@@ -551,6 +567,178 @@ class NvidiaNIMSpecialistProvider:
             if not isinstance(decoded, Mapping):
                 raise ValueError("NVIDIA NIM response must be a JSON object")
             return int(response.status), decoded
+
+
+class LocalOpenAICompatibleEmbeddingProvider:
+    """Opt-in adapter for an explicitly registered loopback embedding server.
+
+    This is intentionally narrower than a general OpenAI-compatible client: it
+    accepts only an embedding operation for a model ID supplied at application
+    wiring time, and only connects to a loopback origin.  It is useful for a
+    locally hosted model (for example, a development inference server) without
+    turning the Specialist API into arbitrary model execution.
+    """
+
+    provider_id = "local_openai_compatible"
+    serializer_version = "phase2d2-local-openai-embedding-v1"
+    _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+    def __init__(
+        self,
+        *,
+        allowed_model_ids: set[str] | frozenset[str] | None = None,
+        environment: Mapping[str, str] | None = None,
+        post_json: Callable[[str, dict[str, str], bytes, float], tuple[int, Mapping[str, Any]]] | None = None,
+    ) -> None:
+        self.allowed_model_ids = frozenset(str(value) for value in (allowed_model_ids or set()) if str(value).strip())
+        self.environment = environment if environment is not None else os.environ
+        self._post_json = post_json or NvidiaNIMSpecialistProvider._urllib_post_json
+
+    def health(self) -> str:
+        if not _truthy(self.environment.get("MYSTIC_LOCAL_OPENAI_COMPATIBLE_EXECUTION_ENABLED", "")):
+            return SpecialistHealth.UNVERIFIED.value
+        return SpecialistHealth.HEALTHY.value if self.allowed_model_ids and self._base_url() else SpecialistHealth.UNVERIFIED.value
+
+    def health_for(self, model: SpecialistModel) -> str:
+        if model.provider != self.provider_id or model.role != SpecialistRole.TEXT_EMBEDDING.value:
+            return SpecialistHealth.UNVERIFIED.value
+        if model.model_id not in self.allowed_model_ids:
+            return SpecialistHealth.UNVERIFIED.value
+        return self.health()
+
+    def safe_configuration(self) -> dict[str, Any]:
+        base_url = self._base_url()
+        return {
+            "provider": self.provider_id,
+            "serializer_version": self.serializer_version,
+            "execution_enabled": _truthy(self.environment.get("MYSTIC_LOCAL_OPENAI_COMPATIBLE_EXECUTION_ENABLED", "")),
+            "api_key_configured": bool(str(self.environment.get("MYSTIC_LOCAL_OPENAI_COMPATIBLE_API_KEY", "")).strip()),
+            "endpoint_host": str(urlparse(base_url).hostname or "") if base_url else "",
+            "allowed_model_count": len(self.allowed_model_ids),
+            "timeout_seconds": self._timeout_seconds(),
+            "endpoint_policy": "loopback-only fixed /v1/embeddings endpoint",
+        }
+
+    def execute(
+        self,
+        *,
+        model: SpecialistModel,
+        operation: str,
+        payload: Mapping[str, Any],
+    ) -> SpecialistExecutionResult:
+        if (
+            model.provider != self.provider_id
+            or model.role != SpecialistRole.TEXT_EMBEDDING.value
+            or operation != "embed"
+            or model.model_id not in self.allowed_model_ids
+        ):
+            return self._failure(model, operation, SpecialistFailureType.UNSUPPORTED_INPUT, "Local provider accepts only explicitly registered text embedding models.")
+        if not _truthy(self.environment.get("MYSTIC_LOCAL_OPENAI_COMPATIBLE_EXECUTION_ENABLED", "")):
+            return self._failure(model, operation, SpecialistFailureType.MODEL_DISABLED, "Local embedding execution is disabled by server configuration.")
+        base_url = self._base_url()
+        if not base_url:
+            return self._failure(model, operation, SpecialistFailureType.PROVIDER_OFFLINE, "No approved loopback local embedding endpoint is configured.")
+        try:
+            texts = _text_batch(payload)
+        except ValueError as exc:
+            return self._failure(model, operation, SpecialistFailureType.UNSUPPORTED_INPUT, str(exc))
+        headers = {"accept": "application/json", "content-type": "application/json"}
+        api_key = str(self.environment.get("MYSTIC_LOCAL_OPENAI_COMPATIBLE_API_KEY", "")).strip()
+        if api_key:
+            headers["authorization"] = f"Bearer {api_key}"
+        body = {
+            "model": model.model_id,
+            "input": texts if len(texts) > 1 else texts[0],
+            "encoding_format": "float",
+        }
+        try:
+            status, response = self._post_json(
+                _nim_endpoint(base_url, "v1/embeddings"),
+                headers,
+                json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+                self._timeout_seconds(),
+            )
+        except TimeoutError:
+            return self._failure(model, operation, SpecialistFailureType.TIMEOUT, "Local embedding request timed out.")
+        except HTTPError as exc:
+            return self._http_failure(model, operation, exc.code)
+        except URLError:
+            return self._failure(model, operation, SpecialistFailureType.PROVIDER_OFFLINE, "Local embedding endpoint is unavailable.")
+        except OSError:
+            return self._failure(model, operation, SpecialistFailureType.PROVIDER_OFFLINE, "Local embedding transport failed.")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return self._failure(model, operation, SpecialistFailureType.INVALID_OUTPUT, "Local embedding endpoint returned an invalid response.")
+        if status < 200 or status >= 300:
+            return self._http_failure(model, operation, status)
+        try:
+            rows = response.get("data")
+            if not isinstance(rows, list) or not rows:
+                raise ValueError("Missing embedding data")
+            ordered = sorted(rows, key=lambda row: int(row.get("index", 0)))
+            embeddings = [
+                [float(value) for value in row["embedding"]]
+                for row in ordered
+                if isinstance(row, Mapping) and isinstance(row.get("embedding"), list) and row["embedding"]
+            ]
+            if len(embeddings) != len(rows):
+                raise ValueError("Invalid embedding vector")
+        except (KeyError, TypeError, ValueError):
+            return self._failure(model, operation, SpecialistFailureType.INVALID_OUTPUT, "Local embedding response did not match the expected contract.")
+        return SpecialistExecutionResult(
+            specialist_id=model.specialist_id,
+            provider=self.provider_id,
+            operation=operation,
+            status="ok",
+            output={"embedding": embeddings[0], "embeddings": embeddings, "usage": _safe_usage(response.get("usage"))},
+            estimated_cost=None,
+        )
+
+    def _base_url(self) -> str:
+        raw = str(self.environment.get("MYSTIC_LOCAL_OPENAI_COMPATIBLE_EMBED_BASE_URL", "")).strip()
+        parsed = urlparse(raw)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme not in {"https", "http"} or host not in self._LOOPBACK_HOSTS or parsed.username or parsed.password:
+            return ""
+        return raw.rstrip("/")
+
+    def _timeout_seconds(self) -> float:
+        raw = str(self.environment.get("MYSTIC_LOCAL_OPENAI_COMPATIBLE_TIMEOUT_SECONDS", "30")).strip()
+        try:
+            value = float(raw)
+        except ValueError:
+            return 30.0
+        return min(max(value, 1.0), 60.0)
+
+    def _failure(
+        self,
+        model: SpecialistModel,
+        operation: str,
+        failure_type: SpecialistFailureType,
+        safe_error: str,
+    ) -> SpecialistExecutionResult:
+        return SpecialistExecutionResult(
+            specialist_id=model.specialist_id,
+            provider=self.provider_id,
+            operation=operation,
+            status="failed",
+            failure_type=failure_type.value,
+            safe_error=safe_error,
+        )
+
+    def _http_failure(self, model: SpecialistModel, operation: str, status: int) -> SpecialistExecutionResult:
+        if status == 429:
+            kind = SpecialistFailureType.RATE_LIMITED
+            message = "Local embedding request was rate limited."
+        elif status in {408, 504}:
+            kind = SpecialistFailureType.TIMEOUT
+            message = "Local embedding request timed out."
+        elif status in {401, 403, 404, 502, 503} or status >= 500:
+            kind = SpecialistFailureType.PROVIDER_OFFLINE
+            message = "Local embedding endpoint rejected or could not serve the request."
+        else:
+            kind = SpecialistFailureType.INVALID_OUTPUT
+            message = "Local embedding endpoint rejected the bounded request."
+        return self._failure(model, operation, kind, message)
 
 
 class SpecialistModelRegistry:

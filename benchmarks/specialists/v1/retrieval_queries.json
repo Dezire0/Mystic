@@ -1,0 +1,302 @@
+[
+  {
+    "candidate_ids": [
+      "physics-newton-force",
+      "metrology-si-units",
+      "eng-beam-load",
+      "physics-friction",
+      "math-derivative",
+      "eng-material-yield",
+      "physics-pressure-fluid",
+      "energy-battery"
+    ],
+    "case_id": "force-law",
+    "language": "en",
+    "query": "Which law connects net force, mass, and acceleration?"
+  },
+  {
+    "candidate_ids": [
+      "physics-projectile-motion",
+      "physics-friction",
+      "eng-beam-load",
+      "physics-newton-force",
+      "math-integral",
+      "eng-feedback-control",
+      "earth-seismic-wave",
+      "energy-solar-cell"
+    ],
+    "case_id": "projectile-range",
+    "language": "en",
+    "query": "What changes the range of an ideal launched projectile?"
+  },
+  {
+    "candidate_ids": [
+      "physics-electric-circuit",
+      "energy-battery",
+      "eng-signal-filter",
+      "physics-wave-frequency",
+      "chem-ideal-gas",
+      "eng-sensor-calibration",
+      "physics-newton-force",
+      "comp-binary-search"
+    ],
+    "case_id": "ohm-law",
+    "language": "en",
+    "query": "How are voltage, current, and resistance related in a simple circuit?"
+  },
+  {
+    "candidate_ids": [
+      "physics-wave-frequency",
+      "earth-seismic-wave",
+      "math-fourier",
+      "eng-signal-filter",
+      "physics-electric-circuit",
+      "physics-kinetic-energy",
+      "astronomy-transit",
+      "comp-graph-shortest"
+    ],
+    "case_id": "wave-frequency",
+    "language": "en",
+    "query": "What relation connects wave speed, frequency, and wavelength?"
+  },
+  {
+    "candidate_ids": [
+      "physics-heat-transfer",
+      "eng-heat-exchanger",
+      "eng-pump-flow",
+      "physics-pressure-fluid",
+      "energy-battery",
+      "chem-reaction-rate",
+      "physics-wave-frequency",
+      "earth-water-cycle"
+    ],
+    "case_id": "heat-transfer",
+    "language": "en",
+    "query": "Which mechanisms move thermal energy through contact, fluid motion, and radiation?"
+  },
+  {
+    "candidate_ids": [
+      "physics-pressure-fluid",
+      "chem-ideal-gas",
+      "eng-pump-flow",
+      "eng-beam-load",
+      "physics-newton-force",
+      "earth-water-cycle",
+      "energy-solar-cell",
+      "metrology-si-units"
+    ],
+    "case_id": "fluid-pressure",
+    "language": "en",
+    "query": "Why does pressure rise deeper in a stationary liquid?"
+  },
+  {
+    "candidate_ids": [
+      "math-derivative",
+      "math-integral",
+      "math-optimization",
+      "physics-projectile-motion",
+      "stat-hypothesis-test",
+      "math-error-propagation",
+      "comp-numerical-stability",
+      "math-matrix-transform"
+    ],
+    "case_id": "derivative-rate",
+    "language": "en",
+    "query": "Which mathematical concept gives instantaneous rate of change?"
+  },
+  {
+    "candidate_ids": [
+      "math-integral",
+      "math-derivative",
+      "physics-projectile-motion",
+      "math-fourier",
+      "math-probability",
+      "eng-pump-flow",
+      "energy-battery",
+      "comp-graph-shortest"
+    ],
+    "case_id": "integral-displacement",
+    "language": "en",
+    "query": "What calculation accumulates displacement from a velocity-time curve?"
+  },
+  {
+    "candidate_ids": [
+      "math-eigenvalue",
+      "math-matrix-transform",
+      "math-derivative",
+      "comp-graph-shortest",
+      "eng-feedback-control",
+      "stat-hypothesis-test",
+      "physics-wave-frequency",
+      "math-optimization"
+    ],
+    "case_id": "matrix-eigen",
+    "language": "en",
+    "query": "What vector retains direction under a linear transformation?"
+  },
+  {
+    "candidate_ids": [
+      "math-probability",
+      "stat-hypothesis-test",
+      "bio-epidemiology",
+      "math-error-propagation",
+      "comp-binary-search",
+      "chem-reaction-rate",
+      "math-optimization",
+      "astronomy-transit"
+    ],
+    "case_id": "probability-independent",
+    "language": "en",
+    "query": "How is the probability of two independent events calculated?"
+  },
+  {
+    "candidate_ids": [
+      "math-optimization",
+      "math-derivative",
+      "eng-feedback-control",
+      "math-eigenvalue",
+      "comp-graph-shortest",
+      "eng-beam-load",
+      "stat-hypothesis-test",
+      "math-probability"
+    ],
+    "case_id": "constrained-optimization",
+    "language": "en",
+    "query": "What method chooses values that optimize an objective subject to constraints?"
+  },
+  {
+    "candidate_ids": [
+      "math-error-propagation",
+      "eng-sensor-calibration",
+      "metrology-si-units",
+      "comp-numerical-stability",
+      "math-probability",
+      "physics-kinetic-energy",
+      "stat-hypothesis-test",
+      "energy-battery"
+    ],
+    "case_id": "measurement-uncertainty",
+    "language": "en",
+    "query": "How should independent measurement uncertainty be propagated and reported?"
+  },
+  {
+    "candidate_ids": [
+      "eng-fatigue-cycle",
+      "eng-material-yield",
+      "eng-beam-load",
+      "physics-friction",
+      "physics-kinetic-energy",
+      "earth-seismic-wave",
+      "chem-reaction-rate",
+      "energy-battery"
+    ],
+    "case_id": "fatigue-cracks",
+    "language": "en",
+    "query": "What repeated loading process can grow cracks below yield strength?"
+  },
+  {
+    "candidate_ids": [
+      "eng-sensor-calibration",
+      "eng-feedback-control",
+      "math-error-propagation",
+      "metrology-si-units",
+      "eng-signal-filter",
+      "physics-electric-circuit",
+      "bio-epidemiology",
+      "stat-hypothesis-test"
+    ],
+    "case_id": "sensor-calibration",
+    "language": "en",
+    "query": "Which record maps a sensor signal to a reference with slope, offset, units, and uncertainty?"
+  },
+  {
+    "candidate_ids": [
+      "eng-signal-filter",
+      "math-fourier",
+      "physics-wave-frequency",
+      "eng-feedback-control",
+      "physics-electric-circuit",
+      "comp-numerical-stability",
+      "eng-sensor-calibration",
+      "earth-seismic-wave"
+    ],
+    "case_id": "low-pass-filter",
+    "language": "en",
+    "query": "What processing suppresses rapid fluctuations above a cutoff frequency?"
+  },
+  {
+    "candidate_ids": [
+      "eng-pump-flow",
+      "physics-pressure-fluid",
+      "eng-heat-exchanger",
+      "chem-ideal-gas",
+      "eng-beam-load",
+      "earth-water-cycle",
+      "energy-solar-cell",
+      "physics-friction"
+    ],
+    "case_id": "pump-curve",
+    "language": "en",
+    "query": "What determines fluid flow rate through a pump and pipe system?"
+  },
+  {
+    "candidate_ids": [
+      "eng-material-yield",
+      "eng-fatigue-cycle",
+      "physics-newton-force",
+      "eng-beam-load",
+      "physics-pressure-fluid",
+      "metrology-si-units",
+      "energy-battery",
+      "math-error-propagation"
+    ],
+    "case_id": "yield-strength",
+    "language": "en",
+    "query": "At what stress does permanent material deformation begin?"
+  },
+  {
+    "candidate_ids": [
+      "bio-cell-membrane",
+      "bio-dna-replication",
+      "chem-acid-base",
+      "bio-photosynthesis",
+      "bio-enzyme-rate",
+      "earth-water-cycle",
+      "physics-electric-circuit",
+      "chem-spectroscopy"
+    ],
+    "case_id": "cell-membrane",
+    "language": "en",
+    "query": "What cell structure selectively regulates movement of ions and molecules?"
+  },
+  {
+    "candidate_ids": [
+      "chem-reaction-rate",
+      "bio-enzyme-rate",
+      "chem-acid-base",
+      "chem-spectroscopy",
+      "physics-heat-transfer",
+      "energy-solar-cell",
+      "math-optimization",
+      "bio-photosynthesis"
+    ],
+    "case_id": "reaction-rate",
+    "language": "en",
+    "query": "Which factors change chemical reaction rate without changing net consumption of a catalyst?"
+  },
+  {
+    "candidate_ids": [
+      "earth-mars-atmosphere-ko",
+      "chem-ideal-gas",
+      "earth-water-cycle",
+      "astronomy-transit",
+      "physics-pressure-fluid",
+      "earth-carbon-cycle",
+      "metrology-si-units",
+      "energy-solar-cell"
+    ],
+    "case_id": "mars-atmosphere-ko",
+    "language": "ko",
+    "query": "화성 대기의 주성분과 표면 기압의 특징은 무엇입니까?"
+  }
+]
