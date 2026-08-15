@@ -1,0 +1,82 @@
+{
+  "ocr-force-table": {
+    "expected_numeric_units": [
+      "2 kg",
+      "10 N",
+      "5 m/s2",
+      "5 kg",
+      "25 N"
+    ],
+    "expected_reading_order": [
+      "Force Table",
+      "Equation: F = m a",
+      "Mass",
+      "Force",
+      "Acceleration",
+      "2 kg",
+      "10 N",
+      "5 m/s2",
+      "5 kg",
+      "25 N",
+      "5 m/s2"
+    ],
+    "expected_table_cells": [
+      "Mass",
+      "Force",
+      "Acceleration",
+      "2 kg",
+      "10 N",
+      "5 kg",
+      "25 N"
+    ],
+    "expected_text": "Force Table\nEquation: F = m a\nMass\nForce\nAcceleration\n2 kg\n10 N\n5 m/s2\n5 kg\n25 N\n5 m/s2"
+  },
+  "ocr-multilingual": {
+    "expected_numeric_units": [
+      "23 C",
+      "101.3 kPa",
+      "4.5 L/min"
+    ],
+    "expected_reading_order": [
+      "다국어 센서 기록",
+      "온도 Temperature: 23 C",
+      "압력 Pressure: 101.3 kPa",
+      "유량 Flow rate: 4.5 L/min"
+    ],
+    "expected_table_cells": [],
+    "expected_text": "다국어 센서 기록\n온도 Temperature: 23 C\n압력 Pressure: 101.3 kPa\n유량 Flow rate: 4.5 L/min"
+  },
+  "ocr-normal-paragraph": {
+    "expected_numeric_units": [
+      "25 C",
+      "60 s",
+      "2.0 V",
+      "0.5 A"
+    ],
+    "expected_reading_order": [
+      "Thermal Calibration Note",
+      "A sensor was held at 25 C for 60 s before recording.",
+      "The reference voltage was 2.0 V and current was 0.5 A.",
+      "Power equation: P = V I"
+    ],
+    "expected_table_cells": [],
+    "expected_text": "Thermal Calibration Note\nA sensor was held at 25 C for 60 s before recording.\nThe reference voltage was 2.0 V and current was 0.5 A.\nPower equation: P = V I"
+  },
+  "ocr-two-column": {
+    "expected_numeric_units": [
+      "120000",
+      "1.2 mm",
+      "180 MPa",
+      "30 days"
+    ],
+    "expected_reading_order": [
+      "Bridge Fatigue Survey",
+      "Left column: Cycles reached 120000 before inspection.",
+      "Left column: Crack length was 1.2 mm.",
+      "Right column: Stress amplitude was 180 MPa.",
+      "Right column: Interval was 30 days."
+    ],
+    "expected_table_cells": [],
+    "expected_text": "Bridge Fatigue Survey\nLeft column: Cycles reached 120000 before inspection.\nLeft column: Crack length was 1.2 mm.\nRight column: Stress amplitude was 180 MPa.\nRight column: Interval was 30 days."
+  }
+}

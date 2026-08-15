@@ -1,0 +1,18 @@
+{
+  "corpus_hash": "fd1dd5c74536dfed12593c0be97e24701802add39bc33060deeead167cd15d6d",
+  "corpus_id": "mystic-phase2d-science-v1",
+  "corpus_version": "1.0.1",
+  "execution_mode": "baseline",
+  "is_model_result": false,
+  "metrics": {
+    "mrr": 0.8125,
+    "ndcg_at_10": 0.8576691395183482,
+    "recall_at_5": 1.0
+  },
+  "notes": [
+    "Preserved Phase 2D.2 lexical baseline record.",
+    "This is a non-specialist lexical baseline, not a GPT or named-model result.",
+    "It remains tied to its original corpus and must not be compared directly with the v1 synthetic corpus."
+  ],
+  "record_kind": "lexical_baseline"
+}

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Any, Callable, Iterable, Mapping
 
 from mystic.lab.schema import utc_now_iso
@@ -23,6 +25,88 @@ class BenchmarkCase:
     expected_text: str = ""
     expected_layout: dict[str, Any] = field(default_factory=dict)
     expected_reading_order: list[str] = field(default_factory=list)
+    expected_numeric_units: list[str] = field(default_factory=list)
+    expected_table_cells: list[str] = field(default_factory=list)
+    language: str = "en"
+    source_id: str = ""
+    location: str = ""
+
+
+@dataclass(slots=True)
+class SpecialistBenchmarkCorpus:
+    """Versioned, validated evaluation inputs with source references intact."""
+
+    corpus_id: str
+    version: str
+    schema_version: str
+    corpus_hash: str
+    source_path: str
+    documents: dict[str, dict[str, Any]]
+    retrieval_cases: list[BenchmarkCase]
+    ocr_cases: list[BenchmarkCase]
+    ocr_inputs: dict[str, dict[str, Any]]
+    parsing_cases: list[BenchmarkCase]
+    visual_cases: list[BenchmarkCase]
+    provenance_cases: list[dict[str, Any]]
+    dataset_hash: str = ""
+    asset_gaps: list[str] = field(default_factory=list)
+
+    @classmethod
+    def load(cls, path: str | Path) -> "SpecialistBenchmarkCorpus":
+        source = Path(path)
+        raw = source.read_bytes()
+        payload = json.loads(raw.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Benchmark corpus must be a JSON object")
+        required = ("schema_version", "corpus_id", "version", "documents", "retrieval_cases", "ocr_cases", "parsing_cases", "visual_cases", "provenance_cases")
+        if any(not payload.get(key) for key in required):
+            raise ValueError("Benchmark corpus is missing a required section")
+        documents: dict[str, dict[str, Any]] = {}
+        for document in payload["documents"]:
+            if not isinstance(document, dict):
+                raise ValueError("Benchmark document entries must be objects")
+            document_id = str(document.get("document_id", ""))
+            text = document.get("text")
+            source_url = str(document.get("source_url", ""))
+            if not _safe_id(document_id) or not isinstance(text, str) or not text.strip() or not source_url.startswith("https://"):
+                raise ValueError("Benchmark documents require a safe identifier, text, and HTTPS source URL")
+            if document_id in documents:
+                raise ValueError(f"Duplicate benchmark document: {document_id}")
+            documents[document_id] = dict(document)
+        retrieval_cases = [_ranking_case(item, documents=documents) for item in payload["retrieval_cases"]]
+        dataset_hash = _verify_dataset_manifest(source.parent, payload.get("dataset_manifest"))
+        ocr_cases = [_observation_case(item, category="ocr") for item in payload["ocr_cases"]]
+        parsing_cases = [_observation_case(item, category="parsing") for item in payload["parsing_cases"]]
+        visual_cases = [_visual_case(item) for item in payload["visual_cases"]]
+        provenance_cases = [dict(item) for item in payload["provenance_cases"] if isinstance(item, dict)]
+        if not retrieval_cases or not ocr_cases or not parsing_cases or not visual_cases or not provenance_cases:
+            raise ValueError("Benchmark corpus must cover retrieval, OCR, parsing, visual, and provenance cases")
+        gaps = [str(item.get("case_id", "unknown")) for section in (payload["ocr_cases"], payload["parsing_cases"], payload["visual_cases"]) for item in section if isinstance(item, dict) and item.get("asset_status")]
+        ocr_inputs: dict[str, dict[str, Any]] = {}
+        for item in payload["ocr_cases"]:
+            if not isinstance(item, dict):
+                continue
+            prepared = dict(item)
+            asset_path = prepared.get("asset_path")
+            if isinstance(asset_path, str) and asset_path:
+                prepared["image_data_url"] = _load_image_data_url(source.parent, asset_path)
+            ocr_inputs[str(prepared.get("case_id", ""))] = prepared
+        return cls(
+            corpus_id=str(payload["corpus_id"]),
+            version=str(payload["version"]),
+            schema_version=str(payload["schema_version"]),
+            corpus_hash=hashlib.sha256(raw).hexdigest(),
+            source_path=str(source),
+            documents=documents,
+            retrieval_cases=retrieval_cases,
+            ocr_cases=ocr_cases,
+            ocr_inputs=ocr_inputs,
+            parsing_cases=parsing_cases,
+            visual_cases=visual_cases,
+            provenance_cases=provenance_cases,
+            dataset_hash=dataset_hash,
+            asset_gaps=gaps,
+        )
 
 
 @dataclass(slots=True)
@@ -38,15 +122,26 @@ class SpecialistBenchmarkResult:
     estimated_cost: float | None
     baseline_id: str = ""
     notes: list[str] = field(default_factory=list)
+    corpus_id: str = ""
+    corpus_version: str = ""
+    corpus_hash: str = ""
+    configuration: dict[str, Any] = field(default_factory=dict)
+    request_count: int = 0
+    latency_samples_ms: list[float] = field(default_factory=list)
+    usage: dict[str, float] = field(default_factory=dict)
+    provenance_preserved: bool = False
     created_at: str = field(default_factory=utc_now_iso)
 
     def __post_init__(self) -> None:
-        if self.execution_mode not in {"fixture", "live"}:
-            raise ValueError("execution_mode must be fixture or live")
+        if self.execution_mode not in {"fixture", "live", "baseline"}:
+            raise ValueError("execution_mode must be fixture, baseline, or live")
         if self.category not in {"embedding", "reranking", "ocr", "parsing", "visual"}:
             raise ValueError("Unsupported specialist benchmark category")
         if not 0.0 <= self.failure_rate <= 1.0:
             raise ValueError("failure_rate must be between zero and one")
+        if self.request_count < 0 or any(value < 0 for value in self.latency_samples_ms):
+            raise ValueError("Benchmark request count and latency samples must be non-negative")
+        self.usage = {str(key): float(value) for key, value in self.usage.items() if isinstance(value, (int, float))}
 
     def safe_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -73,6 +168,12 @@ class SpecialistBenchmarkHarness:
         estimated_cost: float | None = None,
         baseline_id: str = "",
         notes: list[str] | None = None,
+        corpus: SpecialistBenchmarkCorpus | None = None,
+        configuration: Mapping[str, Any] | None = None,
+        request_count: int = 0,
+        latency_samples_ms: list[float] | None = None,
+        usage: Mapping[str, Any] | None = None,
+        provenance_preserved: bool = False,
     ) -> SpecialistBenchmarkResult:
         materialized = list(cases)
         if not materialized:
@@ -85,7 +186,8 @@ class SpecialistBenchmarkHarness:
             except Exception:
                 rankings.append([])
                 actual_failures += 1
-        metrics = _ranking_metrics(materialized, rankings)
+        latency_samples = [float(value) for value in latency_samples_ms or []]
+        metrics = _with_latency_percentiles(_ranking_metrics(materialized, rankings), latency_samples)
         return self._persist(
             SpecialistBenchmarkResult(
                 benchmark_id=_new_benchmark_id(specialist_id, category),
@@ -99,6 +201,14 @@ class SpecialistBenchmarkHarness:
                 estimated_cost=estimated_cost,
                 baseline_id=baseline_id,
                 notes=list(notes or []),
+                corpus_id=corpus.corpus_id if corpus else "",
+                corpus_version=corpus.version if corpus else "",
+                corpus_hash=corpus.corpus_hash if corpus else "",
+                configuration=_safe_configuration(configuration),
+                request_count=request_count,
+                latency_samples_ms=latency_samples,
+                usage=_safe_usage(usage),
+                provenance_preserved=provenance_preserved,
             )
         )
 
@@ -112,6 +222,14 @@ class SpecialistBenchmarkHarness:
         latency_ms: float = 0.0,
         failure_count: int = 0,
         estimated_cost: float | None = None,
+        baseline_id: str = "",
+        notes: list[str] | None = None,
+        corpus: SpecialistBenchmarkCorpus | None = None,
+        configuration: Mapping[str, Any] | None = None,
+        request_count: int = 0,
+        latency_samples_ms: list[float] | None = None,
+        usage: Mapping[str, Any] | None = None,
+        provenance_preserved: bool = False,
     ) -> SpecialistBenchmarkResult:
         materialized = list(cases)
         if not materialized:
@@ -119,6 +237,9 @@ class SpecialistBenchmarkHarness:
         character_scores: list[float] = []
         word_scores: list[float] = []
         layout_scores: list[float] = []
+        numeric_unit_scores: list[float] = []
+        table_cell_scores: list[float] = []
+        reading_order_scores: list[float] = []
         actual_failures = failure_count
         for case in materialized:
             try:
@@ -128,22 +249,48 @@ class SpecialistBenchmarkHarness:
                 actual_failures += 1
             character_scores.append(_text_accuracy(case.expected_text, text))
             word_scores.append(_text_accuracy(" ".join(case.expected_text.split()), " ".join(text.split())))
-            layout_scores.append(_mapping_overlap(case.expected_layout, layout))
+            layout_scores.append(_layout_element_recovery(case.expected_layout, text, layout))
+            if case.expected_numeric_units:
+                numeric_unit_scores.append(_term_recovery(case.expected_numeric_units, text))
+            if case.expected_table_cells:
+                table_cell_scores.append(_term_recovery(case.expected_table_cells, text))
+            reading_order_scores.append(_ordered_phrase_score(case.expected_reading_order, text))
+        latency_samples = [float(value) for value in latency_samples_ms or []]
+        metrics = _with_latency_percentiles(
+            {
+                "character_accuracy": _average(character_scores),
+                "character_error_rate": _average([1.0 - value for value in character_scores]),
+                "word_accuracy": _average(word_scores),
+                "word_error_rate": _average([1.0 - value for value in word_scores]),
+                "numeric_unit_accuracy": _average(numeric_unit_scores),
+                "table_cell_recovery": _average(table_cell_scores),
+                "reading_order_correctness": _average(reading_order_scores),
+                "layout_element_recovery": _average(layout_scores),
+                "layout_preservation": _average(layout_scores),
+            },
+            latency_samples,
+        )
         return self._persist(
             SpecialistBenchmarkResult(
                 benchmark_id=_new_benchmark_id(specialist_id, "ocr"),
                 specialist_id=specialist_id,
                 category="ocr",
                 execution_mode=execution_mode,
-                metrics={
-                    "character_accuracy": _average(character_scores),
-                    "word_accuracy": _average(word_scores),
-                    "layout_preservation": _average(layout_scores),
-                },
+                metrics=metrics,
                 latency_ms=max(0.0, latency_ms),
                 throughput_per_second=len(materialized) / (latency_ms / 1000) if latency_ms > 0 else 0.0,
                 failure_rate=min(1.0, actual_failures / len(materialized)),
                 estimated_cost=estimated_cost,
+                baseline_id=baseline_id,
+                notes=list(notes or []),
+                corpus_id=corpus.corpus_id if corpus else "",
+                corpus_version=corpus.version if corpus else "",
+                corpus_hash=corpus.corpus_hash if corpus else "",
+                configuration=_safe_configuration(configuration),
+                request_count=request_count,
+                latency_samples_ms=latency_samples,
+                usage=_safe_usage(usage),
+                provenance_preserved=provenance_preserved,
             )
         )
 
@@ -157,6 +304,12 @@ class SpecialistBenchmarkHarness:
         latency_ms: float = 0.0,
         failure_count: int = 0,
         estimated_cost: float | None = None,
+        corpus: SpecialistBenchmarkCorpus | None = None,
+        configuration: Mapping[str, Any] | None = None,
+        request_count: int = 0,
+        latency_samples_ms: list[float] | None = None,
+        usage: Mapping[str, Any] | None = None,
+        provenance_preserved: bool = False,
     ) -> SpecialistBenchmarkResult:
         materialized = list(cases)
         if not materialized:
@@ -176,22 +329,31 @@ class SpecialistBenchmarkHarness:
             table_scores.append(_mapping_overlap(case.expected_layout.get("tables", {}), result.get("tables", {})))
             order_scores.append(_sequence_overlap(case.expected_reading_order, result.get("reading_order", [])))
             provenance_scores.append(1.0 if result.get("source_id") and result.get("page") is not None else 0.0)
+        latency_samples = [float(value) for value in latency_samples_ms or []]
         return self._persist(
             SpecialistBenchmarkResult(
                 benchmark_id=_new_benchmark_id(specialist_id, "parsing"),
                 specialist_id=specialist_id,
                 category="parsing",
                 execution_mode=execution_mode,
-                metrics={
+                metrics=_with_latency_percentiles({
                     "structural_accuracy": _average(structural_scores),
                     "table_extraction_quality": _average(table_scores),
                     "reading_order_correctness": _average(order_scores),
                     "provenance_preservation": _average(provenance_scores),
-                },
+                }, latency_samples),
                 latency_ms=max(0.0, latency_ms),
                 throughput_per_second=len(materialized) / (latency_ms / 1000) if latency_ms > 0 else 0.0,
                 failure_rate=min(1.0, actual_failures / len(materialized)),
                 estimated_cost=estimated_cost,
+                corpus_id=corpus.corpus_id if corpus else "",
+                corpus_version=corpus.version if corpus else "",
+                corpus_hash=corpus.corpus_hash if corpus else "",
+                configuration=_safe_configuration(configuration),
+                request_count=request_count,
+                latency_samples_ms=latency_samples,
+                usage=_safe_usage(usage),
+                provenance_preserved=provenance_preserved,
             )
         )
 
@@ -212,7 +374,62 @@ class SpecialistBenchmarkHarness:
             "latency_delta_ms": candidate.latency_ms - baseline.latency_ms,
             "failure_rate_delta": candidate.failure_rate - baseline.failure_rate,
             "estimated_cost_delta": _cost_delta(candidate.estimated_cost, baseline.estimated_cost),
-            "comparison_is_live": candidate.execution_mode == baseline.execution_mode == "live",
+            "comparison_is_live": candidate.execution_mode == "live" and baseline.execution_mode in {"live", "baseline"},
+            "candidate_latency_percentiles_ms": _latency_percentiles(candidate.latency_samples_ms),
+            "baseline_latency_percentiles_ms": _latency_percentiles(baseline.latency_samples_ms),
+            "corpus_match": bool(candidate.corpus_hash) and candidate.corpus_hash == baseline.corpus_hash,
+        }
+
+    def classify_live_candidate(
+        self,
+        *,
+        candidate: SpecialistBenchmarkResult,
+        baseline: SpecialistBenchmarkResult,
+        quality_metric: str,
+        essential_capability: bool = False,
+    ) -> dict[str, Any]:
+        """Apply transparent, conservative activation criteria to a live result."""
+        comparison = self.compare_to_baseline(candidate=candidate, baseline=baseline)
+        reasons: list[str] = []
+        if not comparison["comparison_is_live"]:
+            reasons.append("candidate and baseline comparison is not a valid live evaluation")
+        if not comparison["corpus_match"]:
+            reasons.append("candidate and baseline do not use the same versioned corpus")
+        if quality_metric not in candidate.metrics or quality_metric not in baseline.metrics:
+            reasons.append("requested quality metric is missing")
+        candidate_quality = candidate.metrics.get(quality_metric, 0.0)
+        baseline_quality = baseline.metrics.get(quality_metric, 0.0)
+        quality_delta = candidate_quality - baseline_quality
+        if candidate.failure_rate > 0.05:
+            return {"classification": SpecialistClassification.REJECTED.value, "approve": False, "reasons": reasons + ["failure rate exceeds 5%"], "comparison": comparison, "quality_metric": quality_metric}
+        if not candidate.provenance_preserved:
+            return {"classification": SpecialistClassification.REJECTED.value, "approve": False, "reasons": reasons + ["benchmark output did not preserve required provenance"], "comparison": comparison, "quality_metric": quality_metric}
+        if reasons:
+            return {"classification": SpecialistClassification.UNCLASSIFIED.value, "approve": False, "reasons": reasons, "comparison": comparison, "quality_metric": quality_metric}
+        if essential_capability and candidate_quality >= 0.90:
+            classification = SpecialistClassification.ESSENTIAL.value
+            approve = True
+            reasons.append("candidate provides a measured capability absent from the baseline")
+        elif quality_delta >= 0.03 and candidate_quality >= 0.70:
+            classification = SpecialistClassification.SUPERIOR.value
+            approve = True
+            reasons.append(f"{quality_metric} improves by at least 0.03 over the baseline")
+        elif quality_delta >= -0.01 and _accelerates(candidate=candidate, baseline=baseline):
+            classification = SpecialistClassification.ACCELERATOR.value
+            approve = True
+            reasons.append("quality is within one point of baseline and measured cost or latency is materially lower")
+        else:
+            classification = SpecialistClassification.REDUNDANT.value
+            approve = False
+            reasons.append("no material capability, quality, latency, or cost advantage was measured")
+        return {
+            "classification": classification,
+            "approve": approve,
+            "reasons": reasons,
+            "comparison": comparison,
+            "quality_metric": quality_metric,
+            "quality": candidate_quality,
+            "reliability": 1.0 - candidate.failure_rate,
         }
 
     def approve_live_candidate(
@@ -220,25 +437,33 @@ class SpecialistBenchmarkHarness:
         *,
         result: SpecialistBenchmarkResult,
         baseline: SpecialistBenchmarkResult,
-        classification: str,
         quality_metric: str,
-        reliability: float,
+        essential_capability: bool = False,
+        classification: str | None = None,
+        reliability: float | None = None,
     ) -> dict[str, Any]:
         if self.registry is None:
             raise ValueError("A registry is required to approve a candidate")
-        comparison = self.compare_to_baseline(candidate=result, baseline=baseline)
-        if not comparison["comparison_is_live"]:
-            raise ValueError("Only a live candidate-versus-baseline comparison can approve a specialist")
-        if quality_metric not in result.metrics:
-            raise ValueError("quality_metric is not present in candidate results")
+        # Kept only to provide a clear compatibility failure for old callers; a
+        # caller cannot self-declare an approval classification or reliability.
+        if classification is not None or reliability is not None:
+            raise ValueError("Classification and reliability are derived from the live benchmark, not caller input")
+        decision = self.classify_live_candidate(
+            candidate=result,
+            baseline=baseline,
+            quality_metric=quality_metric,
+            essential_capability=essential_capability,
+        )
+        if not decision["approve"]:
+            raise ValueError("Live benchmark did not meet the evidence-backed activation gate")
         model = self.registry.update_benchmark(
             result.specialist_id,
             benchmark_status=BenchmarkStatus.APPROVED.value,
-            classification=SpecialistClassification(classification).value,
+            classification=SpecialistClassification(decision["classification"]).value,
             benchmark_quality=result.metrics[quality_metric],
-            reliability=reliability,
+            reliability=float(decision["reliability"]),
         )
-        return {"specialist": model.safe_dict(), "comparison": comparison}
+        return {"specialist": model.safe_dict(), "decision": decision}
 
     def fixture_smoke(self) -> SpecialistBenchmarkResult:
         cases = [
@@ -266,6 +491,26 @@ class SpecialistBenchmarkHarness:
             notes=["Fixture wiring check only; this is not a named-provider model evaluation."],
         )
 
+    def list_results(self, *, specialist_id: str = "", limit: int = 20) -> list[dict[str, Any]]:
+        if limit < 1 or limit > 100:
+            raise ValueError("limit must be between 1 and 100")
+        if not self.result_root.exists():
+            return []
+        results: list[dict[str, Any]] = []
+        for path in sorted(self.result_root.glob("*.json"), reverse=True):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if specialist_id and payload.get("specialist_id") != specialist_id:
+                continue
+            results.append(_safe_result_summary(payload))
+            if len(results) >= limit:
+                break
+        return results
+
     def _persist(self, result: SpecialistBenchmarkResult) -> SpecialistBenchmarkResult:
         self.result_root.mkdir(parents=True, exist_ok=True)
         target = self.result_root / f"{result.benchmark_id}.json"
@@ -279,23 +524,230 @@ class SpecialistBenchmarkHarness:
 
 
 def _ranking_metrics(cases: list[BenchmarkCase], rankings: list[list[str]]) -> dict[str, float]:
+    recall1: list[float] = []
     recall5: list[float] = []
+    recall10: list[float] = []
     mrr: list[float] = []
     ndcg10: list[float] = []
     top_n: list[float] = []
+    precision5: list[float] = []
     for case, ranking in zip(cases, rankings):
         relevant = {identifier for identifier, grade in case.relevance.items() if grade > 0}
+        top1 = ranking[:1]
         top5 = ranking[:5]
         top10 = ranking[:10]
+        recall1.append(len(set(top1) & relevant) / len(relevant) if relevant else 1.0)
         recall5.append(len(set(top5) & relevant) / len(relevant) if relevant else 1.0)
+        recall10.append(len(set(top10) & relevant) / len(relevant) if relevant else 1.0)
         first = next((index + 1 for index, identifier in enumerate(ranking) if identifier in relevant), None)
         mrr.append(1.0 / first if first else 0.0)
         top_n.append(1.0 if any(identifier in relevant for identifier in top5) else 0.0)
+        precision5.append(len(set(top5) & relevant) / len(top5) if top5 else 0.0)
         dcg = sum((2 ** case.relevance.get(identifier, 0) - 1) / _log2(index + 2) for index, identifier in enumerate(top10))
         ideal = sorted(case.relevance.values(), reverse=True)[:10]
         ideal_dcg = sum((2 ** grade - 1) / _log2(index + 2) for index, grade in enumerate(ideal))
         ndcg10.append(dcg / ideal_dcg if ideal_dcg else 1.0)
-    return {"recall_at_5": _average(recall5), "mrr": _average(mrr), "ndcg_at_10": _average(ndcg10), "top_5_relevance": _average(top_n)}
+    return {
+        "recall_at_1": _average(recall1),
+        "recall_at_5": _average(recall5),
+        "recall_at_10": _average(recall10),
+        "mrr": _average(mrr),
+        "ndcg_at_10": _average(ndcg10),
+        "precision_at_5": _average(precision5),
+        "top_5_relevance": _average(top_n),
+    }
+
+
+def _ranking_case(value: object, *, documents: Mapping[str, Mapping[str, Any]]) -> BenchmarkCase:
+    if not isinstance(value, Mapping):
+        raise ValueError("Retrieval case must be an object")
+    case_id = str(value.get("case_id", ""))
+    query = str(value.get("query", ""))
+    relevance = value.get("relevance")
+    candidate_ids = value.get("candidate_ids")
+    if not _safe_id(case_id) or not query or not isinstance(relevance, Mapping) or not isinstance(candidate_ids, list):
+        raise ValueError("Retrieval case is missing an identifier, query, candidate IDs, or relevance labels")
+    normalized = {str(identifier): int(grade) for identifier, grade in relevance.items()}
+    if not normalized or any(identifier not in documents for identifier in normalized) or any(identifier not in documents for identifier in candidate_ids):
+        raise ValueError("Retrieval case refers to an unknown document")
+    if set(str(identifier) for identifier in candidate_ids) != set(normalized):
+        raise ValueError("Retrieval relevance labels must exactly cover candidate IDs")
+    return BenchmarkCase(case_id=case_id, query=query, relevance=normalized, language=str(value.get("language", "en")))
+
+
+def _observation_case(value: object, *, category: str) -> BenchmarkCase:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{category} case must be an object")
+    case_id = str(value.get("case_id", ""))
+    expected_layout = value.get("expected_layout", {})
+    if not _safe_id(case_id) or not isinstance(expected_layout, Mapping):
+        raise ValueError(f"{category} case is missing an identifier or layout labels")
+    return BenchmarkCase(
+        case_id=case_id,
+        query=str(value.get("query", "")),
+        relevance={str(key): int(item) for key, item in dict(value.get("relevance", {})).items()},
+        expected_text=str(value.get("expected_text", "")),
+        expected_layout=dict(expected_layout),
+        expected_reading_order=[str(item) for item in value.get("expected_reading_order", [])],
+        expected_numeric_units=[str(item) for item in value.get("expected_numeric_units", [])],
+        expected_table_cells=[str(item) for item in value.get("expected_table_cells", [])],
+        language=str(value.get("language", "en")),
+        source_id=str(value.get("source_id", "")),
+        location=f"page:{value.get('page', 1)}",
+    )
+
+
+def _visual_case(value: object) -> BenchmarkCase:
+    if not isinstance(value, Mapping):
+        raise ValueError("Visual case must be an object")
+    case_id = str(value.get("case_id", ""))
+    relevance = value.get("relevance")
+    if not _safe_id(case_id) or not isinstance(relevance, Mapping) or not relevance:
+        raise ValueError("Visual case is missing an identifier or relevance labels")
+    return BenchmarkCase(
+        case_id=case_id,
+        query=str(value.get("query", "")),
+        relevance={str(key): int(item) for key, item in relevance.items()},
+    )
+
+
+def _safe_id(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9_.-]{1,160}", value))
+
+
+def _verify_dataset_manifest(root: Path, manifest_value: object) -> str:
+    if not manifest_value:
+        return ""
+    if not isinstance(manifest_value, str):
+        raise ValueError("Benchmark dataset manifest path must be a string")
+    manifest_path = _resolve_corpus_asset(root, manifest_value)
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("Benchmark dataset manifest is unreadable") from exc
+    if not isinstance(payload, Mapping) or payload.get("schema_version") != "mystic-specialist-dataset-manifest-v1":
+        raise ValueError("Benchmark dataset manifest has an unsupported schema")
+    files = payload.get("files")
+    dataset_hash = str(payload.get("dataset_sha256", ""))
+    if not isinstance(files, list) or not re.fullmatch(r"[a-f0-9]{64}", dataset_hash):
+        raise ValueError("Benchmark dataset manifest is missing integrity metadata")
+    canonical_rows: list[str] = []
+    for entry in files:
+        if not isinstance(entry, Mapping):
+            raise ValueError("Benchmark dataset manifest file entry is invalid")
+        relative = entry.get("path")
+        expected_hash = entry.get("sha256")
+        if not isinstance(relative, str) or not isinstance(expected_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", expected_hash):
+            raise ValueError("Benchmark dataset manifest file hash is invalid")
+        asset = _resolve_corpus_asset(root, relative)
+        actual_hash = hashlib.sha256(asset.read_bytes()).hexdigest()
+        if actual_hash != expected_hash:
+            raise ValueError(f"Benchmark dataset integrity check failed for {relative}")
+        canonical_rows.append(f"{expected_hash}  {relative}")
+    computed_dataset_hash = hashlib.sha256("\n".join(sorted(canonical_rows)).encode("utf-8")).hexdigest()
+    if computed_dataset_hash != dataset_hash:
+        raise ValueError("Benchmark dataset aggregate hash is invalid")
+    return dataset_hash
+
+
+def _load_image_data_url(root: Path, relative_path: str) -> str:
+    asset = _resolve_corpus_asset(root, relative_path)
+    suffix = asset.suffix.lower()
+    mime_type = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}.get(suffix)
+    if mime_type is None:
+        raise ValueError("Benchmark OCR asset must be PNG or JPEG")
+    payload = asset.read_bytes()
+    if not payload or len(payload) > 8 * 1024 * 1024:
+        raise ValueError("Benchmark OCR asset exceeds the approved byte limit")
+    import base64
+
+    return f"data:{mime_type};base64,{base64.b64encode(payload).decode('ascii')}"
+
+
+def _resolve_corpus_asset(root: Path, relative_path: str) -> Path:
+    candidate = Path(relative_path)
+    if candidate.is_absolute() or ".." in candidate.parts or not relative_path:
+        raise ValueError("Benchmark asset path must remain inside the corpus directory")
+    resolved_root = root.resolve()
+    resolved = (resolved_root / candidate).resolve()
+    try:
+        resolved.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError("Benchmark asset path escapes the corpus directory") from exc
+    if not resolved.is_file():
+        raise ValueError(f"Benchmark asset is missing: {relative_path}")
+    return resolved
+
+
+def _safe_configuration(value: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Keep reproducibility metadata but reject credentials and raw endpoint paths."""
+    if not value:
+        return {}
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    decoded = json.loads(encoded)
+    if _contains_secret_key(decoded):
+        raise ValueError("Benchmark configuration must not contain credentials or authorization material")
+    return decoded
+
+
+def _safe_usage(value: Mapping[str, Any] | None) -> dict[str, float]:
+    if not value:
+        return {}
+    return {str(key): float(item) for key, item in value.items() if isinstance(item, (int, float))}
+
+
+def _contains_secret_key(value: object) -> bool:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            normalized = str(key).lower().replace("-", "_")
+            if normalized != "api_key_configured" and any(term in normalized for term in ("api_key", "authorization", "token", "secret", "password")):
+                return True
+            if _contains_secret_key(item):
+                return True
+    elif isinstance(value, list):
+        return any(_contains_secret_key(item) for item in value)
+    return False
+
+
+def _safe_result_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "benchmark_id": str(payload.get("benchmark_id", "")),
+        "specialist_id": str(payload.get("specialist_id", "")),
+        "category": str(payload.get("category", "")),
+        "execution_mode": str(payload.get("execution_mode", "")),
+        "metrics": dict(payload.get("metrics", {})),
+        "latency_ms": float(payload.get("latency_ms", 0.0)),
+        "failure_rate": float(payload.get("failure_rate", 0.0)),
+        "estimated_cost": payload.get("estimated_cost"),
+        "usage": _safe_usage(payload.get("usage") if isinstance(payload.get("usage"), Mapping) else None),
+        "corpus_id": str(payload.get("corpus_id", "")),
+        "corpus_version": str(payload.get("corpus_version", "")),
+        "created_at": str(payload.get("created_at", "")),
+    }
+
+
+def _latency_percentiles(samples: list[float]) -> dict[str, float]:
+    if not samples:
+        return {"p50": 0.0, "p95": 0.0}
+    ordered = sorted(samples)
+    return {
+        "p50": ordered[min(len(ordered) - 1, round((len(ordered) - 1) * 0.50))],
+        "p95": ordered[min(len(ordered) - 1, round((len(ordered) - 1) * 0.95))],
+    }
+
+
+def _with_latency_percentiles(metrics: Mapping[str, float], samples: list[float]) -> dict[str, float]:
+    return {**{str(key): float(value) for key, value in metrics.items()}, **{f"latency_{key}_ms": value for key, value in _latency_percentiles(samples).items()}}
+
+
+def _accelerates(*, candidate: SpecialistBenchmarkResult, baseline: SpecialistBenchmarkResult) -> bool:
+    lower_latency = baseline.latency_ms > 0 and candidate.latency_ms <= baseline.latency_ms * 0.75
+    lower_cost = (
+        candidate.estimated_cost is not None
+        and baseline.estimated_cost is not None
+        and candidate.estimated_cost <= baseline.estimated_cost * 0.75
+    )
+    return lower_latency or lower_cost
 
 
 def _text_accuracy(expected: str, observed: str) -> float:
@@ -303,6 +755,40 @@ def _text_accuracy(expected: str, observed: str) -> float:
         return 1.0 if not observed else 0.0
     distance = _levenshtein(expected, observed)
     return max(0.0, 1.0 - distance / max(len(expected), len(observed), 1))
+
+
+def _term_recovery(expected_terms: list[str], observed: str) -> float:
+    if not expected_terms:
+        return 1.0
+    normalized = _normalized_text(observed)
+    return _average([1.0 if _normalized_text(term) in normalized else 0.0 for term in expected_terms])
+
+
+def _ordered_phrase_score(expected: list[str], observed: str) -> float:
+    if not expected:
+        return 1.0
+    normalized = _normalized_text(observed)
+    position = 0
+    found = 0
+    for phrase in expected:
+        index = normalized.find(_normalized_text(phrase), position)
+        if index < 0:
+            continue
+        found += 1
+        position = index + len(_normalized_text(phrase))
+    return found / len(expected)
+
+
+def _layout_element_recovery(expected_layout: Mapping[str, Any], observed_text: str, observed: Mapping[str, Any]) -> float:
+    elements = expected_layout.get("elements", [])
+    if not isinstance(elements, list) or not elements:
+        return _mapping_overlap(expected_layout, observed)
+    phrases = [str(item.get("text", "")) for item in elements if isinstance(item, Mapping) and item.get("text")]
+    return _term_recovery(phrases, observed_text)
+
+
+def _normalized_text(value: str) -> str:
+    return " ".join(value.casefold().split())
 
 
 def _levenshtein(left: str, right: str) -> int:

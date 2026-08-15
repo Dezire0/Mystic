@@ -55,6 +55,8 @@ Phase 2D.1 introduces a vendor-neutral specialist-instrument foundation. GPT/the
 
 The deterministic fixture benchmark validates metric and pipeline wiring only. It is not a live NVIDIA benchmark and cannot enable or classify a named candidate. See [the Phase 2D architecture](docs/mystic_lab_phase2d_specialists.md) for the benchmark gate, provenance model, security boundary, and recommended Phase 2D.2 rollout.
 
+Phase 2D.2 supplies the versioned Wave 1 corpus, fixed provider serializers, local baseline command, result persistence, and evidence-derived activation gate. `python scripts/run_specialist_benchmarks.py` records the safe non-specialist baseline against the committed CC0 corpus at `benchmarks/specialists/v1/`; `python benchmarks/specialists/v1/generate_assets.py --check` validates its assets and labels. Adding `--live` remains an operator-only action requiring explicit server-side NVIDIA NIM configuration. The local MCP and browser do not expose arbitrary provider/model execution.
+
 The current LAB status is intentionally conservative:
 
 - session orchestration is implemented

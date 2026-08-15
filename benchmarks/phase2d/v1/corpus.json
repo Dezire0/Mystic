@@ -1,0 +1,39 @@
+{
+  "schema_version": "phase2d-benchmark-corpus-v1",
+  "corpus_id": "mystic-phase2d-science-v1",
+  "version": "1.0.1",
+  "license": "Curated evaluation prompts are CC0-1.0; source URLs are provenance references.",
+  "governance": {
+    "purpose": "Capability evaluation only. The corpus never turns specialist output into trusted evidence.",
+    "known_limitations": [
+      "This compact corpus is a reproducibility gate, not a domain-scale evaluation.",
+      "The OCR, layout, table, and visual-document cases define labels and provenance but require manually-labelled, rights-cleared image assets before a production activation run."
+    ],
+    "change_policy": "Any input, label, source reference, or asset change requires a corpus version increment and a new baseline run."
+  },
+  "documents": [
+    {"document_id": "usgs-water-cycle", "source_id": "usgs-water-cycle", "source_type": "public_science_reference", "title": "The water cycle", "language": "en", "text": "Evaporation transfers liquid water to water vapor, and condensation changes water vapor into liquid droplets. These processes are central parts of the water cycle.", "source_url": "https://www.usgs.gov/special-topics/water-science-school/science/water-cycle"},
+    {"document_id": "nasa-exoplanet-transit", "source_id": "nasa-exoplanet-transit", "source_type": "public_science_reference", "title": "Transit observations of exoplanets", "language": "en", "text": "A transit occurs when a planet passes in front of its star from the observer's viewpoint. The resulting small dip in measured brightness can reveal the planet's size and orbit.", "source_url": "https://science.nasa.gov/exoplanets/"},
+    {"document_id": "nist-force-mass", "source_id": "nist-force-mass", "source_type": "public_science_reference", "title": "Force, mass, and acceleration", "language": "en", "text": "In SI units, force is measured in newtons. Newton's second law relates net force to mass and acceleration: F equals m times a.", "source_url": "https://physics.nist.gov/cuu/Units/units.html"},
+    {"document_id": "who-vaccines", "source_id": "who-vaccines", "source_type": "public_science_reference", "title": "How vaccines work", "language": "en", "text": "Vaccines train the immune system to recognize a pathogen or part of a pathogen. This helps the body respond more effectively to a later exposure.", "source_url": "https://www.who.int/news-room/questions-and-answers/item/vaccines-and-immunization-what-is-vaccination"},
+    {"document_id": "nasa-mars-ko", "source_id": "nasa-mars-ko", "source_type": "curated_multilingual_reference", "title": "화성의 대기", "language": "ko", "text": "화성의 대기는 매우 얇고 대부분 이산화탄소로 이루어져 있다. 표면 기압은 지구보다 훨씬 낮다.", "source_url": "https://science.nasa.gov/mars/facts/"}
+  ],
+  "retrieval_cases": [
+    {"case_id": "water-phase-change-en", "query": "Which process makes cloud droplets from gaseous water?", "language": "en", "candidate_ids": ["who-vaccines", "nist-force-mass", "nasa-exoplanet-transit", "usgs-water-cycle"], "relevance": {"who-vaccines": 0, "nist-force-mass": 0, "nasa-exoplanet-transit": 0, "usgs-water-cycle": 3}},
+    {"case_id": "exoplanet-transit-en", "query": "What light-curve signature can reveal an unseen world around a distant sun?", "language": "en", "candidate_ids": ["who-vaccines", "nist-force-mass", "usgs-water-cycle", "nasa-exoplanet-transit"], "relevance": {"who-vaccines": 0, "nist-force-mass": 0, "usgs-water-cycle": 0, "nasa-exoplanet-transit": 3}},
+    {"case_id": "force-mass-en", "query": "How is an object's push connected to how quickly its motion changes?", "language": "en", "candidate_ids": ["who-vaccines", "nasa-exoplanet-transit", "usgs-water-cycle", "nist-force-mass"], "relevance": {"who-vaccines": 0, "nasa-exoplanet-transit": 0, "usgs-water-cycle": 0, "nist-force-mass": 3}},
+    {"case_id": "mars-atmosphere-ko", "query": "붉은 행성 공기의 주성분은 무엇입니까?", "language": "ko", "candidate_ids": ["who-vaccines", "nasa-exoplanet-transit", "usgs-water-cycle", "nasa-mars-ko"], "relevance": {"who-vaccines": 0, "nasa-exoplanet-transit": 0, "usgs-water-cycle": 0, "nasa-mars-ko": 3}}
+  ],
+  "ocr_cases": [
+    {"case_id": "force-table-layout-en", "source_id": "rights-cleared-asset-required", "source_type": "planned_document_image", "title": "Force table holdout", "page": 1, "language": "en", "expected_text": "Mass Force 2 kg 10 N", "expected_layout": {"table_rows": 2, "table_columns": 2}, "asset_status": "required_before_live_run"}
+  ],
+  "parsing_cases": [
+    {"case_id": "force-table-parse", "source_id": "rights-cleared-asset-required", "page": 1, "expected_layout": {"headings": 1, "tables": {"table-1": "2x2"}}, "expected_reading_order": ["heading-1", "table-1"], "asset_status": "required_before_live_run"}
+  ],
+  "visual_cases": [
+    {"case_id": "force-table-visual", "query": "Which page contains the force and mass table?", "relevance": {"force-table-page": 3, "water-cycle-page": 0}, "asset_status": "required_before_live_run"}
+  ],
+  "provenance_cases": [
+    {"case_id": "source-page-chunk-lineage", "required_stages": ["source", "normalize", "chunk", "embedding", "retrieval", "rerank"], "source_id": "nist-force-mass", "location": "page:1/chunk:1"}
+  ]
+}
