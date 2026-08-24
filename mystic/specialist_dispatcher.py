@@ -17,12 +17,15 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import time
 from typing import Any, Callable, Iterator, Protocol
 
 
 JOB_ID = re.compile(r"^[A-Za-z0-9._-]{1,160}$")
 MAX_PDFS, MAX_PDF_BYTES, MAX_TOTAL_BYTES = 5, 50 * 1024 * 1024, 100 * 1024 * 1024
 MAX_DIAGNOSTIC_BYTES = 4 * 1024
+VISIBILITY_POLL_SECONDS = 0.5
+VISIBILITY_TIMEOUT_SECONDS = 15.0
 MODEL_STACK = {
     "text_retriever": "nvidia/llama-nemotron-embed-1b-v2",
     "visual_retriever": "nvidia/llama-nemotron-embed-vl-1b-v2",
@@ -44,6 +47,7 @@ class LightningClient(Protocol):
     def upload(self, local_path: Path, remote_path: str) -> None: ...
     def download(self, remote_path: str, local_path: Path) -> None: ...
     def run(self, command: str) -> tuple[str, int]: ...
+    def artifact_exists(self, remote_path: str) -> bool: ...
 
 
 class SpecialistExecutionBackend(Protocol):
@@ -224,13 +228,23 @@ class LightningSDKClient:
     def run(self, command: str) -> tuple[str, int]:
         return self._studio.run_with_exit_code(command)
 
+    def artifact_exists(self, remote_path: str) -> bool:
+        """Check the Studio artifact tree; ``remote_path`` is content-root relative."""
+        info = self._studio._studio_api.get_path_info(
+            studio_id=self._studio.id,
+            teamspace_id=self._studio._teamspace.id,
+            path=remote_path,
+        )
+        return bool(info.get("exists"))
+
 
 class LightningDispatcher:
     """Single-GPU, idempotent dispatcher for ``scientific.pdf_retrieval`` only."""
 
-    def __init__(self, *, root_path: str | Path, client_factory: Callable[[LightningSettings], LightningClient], settings: LightningSettings) -> None:
+    def __init__(self, *, root_path: str | Path, client_factory: Callable[[LightningSettings], LightningClient], settings: LightningSettings, clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> None:
         self.root_path = Path(root_path)
         self.client_factory, self.settings = client_factory, settings
+        self._clock, self._sleep = clock, sleep
         self.base_dir = self.root_path / "mystic_data" / "aletheia_lightning_jobs"
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
@@ -301,12 +315,26 @@ class LightningDispatcher:
                 for index in range(len(job.pdf_paths)):
                     client.upload(local_inputs / f"{index}.pdf", transfer_inputs[index])
                 self._stage(diagnostics, "upload_input", "OK")
+                self._stage(diagnostics, "verify_artifact_input", "STARTING")
+                artifact_inputs = (transfer_job, *transfer_inputs)
+                try:
+                    diagnostics["artifact_input_paths"] = {
+                        path: client.artifact_exists(path) for path in artifact_inputs
+                    }
+                except Exception:
+                    self._stage(diagnostics, "verify_artifact_input", "FAILED")
+                    raise
+                if not all(diagnostics["artifact_input_paths"].values()):
+                    diagnostics["missing_artifact_path"] = next(path for path, exists in diagnostics["artifact_input_paths"].items() if not exists)
+                    self._stage(diagnostics, "verify_artifact_input", "FAILED")
+                    raise LightningDispatcherError("Uploaded specialist input is not present in the Studio artifact API.")
+                self._stage(diagnostics, "verify_artifact_input", "OK")
                 self._stage(diagnostics, "verify_remote_input", "STARTING")
-                for remote_path in (remote_job, *remote_inputs):
-                    if self._remote_file_exists(client, remote_path) is not True:
-                        diagnostics["missing_remote_path"] = remote_path
-                        self._stage(diagnostics, "verify_remote_input", "FAILED")
-                        raise LightningDispatcherError("Uploaded specialist input is not present in the Studio filesystem.")
+                if not self._wait_for_shell_files(client, (remote_job, *remote_inputs), diagnostics, "remote_input_visibility_latency_ms"):
+                    diagnostics["missing_remote_path"] = next(path for path in (remote_job, *remote_inputs) if self._remote_file_exists(client, path) is not True)
+                    self._capture_shell_path_diagnostics(client, diagnostics, job.job_id)
+                    self._stage(diagnostics, "verify_remote_input", "FAILED")
+                    raise LightningDispatcherError("Uploaded specialist input is not visible in the Studio filesystem.")
                 self._stage(diagnostics, "verify_remote_input", "OK")
                 self._event(events, "SPECIALIST_INPUTS_UPLOADED", job, attempt=1)
                 command = self._remote_command(remote_base, remote_job, remote_result, remote_stdout, remote_stderr)
@@ -333,6 +361,17 @@ class LightningDispatcher:
                     self._stage(diagnostics, "verify_remote_result", "FAILED")
                     raise LightningDispatcherError("Remote specialist result is not present in the Studio filesystem.")
                 self._stage(diagnostics, "verify_remote_result", "OK")
+                self._stage(diagnostics, "verify_artifact_result", "STARTING")
+                try:
+                    result_visible = self._wait_for_artifacts(client, (transfer_result,), diagnostics, "remote_result_artifact_visibility_latency_ms")
+                except Exception:
+                    self._stage(diagnostics, "verify_artifact_result", "FAILED")
+                    raise
+                if not result_visible:
+                    diagnostics["missing_artifact_path"] = transfer_result
+                    self._stage(diagnostics, "verify_artifact_result", "FAILED")
+                    raise LightningDispatcherError("Remote specialist result is not visible through the Studio artifact API.")
+                self._stage(diagnostics, "verify_artifact_result", "OK")
                 self._stage(diagnostics, "download_result", "STARTING")
                 client.download(transfer_result, result_path)
                 self._stage(diagnostics, "download_result", "OK")
@@ -440,6 +479,44 @@ class LightningDispatcher:
         except Exception:
             return None
 
+    def _wait_for_shell_files(self, client: LightningClient, paths: tuple[str, ...], diagnostics: dict[str, Any], latency_key: str) -> bool:
+        started = self._clock()
+        while True:
+            if all(self._remote_file_exists(client, path) is True for path in paths):
+                diagnostics[latency_key] = int((self._clock() - started) * 1_000)
+                return True
+            if self._clock() - started >= VISIBILITY_TIMEOUT_SECONDS:
+                diagnostics[latency_key] = int((self._clock() - started) * 1_000)
+                return False
+            self._sleep(VISIBILITY_POLL_SECONDS)
+
+    def _wait_for_artifacts(self, client: LightningClient, paths: tuple[str, ...], diagnostics: dict[str, Any], latency_key: str) -> bool:
+        started = self._clock()
+        while True:
+            if all(client.artifact_exists(path) for path in paths):
+                diagnostics[latency_key] = int((self._clock() - started) * 1_000)
+                return True
+            if self._clock() - started >= VISIBILITY_TIMEOUT_SECONDS:
+                diagnostics[latency_key] = int((self._clock() - started) * 1_000)
+                return False
+            self._sleep(VISIBILITY_POLL_SECONDS)
+
+    def _capture_shell_path_diagnostics(self, client: LightningClient, diagnostics: dict[str, Any], job_id: str) -> None:
+        studio_root = self._shell_path(self.settings.studio_root)
+        probe = (
+            'printf "PWD=%s\\nHOME=%s\\n" "$PWD" "$HOME"; '
+            f"readlink -f {studio_root} 2>&1 || true; "
+            f"if [ -L {studio_root} ]; then echo STUDIO_ROOT_SYMLINK=yes; else echo STUDIO_ROOT_SYMLINK=no; fi; "
+            f"if mountpoint -q {studio_root}; then echo STUDIO_ROOT_MOUNT=yes; else echo STUDIO_ROOT_MOUNT=no; fi; "
+            f"find {studio_root} \"$HOME\" -maxdepth 6 -path '*{job_id}*' -print 2>/dev/null | tail -c {MAX_DIAGNOSTIC_BYTES}"
+        )
+        try:
+            output, exit_code = client.run(probe)
+            diagnostics["shell_path_probe_exit_code"] = exit_code
+            diagnostics["shell_path_probe_tail"] = self._sanitize_tail(output)
+        except Exception as error:
+            diagnostics["shell_path_probe_exception_type"] = type(error).__name__
+
     def _remote_tail(self, client: LightningClient, remote_path: str) -> str:
         try:
             output, exit_code = client.run(f"tail -c {MAX_DIAGNOSTIC_BYTES} {self._shell_path(remote_path)}")
@@ -471,8 +548,10 @@ class LightningDispatcher:
             "remote_exit_code", "exception_type", "remote_command_exception_type", "result_json_exists",
             "studio_start_succeeded", "studio_stop_succeeded", "cleanup_exception_type",
             "remote_working_directory", "remote_executable_path", "remote_job_path", "remote_result_path",
-            "sdk_transfer_job_path", "sdk_transfer_result_path",
-            "missing_remote_path", "remote_command_output_tail", "remote_stdout_tail", "remote_stderr_tail",
+            "sdk_transfer_job_path", "sdk_transfer_result_path", "artifact_input_paths",
+            "missing_remote_path", "missing_artifact_path", "remote_input_visibility_latency_ms",
+            "remote_result_artifact_visibility_latency_ms", "shell_path_probe_exit_code", "shell_path_probe_tail",
+            "shell_path_probe_exception_type", "remote_command_output_tail", "remote_stdout_tail", "remote_stderr_tail",
         ):
             if diagnostics.get(key) is not None:
                 lines.append(f"{key.upper()}: {diagnostics[key]}")
