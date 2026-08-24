@@ -1,0 +1,12 @@
+{
+  "schema_version": "alethia-specialist-benchmark/v0",
+  "version": "v0.1.0",
+  "license": "CC0-1.0",
+  "cases": {
+    "retrieval": [{"id": "retrieval-water", "input": {"query": "water boiling temperature", "documents": [{"id": "d1", "text": "Water boils at 100 degrees Celsius at sea level."}, {"id": "d2", "text": "Plants use sunlight for photosynthesis."}]}, "expected": {"top_id": "d1"}}],
+    "embedding": [{"id": "embedding-gravity", "input": {"query": "gravity attracts mass", "documents": [{"id": "d1", "text": "Gravity is the attraction between masses."}, {"id": "d2", "text": "DNA carries genetic information."}]}, "expected": {"top_id": "d1"}}],
+    "reranking": [{"id": "rerank-cell", "input": {"query": "cell energy mitochondria", "candidates": [{"id": "d1", "text": "Mitochondria generate cellular energy."}, {"id": "d2", "text": "Cell walls are common in plants."}]}, "expected": {"top_id": "d1"}}],
+    "parsing": [{"id": "parse-normalize", "input": {"text": "  Provenance\r\nmatters.  "}, "expected": {"text": "Provenance\nmatters."}}],
+    "ocr": [{"id": "ocr-calibration", "input": {"image_path": "assets/ocr-calibration.png"}, "expected": {"text": "ALETHEIA 42"}, "pass_at": 0.9}]
+  }
+}
