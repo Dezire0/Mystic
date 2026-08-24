@@ -25,6 +25,7 @@ class SpecialistAdapter(Protocol):
     capability: str
     license: str
     local: bool
+    integration_eligible: bool
 
     def run(self, payload: dict[str, Any]) -> Any: ...
 
@@ -46,6 +47,7 @@ class LexicalRetrieval:
     capability: str = "retrieval"
     license: str = "MIT"
     local: bool = True
+    integration_eligible: bool = False
 
     def run(self, payload: dict[str, Any]) -> list[str]:
         query = tokens(str(payload["query"]))
@@ -65,6 +67,7 @@ class HashEmbeddingRetrieval:
     capability: str = "embedding"
     license: str = "MIT"
     local: bool = True
+    integration_eligible: bool = False
 
     def run(self, payload: dict[str, Any]) -> list[str]:
         def vector(text: str) -> Counter[int]:
@@ -87,6 +90,7 @@ class LexicalReranker:
     capability: str = "reranking"
     license: str = "MIT"
     local: bool = True
+    integration_eligible: bool = False
 
     def run(self, payload: dict[str, Any]) -> list[str]:
         query = tokens(str(payload["query"]))
@@ -104,6 +108,7 @@ class PlainTextParser:
     capability: str = "parsing"
     license: str = "MIT"
     local: bool = True
+    integration_eligible: bool = True
 
     def run(self, payload: dict[str, Any]) -> str:
         return str(payload["text"]).replace("\r\n", "\n").strip()
@@ -115,6 +120,7 @@ class TesseractOCR:
     capability: str = "ocr"
     license: str = "Apache-2.0"
     local: bool = True
+    integration_eligible: bool = True
 
     @property
     def available(self) -> bool:

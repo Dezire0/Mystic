@@ -16,7 +16,9 @@ from .adapters import SpecialistAdapter
 
 def load_fixture(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("schema_version") != "alethia-specialist-benchmark/v0":
+    if payload.get("schema_version") not in {
+        "alethia-specialist-benchmark/v0", "alethia-scientific-benchmark/v1"
+    }:
         raise ValueError("unsupported fixture schema")
     return payload
 
@@ -96,7 +98,8 @@ class BenchmarkHarness:
             reliability = len(successful) / len(case_results) if case_results else 0.0
             results.append({
                 "candidate": {"id": adapter.identifier, "capability": adapter.capability, "license": adapter.license,
-                              "local": adapter.local},
+                              "local": adapter.local,
+                              "integration_eligible": getattr(adapter, "integration_eligible", False)},
                 "metrics": {"quality": round(quality, 6), "reliability": round(reliability, 6),
                             "mean_latency_ms": round(sum(r.latency_ms for r in case_results) / len(case_results), 3) if case_results else None,
                             "p95_latency_ms": latencies[percentile_index] if case_results else None,
