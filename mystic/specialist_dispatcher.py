@@ -22,6 +22,7 @@ from typing import Any, Callable, Iterator, Protocol
 
 JOB_ID = re.compile(r"^[A-Za-z0-9._-]{1,160}$")
 MAX_PDFS, MAX_PDF_BYTES, MAX_TOTAL_BYTES = 5, 50 * 1024 * 1024, 100 * 1024 * 1024
+MAX_DIAGNOSTIC_BYTES = 4 * 1024
 MODEL_STACK = {
     "text_retriever": "nvidia/llama-nemotron-embed-1b-v2",
     "visual_retriever": "nvidia/llama-nemotron-embed-vl-1b-v2",
@@ -260,32 +261,59 @@ class LightningDispatcher:
             shutil.copyfile(source, local_inputs / f"{index}.pdf")
         remote_base = f"{self.settings.worker_root}/jobs/{job.job_id}"
         remote_inputs = [f"{remote_base}/inputs/{index}.pdf" for index in range(len(job.pdf_paths))]
+        remote_job, remote_result = f"{remote_base}/job.json", f"{remote_base}/result.json"
+        remote_stdout, remote_stderr = f"{remote_base}/stdout.log", f"{remote_base}/stderr.log"
         remote_spec = {"job_id": job.job_id, "task": "pdf_retrieval", "query": job.query, "pdfs": remote_inputs, "candidate_k": job.candidate_k, "final_k": job.final_k}
         self._write_json(directory / "job.json", remote_spec)
+        diagnostics = self._diagnostics(job, remote_base, remote_job, remote_result)
         client, started, result, primary_error = None, False, None, None
         try:
             with self._gpu_lease():
+                self._stage(diagnostics, "studio_resolve", "STARTING")
                 client = self.client_factory(self.settings)
+                self._stage(diagnostics, "studio_resolve", "OK")
                 self._event(events, "LIGHTNING_STUDIO_STARTING", job, attempt=1)
                 # A provider may allocate before surfacing a start error; always
                 # attempt shutdown once the start call has been entered.
+                self._stage(diagnostics, "studio_start", "STARTING")
                 started = True; client.start_t4()
+                diagnostics["studio_start_succeeded"] = True
+                self._stage(diagnostics, "studio_start", "OK")
                 self._event(events, "LIGHTNING_STUDIO_READY", job, attempt=1, machine="T4")
-                _, mkdir_exit = client.run(f"mkdir -p {shlex.quote(remote_base)}/inputs")
+                self._stage(diagnostics, "remote_workspace", "STARTING")
+                _, mkdir_exit = client.run(f"mkdir -p {self._shell_path(remote_base)}/inputs")
+                diagnostics["remote_workspace_exit_code"] = mkdir_exit
                 if mkdir_exit != 0:
+                    self._stage(diagnostics, "remote_workspace", "FAILED")
                     raise LightningDispatcherError("Remote job workspace could not be created.")
-                client.upload(directory / "job.json", f"{remote_base}/job.json")
+                self._stage(diagnostics, "remote_workspace", "OK")
+                self._stage(diagnostics, "upload_input", "STARTING")
+                client.upload(directory / "job.json", remote_job)
                 for index in range(len(job.pdf_paths)):
                     client.upload(local_inputs / f"{index}.pdf", remote_inputs[index])
+                self._stage(diagnostics, "upload_input", "OK")
                 self._event(events, "SPECIALIST_INPUTS_UPLOADED", job, attempt=1)
-                command = f"mkdir -p {shlex.quote(remote_base)}/inputs && timeout {self.settings.timeout_seconds}s python {shlex.quote(self.settings.worker_root)}/aletheia_job.py --input {shlex.quote(remote_base)}/job.json --output {shlex.quote(remote_base)}/result.json > {shlex.quote(remote_base)}/run.log 2>&1"
+                command = self._remote_command(remote_base, remote_job, remote_result, remote_stdout, remote_stderr)
                 self._event(events, "SPECIALIST_REMOTE_EXECUTION_STARTED", job, attempt=1)
-                _, exit_code = client.run(command)
+                self._stage(diagnostics, "remote_execute", "STARTING")
+                try:
+                    command_output, exit_code = client.run(command)
+                except Exception as error:
+                    diagnostics["remote_command_exception_type"] = type(error).__name__
+                    self._stage(diagnostics, "remote_execute", "FAILED")
+                    raise
+                diagnostics["remote_exit_code"] = exit_code
+                diagnostics["remote_command_output_tail"] = self._sanitize_tail(command_output)
                 if exit_code != 0:
+                    self._stage(diagnostics, "remote_execute", "FAILED")
+                    self._capture_remote_failure_diagnostics(client, diagnostics, remote_result, remote_stdout, remote_stderr)
                     raise LightningDispatcherError("Remote specialist execution failed.")
+                self._stage(diagnostics, "remote_execute", "OK")
                 self._event(events, "SPECIALIST_REMOTE_EXECUTION_FINISHED", job, attempt=1)
-                client.download(f"{remote_base}/result.json", result_path)
-                client.download(f"{remote_base}/run.log", directory / "run.log")
+                self._stage(diagnostics, "download_result", "STARTING")
+                client.download(remote_result, result_path)
+                diagnostics["result_json_exists"] = True
+                self._stage(diagnostics, "download_result", "OK")
                 payload = self._read_json(result_path)
                 result = self._convert(payload, job, input_hashes, specification_hash, events)
                 self._write_json(result_path, self._result_dict(result))
@@ -293,21 +321,27 @@ class LightningDispatcher:
                 self._event(events, "EVIDENCE_CANDIDATES_CREATED", job, attempt=1, candidate_count=len(result.evidence_candidates))
         except Exception as error:
             primary_error = error
+            diagnostics["exception_type"] = type(error).__name__
         finally:
             if started and client is not None:
+                self._stage(diagnostics, "studio_stop", "STARTING")
                 try:
                     client.stop()
+                    diagnostics["studio_stop_succeeded"] = True
+                    self._stage(diagnostics, "studio_stop", "OK")
                     self._event(events, "LIGHTNING_STUDIO_STOPPED", job, attempt=1)
-                except Exception:
+                except Exception as error:
+                    diagnostics["cleanup_exception_type"] = type(error).__name__
+                    self._stage(diagnostics, "studio_stop", "FAILED")
                     if result is not None:
                         result.shutdown_error = "Lightning Studio stop failed after result retrieval."
                     self._event(events, "LIGHTNING_STUDIO_STOP_FAILED", job, attempt=1)
         if primary_error is not None:
-            self._write_json(state_path, {"job_id": job.job_id, "specification_hash": specification_hash, "input_hashes": input_hashes, "status": "FAILED", "attempt": 1, "safe_error": "Lightning specialist dispatch failed."})
+            self._write_json(state_path, {"job_id": job.job_id, "specification_hash": specification_hash, "input_hashes": input_hashes, "status": "FAILED", "attempt": 1, "safe_error": "Lightning specialist dispatch failed.", "diagnostics": diagnostics})
             self._event(events, "SPECIALIST_DISPATCH_FAILED", job, attempt=1)
             if isinstance(primary_error, LightningBusyError):
                 raise primary_error
-            raise LightningDispatcherError("Lightning specialist dispatch failed.") from primary_error
+            raise LightningDispatcherError(self._diagnostic_message(diagnostics)) from primary_error
         assert result is not None
         result.lifecycle_events = events
         self._write_json(result_path, self._result_dict(result))
@@ -329,6 +363,94 @@ class LightningDispatcher:
                 raise ValueError("PDF inputs exceed the total size limit.")
             hashes[f"{index}.pdf"] = hashlib.sha256(resolved.read_bytes()).hexdigest()
         return hashes
+
+    def _diagnostics(self, job: SpecialistJob, remote_base: str, remote_job: str, remote_result: str) -> dict[str, Any]:
+        return {
+            "job_id": job.job_id,
+            "attempt": 1,
+            "remote_working_directory": self.settings.worker_root,
+            "remote_executable_path": f"{self.settings.worker_root}/aletheia_job.py",
+            "remote_python_executable": "python",
+            "remote_job_path": remote_job,
+            "remote_result_path": remote_result,
+            "remote_workspace_path": remote_base,
+            "remote_exit_code": None,
+            "result_json_exists": None,
+            "studio_start_succeeded": False,
+            "studio_stop_succeeded": False,
+            "stages": {},
+        }
+
+    @staticmethod
+    def _stage(diagnostics: dict[str, Any], stage: str, status: str) -> None:
+        diagnostics["stages"][stage] = status
+
+    def _remote_command(self, remote_base: str, remote_job: str, remote_result: str, remote_stdout: str, remote_stderr: str) -> str:
+        worker_root = self._shell_path(self.settings.worker_root)
+        return (
+            f"mkdir -p {self._shell_path(remote_base)}/inputs && cd {worker_root} && "
+            f"timeout {self.settings.timeout_seconds}s python {worker_root}/aletheia_job.py "
+            f"--input {self._shell_path(remote_job)} --output {self._shell_path(remote_result)} "
+            f"> {self._shell_path(remote_stdout)} 2> {self._shell_path(remote_stderr)}"
+        )
+
+    @staticmethod
+    def _shell_path(path: str) -> str:
+        """Quote a remote path while preserving shell expansion of a leading home path."""
+        if path == "~":
+            return "$HOME"
+        if path.startswith("~/"):
+            return "$HOME/" + shlex.quote(path[2:])
+        return shlex.quote(path)
+
+    def _capture_remote_failure_diagnostics(self, client: LightningClient, diagnostics: dict[str, Any], remote_result: str, remote_stdout: str, remote_stderr: str) -> None:
+        diagnostics["result_json_exists"] = self._remote_file_exists(client, remote_result)
+        diagnostics["remote_stdout_tail"] = self._remote_tail(client, remote_stdout)
+        diagnostics["remote_stderr_tail"] = self._remote_tail(client, remote_stderr)
+
+    def _remote_file_exists(self, client: LightningClient, remote_path: str) -> bool | None:
+        try:
+            _, exit_code = client.run(f"test -f {self._shell_path(remote_path)}")
+            return exit_code == 0
+        except Exception:
+            return None
+
+    def _remote_tail(self, client: LightningClient, remote_path: str) -> str:
+        try:
+            output, exit_code = client.run(f"tail -c {MAX_DIAGNOSTIC_BYTES} {self._shell_path(remote_path)}")
+        except Exception as error:
+            return f"<unavailable: {type(error).__name__}>"
+        if exit_code != 0:
+            return f"<unavailable: tail exit {exit_code}>"
+        return self._sanitize_tail(output)
+
+    def _sanitize_tail(self, value: object) -> str:
+        data = str(value).encode("utf-8", errors="replace")[-MAX_DIAGNOSTIC_BYTES:]
+        text = data.decode("utf-8", errors="replace")
+        for secret in (self.settings.api_key, self.settings.user_id):
+            if secret:
+                text = text.replace(secret, "[REDACTED]")
+        text = re.sub(
+            r"(?im)([\"']?(?:authorization|proxy-authorization|x-api-key|api[_-]?key|token|secret|password)[\"']?\s*[:=]\s*)(?:bearer\s+)?[^\s,;}\]]+",
+            r"\1[REDACTED]",
+            text,
+        )
+        return re.sub(r"(?m)^(?:declare -x )?([A-Za-z_][A-Za-z0-9_]*)=.*$", r"\1=[REDACTED]", text)
+
+    @staticmethod
+    def _diagnostic_message(diagnostics: dict[str, Any]) -> str:
+        lines = ["Lightning specialist dispatch failed."]
+        for stage, status in diagnostics["stages"].items():
+            lines.append(f"STAGE {stage}: {status}")
+        for key in (
+            "remote_exit_code", "exception_type", "remote_command_exception_type", "result_json_exists",
+            "studio_start_succeeded", "studio_stop_succeeded", "cleanup_exception_type",
+            "remote_working_directory", "remote_executable_path", "remote_job_path", "remote_result_path",
+            "remote_command_output_tail", "remote_stdout_tail", "remote_stderr_tail",
+        ):
+            if diagnostics.get(key) is not None:
+                lines.append(f"{key.upper()}: {diagnostics[key]}")
+        return "\n".join(lines)
 
     @staticmethod
     def _hash(value: Any) -> str:

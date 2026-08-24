@@ -20,12 +20,13 @@ from mystic.specialist_dispatcher import (
 
 
 class FakeLightningClient:
-    def __init__(self, *, failure: str = "", payload: dict | None = None) -> None:
+    def __init__(self, *, failure: str = "", payload: dict | None = None, stdout: str = "", stderr: str = "", command_output: str = "") -> None:
         self.failure, self.payload = failure, payload or {
             "job_id": "safe-job", "task": "pdf_retrieval", "status": "SUCCEEDED", "runtime_seconds": 4.2,
             "gpu": {"available": True, "name": "Tesla T4"},
             "results": [{"page": 1, "pdf": "~/aletheia_worker/jobs/safe-job/inputs/0.pdf", "preview": "lens evidence", "text_score": 0.9, "visual_score": 0.8, "fusion_score": 0.7, "rerank_score": 0.6}],
         }
+        self.stdout, self.stderr, self.command_output = stdout, stderr, command_output
         self.started = self.stopped = 0; self.uploads: list[tuple[str, str]] = []; self.commands: list[str] = []
 
     def start_t4(self) -> None:
@@ -39,7 +40,11 @@ class FakeLightningClient:
         if self.failure == "upload": raise RuntimeError("upload failure")
     def run(self, command: str) -> tuple[str, int]:
         self.commands.append(command)
-        if self.failure in {"run", "timeout"} and "aletheia_job.py" in command: return "", 124 if self.failure == "timeout" else 1
+        if command.startswith("test -f "): return "", 0 if self.failure != "missing-result" else 1
+        if command.startswith("tail -c "):
+            return (self.stdout if "stdout.log" in command else self.stderr), 0
+        if self.failure in {"run", "timeout"} and "aletheia_job.py" in command:
+            return self.command_output, 124 if self.failure == "timeout" else 1
         return "", 0
     def download(self, remote_path: str, local_path: Path) -> None:
         if self.failure == "download": raise RuntimeError("download failure")
@@ -78,6 +83,63 @@ def test_failures_are_closed_and_stop_after_start(tmp_path: Path, failure: str) 
     assert client.stopped == (1 if client.started else 0)
     state = json.loads((dispatcher.base_dir / job.job_id / "dispatch.json").read_text())
     assert state["status"] == "FAILED" and "super-secret-key" not in json.dumps(state)
+
+
+def test_remote_execution_failure_persists_bounded_sanitized_diagnostics_and_stops_gpu(tmp_path: Path) -> None:
+    client = FakeLightningClient(
+        failure="run",
+        command_output='Authorization: Bearer command-token {"token": "json-token"}',
+        stdout="prefix-" + "x" * 5_000,
+        stderr="LIGHTNING_API_KEY=super-secret-key\nLIGHTNING_USER_ID=user\napi_key=other-secret\nworker failed",
+    )
+    dispatcher, job = make_dispatcher(tmp_path, client), make_job(tmp_path)
+
+    with pytest.raises(LightningDispatcherError) as raised:
+        dispatcher.execute(job)
+
+    message = str(raised.value)
+    state = json.loads((dispatcher.base_dir / job.job_id / "dispatch.json").read_text())
+    diagnostics = state["diagnostics"]
+    assert client.stopped == 1 and diagnostics["remote_exit_code"] == 1
+    assert diagnostics["stages"]["remote_execute"] == "FAILED"
+    assert diagnostics["stages"]["studio_stop"] == "OK"
+    assert diagnostics["result_json_exists"] is True
+    assert len(diagnostics["remote_stdout_tail"].encode()) <= 4 * 1024
+    assert "prefix-" not in diagnostics["remote_stdout_tail"]
+    assert "super-secret-key" not in json.dumps(diagnostics)
+    assert "command-token" not in json.dumps(diagnostics)
+    assert "json-token" not in json.dumps(diagnostics)
+    assert "other-secret" not in json.dumps(diagnostics)
+    assert "LIGHTNING_USER_ID=user" not in json.dumps(diagnostics)
+    assert "REMOTE_EXIT_CODE: 1" in message and "REMOTE_STDERR_TAIL:" in message
+
+
+def test_cleanup_failure_does_not_mask_remote_execution_failure(tmp_path: Path) -> None:
+    client = FakeLightningClient(failure="run")
+    client.stop = lambda: (_ for _ in ()).throw(RuntimeError("stop failure"))  # type: ignore[method-assign]
+
+    with pytest.raises(LightningDispatcherError) as raised:
+        make_dispatcher(tmp_path, client).execute(make_job(tmp_path))
+
+    diagnostics = json.loads((tmp_path / "mystic_data" / "aletheia_lightning_jobs" / "safe-job" / "dispatch.json").read_text())["diagnostics"]
+    assert isinstance(raised.value.__cause__, LightningDispatcherError)
+    assert "Remote specialist execution failed." in str(raised.value.__cause__)
+    assert diagnostics["stages"]["remote_execute"] == "FAILED"
+    assert diagnostics["stages"]["studio_stop"] == "FAILED"
+    assert diagnostics["cleanup_exception_type"] == "RuntimeError"
+
+
+def test_remote_command_expands_home_path_without_quoting_the_tilde(tmp_path: Path) -> None:
+    dispatcher = make_dispatcher(tmp_path, FakeLightningClient())
+    command = dispatcher._remote_command(
+        "~/aletheia_worker/jobs/safe-job",
+        "~/aletheia_worker/jobs/safe-job/job.json",
+        "~/aletheia_worker/jobs/safe-job/result.json",
+        "~/aletheia_worker/jobs/safe-job/stdout.log",
+        "~/aletheia_worker/jobs/safe-job/stderr.log",
+    )
+    assert "$HOME/aletheia_worker/" in command
+    assert "'~/aletheia_worker'" not in command
 
 
 @pytest.mark.parametrize("payload", [

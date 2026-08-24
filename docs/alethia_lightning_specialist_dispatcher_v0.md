@@ -8,6 +8,8 @@ Required environment settings are `LIGHTNING_USER_ID`, `LIGHTNING_API_KEY`, `LIG
 
 Each job validates a safe opaque job ID, local PDFs, hash/size/count limits, and `candidate_k`/`final_k`. It persists a normalized specification hash and input SHA-256 hashes under `mystic_data/aletheia_lightning_jobs/<job_id>/`. A completed result is reused only when the job ID, status, specification hash, and every input hash match.
 
+If remote execution fails, `dispatch.json` and the raised dispatcher error record the bounded stage status, exit code, result-file presence, worker paths, and at most 4 KiB each of sanitized stdout and stderr tails. API keys, user IDs, auth headers/tokens, environment-style assignments, and unbounded remote output are excluded. A Studio stop failure is recorded separately and never replaces the primary execution failure.
+
 The lifecycle uses a cross-process filesystem T4 lease, starts the existing Studio on `Machine.T4`, uploads only sanitized job paths under `~/aletheia_worker/jobs/<job_id>/`, runs the existing `aletheia_job.py`, validates `result.json`, creates unproven `EvidenceCandidate` records, and always attempts `stop()` in `finally`. A shutdown failure is preserved separately from a successful evidence result. `LightningScientificJobAdapter` is shaped for the existing durable `ScientificJobWorker`, so that job leases and PENDING → READY → LEASED → RUNNING → SUCCEEDED transitions remain ALETHEIA-owned.
 
 Run the real acceptance test only with a controlled PDF and configured credentials:
