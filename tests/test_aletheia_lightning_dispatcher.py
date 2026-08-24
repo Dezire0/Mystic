@@ -27,7 +27,7 @@ class FakeLightningClient:
             "results": [{"page": 1, "pdf": "~/aletheia_worker/jobs/safe-job/inputs/0.pdf", "preview": "lens evidence", "text_score": 0.9, "visual_score": 0.8, "fusion_score": 0.7, "rerank_score": 0.6}],
         }
         self.stdout, self.stderr, self.command_output = stdout, stderr, command_output
-        self.started = self.stopped = 0; self.uploads: list[tuple[str, str]] = []; self.commands: list[str] = []
+        self.started = self.stopped = 0; self.uploads: list[tuple[str, str]] = []; self.downloads: list[tuple[str, str]] = []; self.commands: list[str] = []
 
     def start_t4(self) -> None:
         self.started += 1
@@ -40,13 +40,17 @@ class FakeLightningClient:
         if self.failure == "upload": raise RuntimeError("upload failure")
     def run(self, command: str) -> tuple[str, int]:
         self.commands.append(command)
-        if command.startswith("test -f "): return "", 0 if self.failure != "missing-result" else 1
+        if command.startswith("test -f "):
+            if self.failure == "missing-upload-job" and command.endswith("/job.json"): return "", 1
+            if self.failure == "missing-remote-result" and command.endswith("/result.json"): return "", 1
+            return "", 0
         if command.startswith("tail -c "):
             return (self.stdout if "stdout.log" in command else self.stderr), 0
         if self.failure in {"run", "timeout"} and "aletheia_job.py" in command:
             return self.command_output, 124 if self.failure == "timeout" else 1
         return "", 0
     def download(self, remote_path: str, local_path: Path) -> None:
+        self.downloads.append((remote_path, str(local_path)))
         if self.failure == "download": raise RuntimeError("download failure")
         local_path.parent.mkdir(parents=True, exist_ok=True)
         if remote_path.endswith("result.json"):
@@ -112,6 +116,57 @@ def test_remote_execution_failure_persists_bounded_sanitized_diagnostics_and_sto
     assert "other-secret" not in json.dumps(diagnostics)
     assert "LIGHTNING_USER_ID=user" not in json.dumps(diagnostics)
     assert "REMOTE_EXIT_CODE: 1" in message and "REMOTE_STDERR_TAIL:" in message
+
+
+def test_sdk_transfers_use_content_root_relative_paths_and_job_json_uses_studio_paths(tmp_path: Path) -> None:
+    client = FakeLightningClient()
+    dispatcher, job = make_dispatcher(tmp_path, client), make_job(tmp_path)
+
+    dispatcher.execute(job)
+
+    transfer_root = "aletheia_worker/jobs/safe-job"
+    assert [remote_path for _, remote_path in client.uploads] == [
+        f"{transfer_root}/job.json", f"{transfer_root}/inputs/0.pdf",
+    ]
+    assert all("~" not in remote_path and not remote_path.startswith("/teamspace/") for _, remote_path in client.uploads)
+    assert client.downloads == [(f"{transfer_root}/result.json", str(dispatcher.base_dir / "safe-job" / "result.json"))]
+    remote_spec = json.loads((dispatcher.base_dir / "safe-job" / "job.json").read_text())
+    assert remote_spec["pdfs"] == ["/teamspace/studios/this_studio/aletheia_worker/jobs/safe-job/inputs/0.pdf"]
+    assert str(job.pdf_paths[0]) not in json.dumps(remote_spec)
+    assert "mkdir -p /teamspace/studios/this_studio/aletheia_worker/jobs/safe-job/inputs" in client.commands
+    execution_index = next(index for index, command in enumerate(client.commands) if "aletheia_job.py" in command)
+    assert any(command == "test -f /teamspace/studios/this_studio/aletheia_worker/jobs/safe-job/job.json" for command in client.commands[:execution_index])
+    assert any(command == "test -f /teamspace/studios/this_studio/aletheia_worker/jobs/safe-job/inputs/0.pdf" for command in client.commands[:execution_index])
+    result_check = "test -f /teamspace/studios/this_studio/aletheia_worker/jobs/safe-job/result.json"
+    assert client.commands.index(result_check) > execution_index
+
+
+def test_missing_uploaded_job_json_fails_before_remote_execution_and_stops_gpu(tmp_path: Path) -> None:
+    client = FakeLightningClient(failure="missing-upload-job")
+    dispatcher, job = make_dispatcher(tmp_path, client), make_job(tmp_path)
+
+    with pytest.raises(LightningDispatcherError) as raised:
+        dispatcher.execute(job)
+
+    diagnostics = json.loads((dispatcher.base_dir / job.job_id / "dispatch.json").read_text())["diagnostics"]
+    assert client.stopped == 1
+    assert not any("aletheia_job.py" in command for command in client.commands)
+    assert diagnostics["stages"]["verify_remote_input"] == "FAILED"
+    assert diagnostics["missing_remote_path"] == "/teamspace/studios/this_studio/aletheia_worker/jobs/safe-job/job.json"
+    assert "STAGE verify_remote_input: FAILED" in str(raised.value)
+
+
+def test_missing_remote_result_fails_before_download_and_stops_gpu(tmp_path: Path) -> None:
+    client = FakeLightningClient(failure="missing-remote-result")
+    dispatcher, job = make_dispatcher(tmp_path, client), make_job(tmp_path)
+
+    with pytest.raises(LightningDispatcherError):
+        dispatcher.execute(job)
+
+    diagnostics = json.loads((dispatcher.base_dir / job.job_id / "dispatch.json").read_text())["diagnostics"]
+    assert client.stopped == 1 and not client.downloads
+    assert diagnostics["stages"]["verify_remote_result"] == "FAILED"
+    assert diagnostics["missing_remote_path"] == "/teamspace/studios/this_studio/aletheia_worker/jobs/safe-job/result.json"
 
 
 def test_cleanup_failure_does_not_mask_remote_execution_failure(tmp_path: Path) -> None:
@@ -207,6 +262,24 @@ def test_sdk_client_resolves_studio_with_generic_owner_teamspace_ref(
 
     assert settings.teamspace_ref == f"{owner}/{teamspace}"
     assert calls == [("init", ((), {"name": "existing-studio", "teamspace": f"{owner}/{teamspace}", "create_ok": False}))]
+
+
+def test_sdk_client_passes_content_root_relative_transfer_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    uploads: list[tuple[str, str, bool]] = []
+
+    class FakeStudio:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def upload_file(self, file_path: str, *, remote_path: str, progress_bar: bool) -> None:
+            uploads.append((file_path, remote_path, progress_bar))
+
+    monkeypatch.setitem(sys.modules, "lightning_sdk", SimpleNamespace(Studio=FakeStudio, Machine=SimpleNamespace(T4="T4")))
+    client = LightningSDKClient(LightningSettings("user", "secret", "owner", "team", "existing-studio"))
+
+    client.upload(Path("source.pdf"), "aletheia_worker/jobs/safe-job/inputs/0.pdf")
+
+    assert uploads == [("source.pdf", "aletheia_worker/jobs/safe-job/inputs/0.pdf", False)]
 
 
 def test_router_requests_capability_not_provider(tmp_path: Path) -> None:

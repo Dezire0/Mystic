@@ -109,13 +109,19 @@ class LightningSettings:
     owner: str
     teamspace: str
     studio_name: str
-    worker_root: str = "~/aletheia_worker"
+    studio_root: str = "/teamspace/studios/this_studio"
+    worker_directory: str = "aletheia_worker"
     timeout_seconds: int = 300
 
     @property
     def teamspace_ref(self) -> str:
         """Lightning's owner/teamspace reference for either personal or org owners."""
         return f"{self.owner}/{self.teamspace}"
+
+    @property
+    def worker_root(self) -> str:
+        """Absolute Studio filesystem path used only by remote shell commands."""
+        return f"{self.studio_root}/{self.worker_directory}"
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> "LightningSettings":
@@ -260,12 +266,15 @@ class LightningDispatcher:
         for index, source in enumerate(job.pdf_paths):
             shutil.copyfile(source, local_inputs / f"{index}.pdf")
         remote_base = f"{self.settings.worker_root}/jobs/{job.job_id}"
+        transfer_base = f"{self.settings.worker_directory}/jobs/{job.job_id}"
         remote_inputs = [f"{remote_base}/inputs/{index}.pdf" for index in range(len(job.pdf_paths))]
+        transfer_inputs = [f"{transfer_base}/inputs/{index}.pdf" for index in range(len(job.pdf_paths))]
         remote_job, remote_result = f"{remote_base}/job.json", f"{remote_base}/result.json"
+        transfer_job, transfer_result = f"{transfer_base}/job.json", f"{transfer_base}/result.json"
         remote_stdout, remote_stderr = f"{remote_base}/stdout.log", f"{remote_base}/stderr.log"
         remote_spec = {"job_id": job.job_id, "task": "pdf_retrieval", "query": job.query, "pdfs": remote_inputs, "candidate_k": job.candidate_k, "final_k": job.final_k}
         self._write_json(directory / "job.json", remote_spec)
-        diagnostics = self._diagnostics(job, remote_base, remote_job, remote_result)
+        diagnostics = self._diagnostics(job, remote_base, remote_job, remote_result, transfer_job, transfer_result)
         client, started, result, primary_error = None, False, None, None
         try:
             with self._gpu_lease():
@@ -288,10 +297,17 @@ class LightningDispatcher:
                     raise LightningDispatcherError("Remote job workspace could not be created.")
                 self._stage(diagnostics, "remote_workspace", "OK")
                 self._stage(diagnostics, "upload_input", "STARTING")
-                client.upload(directory / "job.json", remote_job)
+                client.upload(directory / "job.json", transfer_job)
                 for index in range(len(job.pdf_paths)):
-                    client.upload(local_inputs / f"{index}.pdf", remote_inputs[index])
+                    client.upload(local_inputs / f"{index}.pdf", transfer_inputs[index])
                 self._stage(diagnostics, "upload_input", "OK")
+                self._stage(diagnostics, "verify_remote_input", "STARTING")
+                for remote_path in (remote_job, *remote_inputs):
+                    if self._remote_file_exists(client, remote_path) is not True:
+                        diagnostics["missing_remote_path"] = remote_path
+                        self._stage(diagnostics, "verify_remote_input", "FAILED")
+                        raise LightningDispatcherError("Uploaded specialist input is not present in the Studio filesystem.")
+                self._stage(diagnostics, "verify_remote_input", "OK")
                 self._event(events, "SPECIALIST_INPUTS_UPLOADED", job, attempt=1)
                 command = self._remote_command(remote_base, remote_job, remote_result, remote_stdout, remote_stderr)
                 self._event(events, "SPECIALIST_REMOTE_EXECUTION_STARTED", job, attempt=1)
@@ -310,9 +326,15 @@ class LightningDispatcher:
                     raise LightningDispatcherError("Remote specialist execution failed.")
                 self._stage(diagnostics, "remote_execute", "OK")
                 self._event(events, "SPECIALIST_REMOTE_EXECUTION_FINISHED", job, attempt=1)
+                self._stage(diagnostics, "verify_remote_result", "STARTING")
+                diagnostics["result_json_exists"] = self._remote_file_exists(client, remote_result)
+                if diagnostics["result_json_exists"] is not True:
+                    diagnostics["missing_remote_path"] = remote_result
+                    self._stage(diagnostics, "verify_remote_result", "FAILED")
+                    raise LightningDispatcherError("Remote specialist result is not present in the Studio filesystem.")
+                self._stage(diagnostics, "verify_remote_result", "OK")
                 self._stage(diagnostics, "download_result", "STARTING")
-                client.download(remote_result, result_path)
-                diagnostics["result_json_exists"] = True
+                client.download(transfer_result, result_path)
                 self._stage(diagnostics, "download_result", "OK")
                 payload = self._read_json(result_path)
                 result = self._convert(payload, job, input_hashes, specification_hash, events)
@@ -364,7 +386,7 @@ class LightningDispatcher:
             hashes[f"{index}.pdf"] = hashlib.sha256(resolved.read_bytes()).hexdigest()
         return hashes
 
-    def _diagnostics(self, job: SpecialistJob, remote_base: str, remote_job: str, remote_result: str) -> dict[str, Any]:
+    def _diagnostics(self, job: SpecialistJob, remote_base: str, remote_job: str, remote_result: str, transfer_job: str, transfer_result: str) -> dict[str, Any]:
         return {
             "job_id": job.job_id,
             "attempt": 1,
@@ -374,6 +396,9 @@ class LightningDispatcher:
             "remote_job_path": remote_job,
             "remote_result_path": remote_result,
             "remote_workspace_path": remote_base,
+            "sdk_transfer_root": self.settings.worker_directory,
+            "sdk_transfer_job_path": transfer_job,
+            "sdk_transfer_result_path": transfer_result,
             "remote_exit_code": None,
             "result_json_exists": None,
             "studio_start_succeeded": False,
@@ -446,7 +471,8 @@ class LightningDispatcher:
             "remote_exit_code", "exception_type", "remote_command_exception_type", "result_json_exists",
             "studio_start_succeeded", "studio_stop_succeeded", "cleanup_exception_type",
             "remote_working_directory", "remote_executable_path", "remote_job_path", "remote_result_path",
-            "remote_command_output_tail", "remote_stdout_tail", "remote_stderr_tail",
+            "sdk_transfer_job_path", "sdk_transfer_result_path",
+            "missing_remote_path", "remote_command_output_tail", "remote_stdout_tail", "remote_stderr_tail",
         ):
             if diagnostics.get(key) is not None:
                 lines.append(f"{key.upper()}: {diagnostics[key]}")
