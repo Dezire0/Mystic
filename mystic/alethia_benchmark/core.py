@@ -43,6 +43,12 @@ class CaseResult:
     cpu_ms: float
     error: str | None = None
 
+    @property
+    def failure_kind(self) -> str | None:
+        if self.error:
+            return "adapter_error"
+        return None if self.passed else "quality_below_threshold"
+
 
 class BenchmarkHarness:
     """Runs capability-matched adapters and records decision-neutral results."""
@@ -82,6 +88,10 @@ class BenchmarkHarness:
                     quality=round(quality, 6), latency_ms=round(latency_ms, 3), cpu_ms=round(cpu_ms, 3), error=error,
                 ))
             successful = [result for result in case_results if result.error is None]
+            passed = [result for result in case_results if result.passed]
+            failures = [result for result in case_results if result.error or not result.passed]
+            latencies = sorted(result.latency_ms for result in case_results)
+            percentile_index = max(0, min(len(latencies) - 1, round((len(latencies) - 1) * 0.95)))
             quality = sum(result.quality for result in case_results) / len(case_results) if case_results else 0.0
             reliability = len(successful) / len(case_results) if case_results else 0.0
             results.append({
@@ -89,10 +99,13 @@ class BenchmarkHarness:
                               "local": adapter.local},
                 "metrics": {"quality": round(quality, 6), "reliability": round(reliability, 6),
                             "mean_latency_ms": round(sum(r.latency_ms for r in case_results) / len(case_results), 3) if case_results else None,
+                            "p95_latency_ms": latencies[percentile_index] if case_results else None,
                             "mean_cpu_ms": round(sum(r.cpu_ms for r in case_results) / len(case_results), 3) if case_results else None,
+                            "case_count": len(case_results), "passed_case_count": len(passed),
+                            "failed_case_count": len(failures),
                             "estimated_cost_usd": 0.0,
                             "process_max_rss_kb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss},
-                "failures": [asdict(result) for result in case_results if result.error or not result.passed],
+                "failures": [{**asdict(result), "failure_kind": result.failure_kind} for result in failures],
                 "cases": [asdict(result) for result in case_results],
                 "decision": "requires_human_review",
                 "decision_reason": "Benchmark ranking is evidence, not an adoption decision.",

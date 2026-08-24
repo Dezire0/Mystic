@@ -14,4 +14,4 @@ Reports contain quality, latency, CPU time, process RSS, reliability, zero-cost 
 
 External or paid providers are intentionally absent. A deployment may add a local adapter conforming to `SpecialistAdapter`; it must be explicitly configured and should provide its own cost and privacy review.
 
-Fixture inputs are CC0 and versioned in `benchmarks/alethia/v0/fixtures.json`; the generated OCR calibration image is checked into that same fixture directory. Add later scientific specialists by adding a capability-specific fixture set and adapter without changing production routing.
+Fixture inputs are CC0 and versioned in `benchmarks/alethia/v0/fixtures.json`; they contain positive calibration cases plus no-match and missing-input cases. The generated OCR calibration image is checked into that same fixture directory. The report preserves failed quality thresholds and adapter errors by case, including `failure_kind`, so regression comparisons cannot hide them. Add later scientific specialists by adding a capability-specific fixture set and adapter without changing production routing.
