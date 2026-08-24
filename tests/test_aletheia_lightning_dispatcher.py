@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +11,7 @@ from mystic.specialist_dispatcher import (
     LightningBusyError,
     LightningDispatcher,
     LightningDispatcherError,
+    LightningSDKClient,
     LightningSettings,
     LightningScientificJobAdapter,
     SpecialistRouter,
@@ -113,6 +116,35 @@ def test_settings_fail_closed_without_credentials() -> None:
 
 def test_settings_repr_redacts_secret() -> None:
     assert "super-secret-key" not in repr(LightningSettings("u", "super-secret-key", "o", "t", "s"))
+
+
+@pytest.mark.parametrize(
+    ("owner", "teamspace"),
+    [
+        ("dyrakd", "training-optimization-project"),
+        ("personal-owner", "personal-teamspace"),
+    ],
+    ids=["organization-owned", "user-owned"],
+)
+def test_sdk_client_resolves_studio_with_generic_owner_teamspace_ref(
+    monkeypatch: pytest.MonkeyPatch, owner: str, teamspace: str
+) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class FakeStudio:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            calls.append(("init", (args, kwargs)))
+
+        def start(self, machine: object) -> None:
+            calls.append(("start", machine))
+
+    monkeypatch.setitem(sys.modules, "lightning_sdk", SimpleNamespace(Studio=FakeStudio, Machine=SimpleNamespace(T4="T4")))
+
+    settings = LightningSettings("user", "secret", owner, teamspace, "existing-studio")
+    LightningSDKClient(settings)
+
+    assert settings.teamspace_ref == f"{owner}/{teamspace}"
+    assert calls == [("init", ((), {"name": "existing-studio", "teamspace": f"{owner}/{teamspace}", "create_ok": False}))]
 
 
 def test_router_requests_capability_not_provider(tmp_path: Path) -> None:

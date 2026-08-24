@@ -4,7 +4,7 @@ This ALETHEIA-only module maps the capability `scientific.pdf_retrieval` to the 
 
 The optional dependency is `pip install -e '.[lightning]'`. The adapter was checked against `lightning-sdk` 2026.8.18: `Studio(..., create_ok=False)`, `start(Machine.T4)`, `stop()`, `upload_file`, `download_file`, and `run_with_exit_code`. `create_ok=False` is mandatory: this dispatcher never creates a replacement Studio.
 
-Required environment settings are `LIGHTNING_USER_ID`, `LIGHTNING_API_KEY`, `LIGHTNING_OWNER`, `LIGHTNING_TEAMSPACE`, and `LIGHTNING_STUDIO_NAME`. `LIGHTNING_OWNER_KIND` may be `user` (default) or `org`. Missing configuration fails closed. Credentials are never placed in remote job JSON, artifacts, events, or errors.
+Required environment settings are `LIGHTNING_USER_ID`, `LIGHTNING_API_KEY`, `LIGHTNING_OWNER`, `LIGHTNING_TEAMSPACE`, and `LIGHTNING_STUDIO_NAME`. The dispatcher resolves the existing Studio through the generic `LIGHTNING_OWNER/LIGHTNING_TEAMSPACE` reference, which supports both organization- and user-owned teamspaces without coercing the owner into a Lightning user. Missing configuration fails closed. Credentials are never placed in remote job JSON, artifacts, events, or errors.
 
 Each job validates a safe opaque job ID, local PDFs, hash/size/count limits, and `candidate_k`/`final_k`. It persists a normalized specification hash and input SHA-256 hashes under `mystic_data/aletheia_lightning_jobs/<job_id>/`. A completed result is reused only when the job ID, status, specification hash, and every input hash match.
 

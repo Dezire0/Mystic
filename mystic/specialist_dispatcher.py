@@ -108,9 +108,13 @@ class LightningSettings:
     owner: str
     teamspace: str
     studio_name: str
-    owner_kind: str = "user"
     worker_root: str = "~/aletheia_worker"
     timeout_seconds: int = 300
+
+    @property
+    def teamspace_ref(self) -> str:
+        """Lightning's owner/teamspace reference for either personal or org owners."""
+        return f"{self.owner}/{self.teamspace}"
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> "LightningSettings":
@@ -119,10 +123,7 @@ class LightningSettings:
         missing = [name for name in names if not values.get(name, "").strip()]
         if missing:
             raise LightningDispatcherError("Lightning configuration is unavailable; required credentials/settings are missing.")
-        owner_kind = values.get("LIGHTNING_OWNER_KIND", "user")
-        if owner_kind not in {"user", "org"}:
-            raise LightningDispatcherError("Lightning owner kind is invalid.")
-        return cls(*(values[name].strip() for name in names), owner_kind=owner_kind)
+        return cls(*(values[name].strip() for name in names))
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,9 +194,12 @@ class LightningSDKClient:
             from lightning_sdk import Machine, Studio
         except ImportError as error:  # optional dependency fails closed
             raise LightningDispatcherError("lightning-sdk is not installed; install the optional Lightning extra.") from error
-        kwargs: dict[str, Any] = {"name": settings.studio_name, "teamspace": settings.teamspace, "create_ok": False}
-        kwargs[settings.owner_kind] = settings.owner
-        self._studio, self._machine = Studio(**kwargs), Machine
+        self._studio = Studio(
+            name=settings.studio_name,
+            teamspace=settings.teamspace_ref,
+            create_ok=False,
+        )
+        self._machine = Machine
 
     def start_t4(self) -> None:
         self._studio.start(self._machine.T4)
