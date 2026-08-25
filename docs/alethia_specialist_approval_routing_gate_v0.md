@@ -1,6 +1,6 @@
 # ALETHEIA 2D Specialist Approval & Routing Gate v0
 
-Status: implementation proposed in Issue #139. This document records the v0 contract; the implementation commit and pull request are recorded with the issue and release handoff.
+Status: implementation ready for review in [PR #140](https://github.com/Dezire0/Mystic/pull/140), resolving [Issue #139](https://github.com/Dezire0/Mystic/issues/139). The initial implementation commit is `3f0f4f357f0622d9a507d05b72b7bf760e1cc15f`.
 
 ## Purpose
 
@@ -49,6 +49,6 @@ Before discovery or automatic evolution can be considered, each capability needs
 
 ## Implementation and verification
 
-Issue: [#139](https://github.com/Dezire0/Mystic/issues/139).
+Issue: [#139](https://github.com/Dezire0/Mystic/issues/139). Pull request: [#140](https://github.com/Dezire0/Mystic/pull/140). Initial implementation commit: `3f0f4f357f0622d9a507d05b72b7bf760e1cc15f`.
 
-The focused approval-gate tests cover non-routing of unapproved candidates, no silent experimental promotion, threshold and missing-evidence reasons, deterministic approval and routing, no-eligible and multiple-approved cases, route receipts, and revision invalidation. The final commit, pull request, and command results are added to the issue/PR handoff after verification.
+The focused approval-gate tests cover non-routing of unapproved candidates, no silent experimental promotion, threshold and missing-evidence reasons, deterministic approval and routing, no-eligible and multiple-approved cases, route receipts, and revision invalidation. The PR records the exact final command results.
