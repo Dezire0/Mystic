@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
+import shlex
 import sys
 from types import SimpleNamespace
 
@@ -20,7 +22,7 @@ from mystic.specialist_dispatcher import (
 
 
 class FakeLightningClient:
-    def __init__(self, *, failure: str = "", payload: dict | None = None, stdout: str = "", stderr: str = "", command_output: str = "", probe_output: str = "", artifact_responses: dict[str, list[bool]] | None = None, shell_responses: dict[str, list[bool]] | None = None) -> None:
+    def __init__(self, *, failure: str = "", payload: dict | None = None, stdout: str = "", stderr: str = "", command_output: str = "", probe_output: str = "", artifact_responses: dict[str, list[bool]] | None = None, shell_responses: dict[str, list[bool]] | None = None, corrupt_shell_path: str = "") -> None:
         self.failure, self.payload = failure, payload or {
             "job_id": "safe-job", "task": "pdf_retrieval", "status": "SUCCEEDED", "runtime_seconds": 4.2,
             "gpu": {"available": True, "name": "Tesla T4"},
@@ -29,7 +31,9 @@ class FakeLightningClient:
         self.stdout, self.stderr, self.command_output, self.probe_output = stdout, stderr, command_output, probe_output
         self.artifact_responses = artifact_responses or {}
         self.shell_responses = shell_responses or {}
+        self.corrupt_shell_path = corrupt_shell_path
         self.artifact_checks: list[str] = []
+        self.remote_hashes: dict[str, str] = {}
         self.started = self.stopped = 0; self.uploads: list[tuple[str, str]] = []; self.downloads: list[tuple[str, str]] = []; self.commands: list[str] = []
 
     def start_t4(self) -> None:
@@ -40,9 +44,21 @@ class FakeLightningClient:
         if self.failure == "stop": raise RuntimeError("stop failure")
     def upload(self, local_path: Path, remote_path: str) -> None:
         self.uploads.append((str(local_path), remote_path))
+        self.remote_hashes[remote_path] = hashlib.sha256(local_path.read_bytes()).hexdigest()
         if self.failure == "upload": raise RuntimeError("upload failure")
     def run(self, command: str) -> tuple[str, int]:
         self.commands.append(command)
+        if command.startswith("lightning studio cp "):
+            if self.failure == "materialize" and "lit://" in shlex.split(command)[3]: return "Authorization: Bearer bridge-token", 1
+            if self.failure == "publish" and "lit://" in shlex.split(command)[4]: return "token=bridge-token", 1
+            source, destination = shlex.split(command)[3:5]
+            if source.startswith("lit://"):
+                transfer_path = source.split("/studios/", 1)[1].split("/", 1)[1]
+                self.remote_hashes[destination] = self.remote_hashes[transfer_path]
+            else:
+                transfer_path = destination.split("/studios/", 1)[1].split("/", 1)[1]
+                self.remote_hashes[transfer_path] = self.remote_hashes[source]
+            return "", 0
         if command.startswith("test -f "):
             path = command.removeprefix("test -f ")
             if path in self.shell_responses and self.shell_responses[path]:
@@ -54,8 +70,16 @@ class FakeLightningClient:
             return (self.stdout if "stdout.log" in command else self.stderr), 0
         if command.startswith('printf "PWD='):
             return self.probe_output, 0
-        if self.failure in {"run", "timeout"} and "aletheia_job.py" in command:
-            return self.command_output, 124 if self.failure == "timeout" else 1
+        if command.startswith("sha256sum "):
+            path = shlex.split(command)[1]
+            digest = self.remote_hashes.get(path, hashlib.sha256(json.dumps(self.payload).encode()).hexdigest())
+            if path == self.corrupt_shell_path: digest = "0" * 64
+            return f"{digest}  {path}", 0
+        if "aletheia_job.py" in command:
+            output_path = shlex.split(command)[shlex.split(command).index("--output") + 1]
+            self.remote_hashes[output_path] = hashlib.sha256(json.dumps(self.payload).encode()).hexdigest()
+            if self.failure in {"run", "timeout"}:
+                return self.command_output, 124 if self.failure == "timeout" else 1
         return "", 0
 
     def artifact_exists(self, remote_path: str) -> bool:
@@ -73,25 +97,14 @@ class FakeLightningClient:
         else: local_path.write_text("worker log", encoding="utf-8")
 
 
-def make_dispatcher(tmp_path: Path, fake: FakeLightningClient, **kwargs: object) -> LightningDispatcher:
+def make_dispatcher(tmp_path: Path, fake: FakeLightningClient) -> LightningDispatcher:
     settings = LightningSettings("user", "super-secret-key", "owner", "team", "existing-studio")
-    return LightningDispatcher(root_path=tmp_path, settings=settings, client_factory=lambda _: fake, **kwargs)
+    return LightningDispatcher(root_path=tmp_path, settings=settings, client_factory=lambda _: fake)
 
 
 def make_job(tmp_path: Path, job_id: str = "safe-job") -> SpecialistJob:
     pdf = tmp_path / "source.pdf"; pdf.write_bytes(b"%PDF-1.4\nfixture")
     return SpecialistJob(job_id, "Where is lensing explained?", (pdf,))
-
-
-class FakeClock:
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def __call__(self) -> float:
-        return self.now
-
-    def sleep(self, seconds: float) -> None:
-        self.now += seconds
 
 
 def test_success_persists_evidence_stops_gpu_and_is_idempotent(tmp_path: Path) -> None:
@@ -168,8 +181,7 @@ def test_sdk_transfers_use_content_root_relative_paths_and_job_json_uses_studio_
 
 def test_missing_uploaded_job_json_fails_before_remote_execution_and_stops_gpu(tmp_path: Path) -> None:
     client = FakeLightningClient(failure="missing-upload-job")
-    clock = FakeClock()
-    dispatcher, job = make_dispatcher(tmp_path, client, clock=clock, sleep=clock.sleep), make_job(tmp_path)
+    dispatcher, job = make_dispatcher(tmp_path, client), make_job(tmp_path)
 
     with pytest.raises(LightningDispatcherError) as raised:
         dispatcher.execute(job)
@@ -191,7 +203,7 @@ def test_missing_remote_result_fails_before_download_and_stops_gpu(tmp_path: Pat
 
     diagnostics = json.loads((dispatcher.base_dir / job.job_id / "dispatch.json").read_text())["diagnostics"]
     assert client.stopped == 1 and not client.downloads
-    assert diagnostics["stages"]["verify_remote_result"] == "FAILED"
+    assert diagnostics["stages"]["verify_shell_result"] == "FAILED"
     assert diagnostics["missing_remote_path"] == "/teamspace/studios/this_studio/aletheia_worker/jobs/safe-job/result.json"
 
 
@@ -210,42 +222,48 @@ def test_artifact_verification_occurs_after_upload_and_before_shell_probe(tmp_pa
     assert first_shell_probe > 0
 
 
-def test_artifact_present_shell_delay_polls_until_inputs_are_visible_before_worker_launch(tmp_path: Path) -> None:
-    job_path = "/teamspace/studios/this_studio/aletheia_worker/jobs/safe-job/job.json"
-    pdf_path = "/teamspace/studios/this_studio/aletheia_worker/jobs/safe-job/inputs/0.pdf"
-    clock = FakeClock()
-    client = FakeLightningClient(shell_responses={job_path: [False, True], pdf_path: [True]})
-    dispatcher = make_dispatcher(tmp_path, client, clock=clock, sleep=clock.sleep)
+def test_lit_uri_materialization_precedes_shell_verification_and_worker_launch(tmp_path: Path) -> None:
+    client = FakeLightningClient()
+    dispatcher = make_dispatcher(tmp_path, client)
 
     dispatcher.execute(make_job(tmp_path))
 
-    state = json.loads((dispatcher.base_dir / "safe-job" / "dispatch.json").read_text())
-    assert state["status"] == "SUCCEEDED"
-    assert clock.now == 0.5
-    assert any("aletheia_job.py" in command for command in client.commands)
+    job_uri = "lit://owner/team/studios/existing-studio/aletheia_worker/jobs/safe-job/job.json"
+    pdf_uri = "lit://owner/team/studios/existing-studio/aletheia_worker/jobs/safe-job/inputs/0.pdf"
+    assert dispatcher._artifact_uri("aletheia_worker/jobs/safe-job/job.json") == job_uri
+    execution_index = next(index for index, command in enumerate(client.commands) if "aletheia_job.py" in command)
+    bridge_commands = [command for command in client.commands[:execution_index] if command.startswith("lightning studio cp ")]
+    assert any(job_uri in command for command in bridge_commands)
+    assert any(pdf_uri in command for command in bridge_commands)
+    assert all("/teamspace/studios/this_studio/" in command for command in bridge_commands)
 
 
-def test_shell_input_visibility_timeout_never_launches_worker_and_stops_studio(tmp_path: Path) -> None:
-    job_path = "/teamspace/studios/this_studio/aletheia_worker/jobs/safe-job/job.json"
-    clock = FakeClock()
-    client = FakeLightningClient(
-        shell_responses={job_path: [False] * 40},
-        probe_output="PWD=/teamspace/studios/this_studio\nHOME=/home/lightning\nLIGHTNING_API_KEY=super-secret-key\n" + "x" * 5_000,
-    )
-    dispatcher = make_dispatcher(tmp_path, client, clock=clock, sleep=clock.sleep)
+def test_materialization_failure_stops_studio_blocks_worker_and_redacts_output(tmp_path: Path) -> None:
+    client = FakeLightningClient(failure="materialize")
+    dispatcher, job = make_dispatcher(tmp_path, client), make_job(tmp_path)
 
     with pytest.raises(LightningDispatcherError):
-        dispatcher.execute(make_job(tmp_path))
+        dispatcher.execute(job)
 
-    diagnostics = json.loads((dispatcher.base_dir / "safe-job" / "dispatch.json").read_text())["diagnostics"]
+    diagnostics = json.loads((dispatcher.base_dir / job.job_id / "dispatch.json").read_text())["diagnostics"]
     assert client.stopped == 1 and not any("aletheia_job.py" in command for command in client.commands)
-    assert diagnostics["stages"]["verify_artifact_input"] == "OK"
+    assert diagnostics["stages"]["materialize_remote_input"] == "FAILED"
+    assert diagnostics["materialization_exit_codes"] == [1]
+    assert "bridge-token" not in diagnostics["materialization_output_tail"]
+
+
+def test_materialized_input_hash_mismatch_blocks_worker(tmp_path: Path) -> None:
+    shell_job = "/teamspace/studios/this_studio/aletheia_worker/jobs/safe-job/job.json"
+    client = FakeLightningClient(corrupt_shell_path=shell_job)
+    dispatcher, job = make_dispatcher(tmp_path, client), make_job(tmp_path)
+
+    with pytest.raises(LightningDispatcherError):
+        dispatcher.execute(job)
+
+    diagnostics = json.loads((dispatcher.base_dir / job.job_id / "dispatch.json").read_text())["diagnostics"]
+    assert diagnostics["sha256_mismatch_path"] == shell_job
     assert diagnostics["stages"]["verify_remote_input"] == "FAILED"
-    assert diagnostics["remote_input_visibility_latency_ms"] == 15_000
-    assert len(diagnostics["shell_path_probe_tail"].encode()) <= 4 * 1024
-    assert "super-secret-key" not in diagnostics["shell_path_probe_tail"]
-    probe = next(command for command in client.commands if command.startswith('printf "PWD='))
-    assert "-path '*safe-job*'" in probe and "-maxdepth 6" in probe
+    assert not any("aletheia_job.py" in command for command in client.commands)
 
 
 def test_missing_artifact_input_fails_before_shell_probe_and_worker_launch(tmp_path: Path) -> None:
@@ -261,16 +279,30 @@ def test_missing_artifact_input_fails_before_shell_probe_and_worker_launch(tmp_p
     assert diagnostics["missing_artifact_path"] == "aletheia_worker/jobs/safe-job/job.json"
 
 
-def test_result_artifact_visibility_delay_polls_before_download(tmp_path: Path) -> None:
-    result_transfer_path = "aletheia_worker/jobs/safe-job/result.json"
-    clock = FakeClock()
-    client = FakeLightningClient(artifact_responses={result_transfer_path: [False, True]})
-    dispatcher = make_dispatcher(tmp_path, client, clock=clock, sleep=clock.sleep)
+def test_shell_result_is_explicitly_published_and_artifact_verified_before_download(tmp_path: Path) -> None:
+    client = FakeLightningClient()
+    dispatcher = make_dispatcher(tmp_path, client)
 
     dispatcher.execute(make_job(tmp_path))
 
-    assert clock.now == 0.5
-    assert client.downloads[0][0] == result_transfer_path
+    publish = next(command for command in client.commands if command.startswith("lightning studio cp /teamspace/studios/this_studio/") and "result.json" in command)
+    assert "lit://owner/team/studios/existing-studio/aletheia_worker/jobs/safe-job/result.json" in publish
+    assert client.artifact_checks[-1] == "aletheia_worker/jobs/safe-job/result.json"
+    assert client.downloads[0][0] == "aletheia_worker/jobs/safe-job/result.json"
+
+
+def test_result_publication_failure_blocks_download_and_stops_studio(tmp_path: Path) -> None:
+    client = FakeLightningClient(failure="publish")
+    dispatcher, job = make_dispatcher(tmp_path, client), make_job(tmp_path)
+
+    with pytest.raises(LightningDispatcherError):
+        dispatcher.execute(job)
+
+    diagnostics = json.loads((dispatcher.base_dir / job.job_id / "dispatch.json").read_text())["diagnostics"]
+    assert client.stopped == 1 and not client.downloads
+    assert diagnostics["stages"]["publish_remote_result"] == "FAILED"
+    assert diagnostics["publication_exit_codes"] == [1]
+    assert "bridge-token" not in diagnostics["publication_output_tail"]
 
 
 def test_cleanup_failure_does_not_mask_remote_execution_failure(tmp_path: Path) -> None:
