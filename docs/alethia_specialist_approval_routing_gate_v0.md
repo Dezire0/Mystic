@@ -47,6 +47,8 @@ WORLD, HERMES, and OIKOS remain unchanged. No paid provider dependency, autonomo
 
 Before discovery or automatic evolution can be considered, each capability needs a versioned, reproducible scientific benchmark suite, acceptance-environment results for the exact model revision, declared thresholds, and a reviewed approval record. Any future safe fallback must be explicitly configured and independently audited.
 
+The versioned evidence producer for that next step is documented in [ALETHEIA 2D Specialist Scientific Benchmark Suite v0](alethia_scientific_benchmark_suite_v0.md). Its reports feed `BenchmarkResult` directly but do not change this gate's approval policy or any candidate status.
+
 ## Implementation and verification
 
 Issue: [#139](https://github.com/Dezire0/Mystic/issues/139). Pull request: [#140](https://github.com/Dezire0/Mystic/pull/140). Initial implementation commit: `3f0f4f357f0622d9a507d05b72b7bf760e1cc15f`.
