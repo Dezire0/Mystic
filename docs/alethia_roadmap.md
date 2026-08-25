@@ -7,7 +7,7 @@
 
 ## Current milestone — 2D Specialist Scientific Benchmark Suite v0
 
-Issue #141 introduces frozen, versioned, capability-specific evidence generation for the three experimental NVIDIA candidates. It records repeated runs and review reports without activation. See [Scientific Benchmark Suite v0](alethia_scientific_benchmark_suite_v0.md).
+Issue [#141](https://github.com/Dezire0/Mystic/issues/141) introduces frozen, versioned, capability-specific evidence generation for the three experimental NVIDIA candidates. It records repeated runs and review reports without activation. Review is in [PR #142](https://github.com/Dezire0/Mystic/pull/142); initial implementation commit: `7856443be92e6005e7d482fd5f04b1492068a120`. See [Scientific Benchmark Suite v0](alethia_scientific_benchmark_suite_v0.md).
 
 ## Next decision gate
 

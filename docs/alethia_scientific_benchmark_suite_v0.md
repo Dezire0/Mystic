@@ -1,6 +1,6 @@
 # ALETHEIA 2D Specialist Scientific Benchmark Suite v0
 
-Status: Issue #141 implementation. This suite creates reviewable evidence for the three experimental NVIDIA specialists; it does not approve, route, or activate them.
+Status: implementation ready for review in [PR #142](https://github.com/Dezire0/Mystic/pull/142), resolving [Issue #141](https://github.com/Dezire0/Mystic/issues/141). The initial implementation commit is `7856443be92e6005e7d482fd5f04b1492068a120`. This suite creates reviewable evidence for the three experimental NVIDIA specialists; it does not approve, route, or activate them.
 
 ## Architecture
 
@@ -70,3 +70,5 @@ python scripts/run_aletheia_lightning_scientific_benchmark.py \
 It requires the existing `LIGHTNING_*` configuration and controlled input PDF; it does not print credentials. The pipeline acceptance check is deliberately identified as an execution-environment check, not a substitute for a complete per-candidate scientific suite.
 
 WORLD, HERMES, and OIKOS remain unchanged. No paid API, new model, autonomous discovery, or automatic production switching is added. Before automatic specialist evolution can be considered, the frozen corpora need broader independent scientific coverage, real model runs for all three capabilities, a reviewed threshold policy, and a separate approval decision.
+
+Verification recorded for this implementation: the focused benchmark, approval-gate, and Lightning dispatcher suites passed (`59 passed, 1 existing credential-gated acceptance skip`); compilation and `git diff --check` also passed. The real T4 command was not run in this credential-unconfigured session, so no result artifact is claimed here.
