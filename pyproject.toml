@@ -24,6 +24,9 @@ dev = [
 discord = [
   "discord.py>=2.4.0",
 ]
+lightning = [
+  "lightning-sdk>=2026.8.18",
+]
 
 [project.scripts]
 mystic = "mystic.cli.main:main"

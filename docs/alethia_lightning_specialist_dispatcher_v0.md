@@ -1,0 +1,57 @@
+# ALETHEIA Lightning Specialist Dispatcher v0
+
+This ALETHEIA-only module maps the capability `scientific.pdf_retrieval` to the configured existing Lightning Studio. It does not modify WORLD, HERMES, MNEME, OIKOS, MCP routing, or any production model-selection policy.
+
+The optional dependency is `pip install -e '.[lightning]'`. The adapter was checked against `lightning-sdk` 2026.8.18: `Studio(..., create_ok=False)`, `start(Machine.T4)`, `stop()`, `upload_file`, `download_file`, and `run_with_exit_code`. `create_ok=False` is mandatory: this dispatcher never creates a replacement Studio.
+
+Required environment settings are `LIGHTNING_USER_ID`, `LIGHTNING_API_KEY`, `LIGHTNING_OWNER`, `LIGHTNING_TEAMSPACE`, and `LIGHTNING_STUDIO_NAME`. The dispatcher resolves the existing Studio through the generic `LIGHTNING_OWNER/LIGHTNING_TEAMSPACE` reference, which supports both organization- and user-owned teamspaces without coercing the owner into a Lightning user. Missing configuration fails closed. Credentials are never placed in remote job JSON, artifacts, events, or errors.
+
+Each job validates a safe opaque job ID, local PDFs, hash/size/count limits, and `candidate_k`/`final_k`. It persists a normalized specification hash and input SHA-256 hashes under `mystic_data/aletheia_lightning_jobs/<job_id>/`. A completed result is reused only when the job ID, status, specification hash, and every input hash match.
+
+If remote execution fails, `dispatch.json` and the raised dispatcher error record the bounded stage status, exit code, result-file presence, worker paths, and at most 4 KiB each of sanitized stdout and stderr tails. API keys, user IDs, auth headers/tokens, environment-style assignments, and unbounded remote output are excluded. A Studio stop failure is recorded separately and never replaces the primary execution failure.
+
+The dispatcher treats two namespaces as explicit transport boundaries. The artifact plane uses content-root-relative paths such as `aletheia_worker/jobs/<job_id>/job.json` and canonical `lit://<owner>/<teamspace>/studios/<studio>/<path>` URIs. The execution plane uses `/teamspace/studios/this_studio/aletheia_worker/jobs/<job_id>/`. After `StudioApi.get_path_info` confirms each uploaded artifact, the running Studio executes `lightning studio cp` to materialize the artifact URI into its shell filesystem, verifies each materialized SHA-256 against the local source, and only then starts the worker. After the worker writes `result.json`, it verifies the shell file, explicitly publishes it with `lightning studio cp` to the artifact URI, confirms the artifact, then downloads it with the SDK. The bridge command has no credential flags; failures retain a bounded, sanitized command-output tail.
+
+The lifecycle uses a cross-process filesystem T4 lease, starts the existing Studio on `Machine.T4`, creates unproven `EvidenceCandidate` records, and always attempts `stop()` in `finally`. A shutdown failure is preserved separately from a successful evidence result. `LightningScientificJobAdapter` is shaped for the existing durable `ScientificJobWorker`, so that job leases and PENDING → READY → LEASED → RUNNING → SUCCEEDED transitions remain ALETHEIA-owned.
+
+## Final real acceptance
+
+The v0 transport contract passed controlled real acceptance with `aletheia-lightning-acceptance-006`: remote execution returned the expected gravitational-lensing page 1, produced three `EvidenceCandidate` records, and reported `reused=False`. An identical second invocation returned the same successful result with `reused=True`, confirming the dispatcher’s specification-and-input-hash idempotency behavior. The Studio was stopped successfully on the accepted run and on every observed failed acceptance path.
+
+The acceptance investigation established these operational constraints:
+
+- `LIGHTNING_OWNER` can denote an organization and must not be forced through a Lightning user resolver.
+- Quoting a shell `~/...` path prevents tilde expansion; shell commands use the explicit Studio runtime path instead.
+- Lightning SDK artifact paths are content-root-relative, not shell paths.
+- The artifact namespace and the running Studio filesystem are distinct correctness domains. Artifact presence does not imply worker-visible file materialization.
+- Implicit artifact/FUSE visibility is not a correctness mechanism. The explicit `lightning studio cp` bridge is the v0 production contract for ingress and result publication.
+
+The final execution topology is:
+
+```text
+ALETHEIA capability
+→ Specialist Router
+→ LightningDispatcher
+→ existing Lightning Studio
+→ automatic T4 lifecycle
+→ artifact ingress
+→ explicit artifact-to-shell materialization
+→ NVIDIA specialist worker
+→ explicit shell-to-artifact result publication
+→ result download
+→ EvidenceCandidate
+```
+
+WORLD, HERMES, and OIKOS remain unchanged. This acceptance qualifies the dispatcher as an evidence-backed candidate for a subsequent ALETHEIA 2D integration decision; it does not activate automatic routing or model adoption.
+
+Run the real acceptance test only with a controlled PDF and configured credentials:
+
+```bash
+python scripts/run_aletheia_lightning_acceptance.py \
+  --job-id lightning-acceptance-001 \
+  --query 'Which page explains gravitational lensing?' \
+  --pdf /absolute/path/to/controlled.pdf \
+  --expected-page 1
+```
+
+This is intentionally opt-in because it starts billable GPU capacity. It must demonstrate automatic start, retrieval, evidence conversion, and automatic stop before any production integration is proposed.
