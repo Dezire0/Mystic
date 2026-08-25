@@ -14,6 +14,36 @@ The dispatcher treats two namespaces as explicit transport boundaries. The artif
 
 The lifecycle uses a cross-process filesystem T4 lease, starts the existing Studio on `Machine.T4`, creates unproven `EvidenceCandidate` records, and always attempts `stop()` in `finally`. A shutdown failure is preserved separately from a successful evidence result. `LightningScientificJobAdapter` is shaped for the existing durable `ScientificJobWorker`, so that job leases and PENDING → READY → LEASED → RUNNING → SUCCEEDED transitions remain ALETHEIA-owned.
 
+## Final real acceptance
+
+The v0 transport contract passed controlled real acceptance with `aletheia-lightning-acceptance-006`: remote execution returned the expected gravitational-lensing page 1, produced three `EvidenceCandidate` records, and reported `reused=False`. An identical second invocation returned the same successful result with `reused=True`, confirming the dispatcher’s specification-and-input-hash idempotency behavior. The Studio was stopped successfully on the accepted run and on every observed failed acceptance path.
+
+The acceptance investigation established these operational constraints:
+
+- `LIGHTNING_OWNER` can denote an organization and must not be forced through a Lightning user resolver.
+- Quoting a shell `~/...` path prevents tilde expansion; shell commands use the explicit Studio runtime path instead.
+- Lightning SDK artifact paths are content-root-relative, not shell paths.
+- The artifact namespace and the running Studio filesystem are distinct correctness domains. Artifact presence does not imply worker-visible file materialization.
+- Implicit artifact/FUSE visibility is not a correctness mechanism. The explicit `lightning studio cp` bridge is the v0 production contract for ingress and result publication.
+
+The final execution topology is:
+
+```text
+ALETHEIA capability
+→ Specialist Router
+→ LightningDispatcher
+→ existing Lightning Studio
+→ automatic T4 lifecycle
+→ artifact ingress
+→ explicit artifact-to-shell materialization
+→ NVIDIA specialist worker
+→ explicit shell-to-artifact result publication
+→ result download
+→ EvidenceCandidate
+```
+
+WORLD, HERMES, and OIKOS remain unchanged. This acceptance qualifies the dispatcher as an evidence-backed candidate for a subsequent ALETHEIA 2D integration decision; it does not activate automatic routing or model adoption.
+
 Run the real acceptance test only with a controlled PDF and configured credentials:
 
 ```bash
