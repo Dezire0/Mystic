@@ -32,6 +32,7 @@ mystic_data/metrics/*
 mystic_data/training/*
 mystic_data/datasets/*
 mystic_data/state/*
+mystic_data/alethia_scientific_benchmark/
 mystic_gpu_train_package*.tar.gz
 raven_lora*_qwen.tar.gz
 mystic_data/datasets/raven/adversarial_seed_raven.jsonl

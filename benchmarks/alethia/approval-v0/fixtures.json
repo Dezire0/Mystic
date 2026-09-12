@@ -1,0 +1,76 @@
+{
+  "schema_version": "aletheia-specialist-scientific-suite/v0",
+  "fixture_policy": "Frozen evaluation questions and relevance labels must not change in place. A material change requires a new benchmark_version and a new locked dataset SHA-256.",
+  "suites": [
+    {
+      "benchmark_id": "alethia-scientific-text-retrieval",
+      "benchmark_version": "v0.1.0",
+      "capability": "scientific.text_retrieval",
+      "random_seed": 141,
+      "dataset_sha256": "fbb29aac873c18a0d6e1b37a2cf0269f8c8a5d48ac2fe5b4b8de4e9762d57cec",
+      "task_schema": {"query": "string", "documents": "[{id,text}]", "relevant_ids": "[id]"},
+      "scoring_rules": {"metrics": ["top_1", "recall_at_3", "recall_at_5", "mrr", "ndcg"], "no_answer": "empty ranking is the only correct abstention"},
+      "dataset": {
+        "dataset_id": "alethia-controlled-scientific-text",
+        "dataset_version": "v0.1.0",
+        "development_smoke": [
+          {"case_id": "smoke-text-lensing", "domain": "physics", "query": "What bends light around a massive object?", "documents": [{"id": "gravity", "text": "Gravitational lensing deflects light through spacetime curvature."}], "relevant_ids": ["gravity"]}
+        ],
+        "frozen_evaluation": [
+          {"case_id": "text-physics-lensing", "domain": "physics", "query": "Which phenomenon magnifies a background galaxy when foreground mass bends its light?", "documents": [{"id": "p1", "text": "Gravitational lensing magnifies distant sources when mass curves spacetime."}, {"id": "p2", "text": "Spectroscopy separates light by wavelength."}, {"id": "p3", "text": "A gravitational redshift changes observed frequency."}], "relevant_ids": ["p1"]},
+          {"case_id": "text-chemistry-catalysis", "domain": "chemistry", "query": "What lowers activation energy without being consumed by the reaction?", "documents": [{"id": "c1", "text": "A catalyst offers a lower activation-energy pathway and is regenerated."}, {"id": "c2", "text": "An inhibitor reduces reaction rate."}, {"id": "c3", "text": "A solvent dissolves reactants."}], "relevant_ids": ["c1"]},
+          {"case_id": "text-biology-transcription", "domain": "biology", "query": "Which process synthesizes RNA from a DNA template?", "documents": [{"id": "b1", "text": "Transcription uses DNA as a template to synthesize RNA."}, {"id": "b2", "text": "Translation reads mRNA to build a protein."}, {"id": "b3", "text": "Replication copies DNA before cell division."}], "relevant_ids": ["b1"]},
+          {"case_id": "text-mathematics-eigenvalue", "domain": "mathematics", "query": "What scalar satisfies Av equals lambda v for a nonzero vector v?", "documents": [{"id": "m1", "text": "An eigenvalue is a scalar lambda for which Av equals lambda times v."}, {"id": "m2", "text": "A determinant measures signed volume scaling."}, {"id": "m3", "text": "An integral accumulates infinitesimal quantities."}], "relevant_ids": ["m1"]},
+          {"case_id": "text-no-answer", "domain": "physics", "query": "Which document describes a clinical trial endpoint?", "documents": [{"id": "n1", "text": "A telescope measures stellar spectra."}, {"id": "n2", "text": "An enzyme accelerates a biochemical reaction."}], "relevant_ids": []}
+        ]
+      }
+    },
+    {
+      "benchmark_id": "alethia-scientific-visual-retrieval",
+      "benchmark_version": "v0.1.0",
+      "capability": "scientific.visual_retrieval",
+      "random_seed": 141,
+      "dataset_sha256": "cb7cb58b8355cec2af49b953094f2d5cc6c92d5ef7e59cabba196310a2bc56f2",
+      "task_schema": {"query": "string", "figures": "[{id,image_ref,caption}]", "relevant_ids": "[id]"},
+      "scoring_rules": {"metrics": ["top_1", "recall_at_3", "recall_at_5", "mrr", "ndcg"]},
+      "dataset": {
+        "dataset_id": "alethia-controlled-scientific-figures",
+        "dataset_version": "v0.1.0",
+        "licence": "CC0 controlled diagrams committed in benchmarks/alethia/scientific-v1/assets",
+        "asset_sha256s": {"biology.png": "f66af4d29844cf468e10ff1004ec7fd6d1a9725b05e490b781b76ee7d3c53772", "chemistry.png": "d56246990df205e57ba87165129212fbeb799e8050243afabfc9e5bed44efa71", "mathematics.png": "2a88d7765becd1ed8193597351b92170456903969054f0eedffb52716ea03417", "physics.png": "847bff774e08d2dedfa939fc6c209219bc678d8d0ac1dfeb616ca243025a9bd5"},
+        "development_smoke": [
+          {"case_id": "smoke-visual-physics", "domain": "physics", "query": "Find the physics diagram.", "figures": [{"id": "physics", "image_ref": "../scientific-v1/assets/physics.png", "caption": "Controlled physics diagram"}], "relevant_ids": ["physics"]}
+        ],
+        "frozen_evaluation": [
+          {"case_id": "visual-physics", "domain": "physics", "query": "Find the controlled diagram associated with gravitational lensing and light deflection.", "figures": [{"id": "v-p", "image_ref": "../scientific-v1/assets/physics.png", "caption": "Physics diagram"}, {"id": "v-c", "image_ref": "../scientific-v1/assets/chemistry.png", "caption": "Chemistry diagram"}], "relevant_ids": ["v-p"]},
+          {"case_id": "visual-chemistry", "domain": "chemistry", "query": "Find the controlled chemistry reaction diagram.", "figures": [{"id": "v-c", "image_ref": "../scientific-v1/assets/chemistry.png", "caption": "Chemistry diagram"}, {"id": "v-b", "image_ref": "../scientific-v1/assets/biology.png", "caption": "Biology diagram"}], "relevant_ids": ["v-c"]},
+          {"case_id": "visual-biology", "domain": "biology", "query": "Find the controlled biology cell diagram.", "figures": [{"id": "v-b", "image_ref": "../scientific-v1/assets/biology.png", "caption": "Biology diagram"}, {"id": "v-m", "image_ref": "../scientific-v1/assets/mathematics.png", "caption": "Mathematics diagram"}], "relevant_ids": ["v-b"]},
+          {"case_id": "visual-mathematics", "domain": "mathematics", "query": "Find the controlled mathematics equation diagram.", "figures": [{"id": "v-m", "image_ref": "../scientific-v1/assets/mathematics.png", "caption": "Mathematics diagram"}, {"id": "v-p", "image_ref": "../scientific-v1/assets/physics.png", "caption": "Physics diagram"}], "relevant_ids": ["v-m"]}
+        ]
+      }
+    },
+    {
+      "benchmark_id": "alethia-scientific-multimodal-reranking",
+      "benchmark_version": "v0.1.0",
+      "capability": "scientific.multimodal_reranking",
+      "random_seed": 141,
+      "dataset_sha256": "e8ab74447cdf50be48e0ec1ed5e07c725a9437197e27a087e0eb88b775c2ea1d",
+      "task_schema": {"query": "string", "candidate_set_mode": "text_only|image_containing|mixed_multimodal", "candidates": "[{id,text?,image_ref?}]", "relevant_ids": "[id]"},
+      "scoring_rules": {"metrics": ["top_1", "mrr", "ndcg", "correct_item_rank"]},
+      "dataset": {
+        "dataset_id": "alethia-controlled-multimodal-reranking",
+        "dataset_version": "v0.1.0",
+        "asset_sha256s": {"biology.png": "f66af4d29844cf468e10ff1004ec7fd6d1a9725b05e490b781b76ee7d3c53772", "chemistry.png": "d56246990df205e57ba87165129212fbeb799e8050243afabfc9e5bed44efa71", "mathematics.png": "2a88d7765becd1ed8193597351b92170456903969054f0eedffb52716ea03417", "physics.png": "847bff774e08d2dedfa939fc6c209219bc678d8d0ac1dfeb616ca243025a9bd5"},
+        "development_smoke": [
+          {"case_id": "smoke-rerank", "domain": "physics", "candidate_set_mode": "text_only", "query": "Find lensing.", "candidates": [{"id": "lens", "text": "Gravitational lensing bends light."}], "relevant_ids": ["lens"]}
+        ],
+        "frozen_evaluation": [
+          {"case_id": "rerank-text-only", "domain": "chemistry", "candidate_set_mode": "text_only", "query": "Rank the passage that explains a catalyst.", "candidates": [{"id": "r1", "text": "A catalyst lowers activation energy without net consumption."}, {"id": "r2", "text": "A reactant is consumed in a reaction."}, {"id": "r3", "text": "An acid donates a proton."}], "relevant_ids": ["r1"]},
+          {"case_id": "rerank-image-containing", "domain": "biology", "candidate_set_mode": "image_containing", "query": "Rank the cell-biology candidate.", "candidates": [{"id": "r1", "text": "Cell structure diagram", "image_ref": "../scientific-v1/assets/biology.png"}, {"id": "r2", "text": "Equation diagram", "image_ref": "../scientific-v1/assets/mathematics.png"}], "relevant_ids": ["r1"]},
+          {"case_id": "rerank-mixed-multimodal", "domain": "physics", "candidate_set_mode": "mixed_multimodal", "query": "Rank the candidate explaining gravitational lensing.", "candidates": [{"id": "r1", "text": "Gravitational lensing bends light around massive objects.", "image_ref": "../scientific-v1/assets/physics.png"}, {"id": "r2", "text": "Stellar spectra are split by wavelength."}, {"id": "r3", "text": "Chemical reaction diagram", "image_ref": "../scientific-v1/assets/chemistry.png"}], "relevant_ids": ["r1"]},
+          {"case_id": "rerank-mathematics", "domain": "mathematics", "candidate_set_mode": "mixed_multimodal", "query": "Rank the candidate defining an eigenvalue.", "candidates": [{"id": "r1", "text": "An eigenvalue lambda satisfies Av=lambda v."}, {"id": "r2", "text": "A matrix determinant measures volume scaling.", "image_ref": "../scientific-v1/assets/mathematics.png"}], "relevant_ids": ["r1"]}
+        ]
+      }
+    }
+  ]
+}
