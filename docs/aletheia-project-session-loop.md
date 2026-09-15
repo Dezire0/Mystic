@@ -4,6 +4,8 @@ Status: **TARGET / experimental operating hypothesis**
 Canonical strategy: `docs/goal.md`  
 Tracking: Issue #145
 
+For the audited ownership boundary, bridge sequence, and implementation packages, see [ALETHEIA Architecture vNext](aletheia-architecture-vNext.md).
+
 ## Hypothesis
 
 ALETHEIA can operate as one WORLD project without a Global Director or specialist reasoning fleet.
