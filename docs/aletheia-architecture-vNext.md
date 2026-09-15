@@ -2,9 +2,9 @@
 
 Status: **target architecture; no runtime behavior changes in this document**
 Issue: [#147](https://github.com/Dezire0/Mystic/issues/147); review: [PR #148](https://github.com/Dezire0/Mystic/pull/148); initial implementation commit: `587599d8eae9d0d69a67f974170a76da35fee3c6`.
-Audit baselines: Mystic `599f5fe1` (2026-09-06), THE WHOLE `d37a529` (`dev`, 2026-09-14)
+Historical architecture audit baselines: Mystic `599f5fe1` (2026-09-06), THE WHOLE `d37a529` (`dev`, 2026-09-14). A1's current-source inventory is based on Mystic `599f5fe1` and THE WHOLE `485f92f` (`origin/main`, 2026-09-15).
 
-This is the integration-ready companion to [the canonical Mystic goal](goal.md) and the [Project Session Loop](aletheia-project-session-loop.md). It does not replace either document's strategy status. It makes the ownership boundary and the implementation sequence explicit so a bridge can be built without making ALETHEIA another agent OS.
+This is the integration-ready companion to [the canonical Mystic goal](goal.md), the [Project Session Loop](aletheia-project-session-loop.md), and the repository-level [A1 contract inventory](aletheia-contract-inventory.md). It does not replace either document's strategy status. It makes the ownership boundary and the implementation sequence explicit so a bridge can be built without making ALETHEIA another agent OS.
 
 ## 1. Canonical definition
 
