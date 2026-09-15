@@ -171,6 +171,7 @@ Do not change or delete: `ResearchCampaign`, `ScientificJob`, their CAS/lease/ou
 | Package | Objective / owned files | Protected files | Dependencies / acceptance | Recommended model |
 | --- | --- | --- | --- | --- |
 | A1 | Contract inventory and fixture map; docs only in both repositories | Runtime/storage code | Exact call-site matrix and no stale health claims | Spark |
+| A1a | Post-contract source-link and terminology consistency only | All architecture and runtime contracts | Link check and no semantic change; use only after an architect-approved contract change | Luna |
 | A2 | WORLD `ProjectScope` domain/store/service with management-seat projection | Mystic campaign/job storage | CAS/fencing, project isolation, no provider/model identity in seat | Terra / Medium |
 | A3 | Versioned query-only `AletheiaQueryPort` and unavailable/degraded bridge states | Mystic private storage, module admission | Bounded reads, auth tests, no synthetic counts | Sol / High |
 | A4 | `ScientificTaskProfile`/slot command vocabulary and validated command port | `ScientificJob` lifecycle | Authority/revision/idempotency tests; no direct session-to-worker effect | Terra / Medium |
