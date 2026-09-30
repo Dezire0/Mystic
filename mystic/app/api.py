@@ -23,7 +23,10 @@ except ImportError:  # pragma: no cover
     RedirectResponse = None
 
 from mystic.app.pages import (
+    ControlPanelPage,
     DebateSessionPage,
+    LabSessionPage,
+    LabStartPage,
     ModelComparePage,
     ResearchTableSessionPage,
     ResearchTableStartPage,
@@ -58,7 +61,15 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def home():
-        return RedirectResponse(url="/research-table/start", status_code=302)
+        status = toolbox.mystic_status()
+        sessions = _collect_session_index(root_path)
+        lab_sessions = [item for item in sessions if item.get("type") == "lab"]
+        return ControlPanelPage(
+            status=status,
+            sessions=sessions,
+            lab_sessions=lab_sessions,
+            warnings=_control_panel_warnings(status),
+        )
 
     @app.get("/health")
     def health():
@@ -86,6 +97,184 @@ def create_app(
             if model_status["provider"] == "cli"
         ]
         return ResearchTableStartPage(participants=participants, auth_cards=auth_cards, controller=controller)
+
+    @app.get("/lab/start", response_class=HTMLResponse)
+    def lab_start():
+        status = toolbox.mystic_status()
+        participants = _participant_options(status)
+        auth_cards = [
+            ProviderAuthCard(
+                model_id=model_id,
+                status=model_status["status"],
+                action_href=f"/providers/auth/{model_id}",
+            )
+            for model_id, model_status in status["models"].items()
+            if model_status["provider"] == "cli"
+        ]
+        return LabStartPage(participants=participants, auth_cards=auth_cards)
+
+    @app.get("/lab/start/run", response_class=HTMLResponse)
+    def lab_run(
+        request: Request,
+        problem: str,
+        domain: str = "math",
+        goal: str = "",
+        mode: str = "serious",
+    ):
+        status = toolbox.mystic_status()
+        allowed_options = _participant_options(status)
+        allowed_ids = {item["model_id"] for item in allowed_options}
+        selected = _dedupe_preserving_order(request.query_params.getlist("participants"))
+        if not problem.strip():
+            raise HTTPException(status_code=400, detail="problem is required")
+        if not goal.strip():
+            raise HTTPException(status_code=400, detail="goal is required")
+        if len(selected) < 1 or len(selected) > 4:
+            raise HTTPException(status_code=400, detail="select one to four participants")
+        if any(model_id not in allowed_ids for model_id in selected):
+            raise HTTPException(status_code=400, detail="one or more selected participants are unavailable")
+        session = toolbox.lab_session_create(
+            problem=problem,
+            domain=domain,
+            goal=goal,
+            mode=mode,
+            participants=selected,
+        )
+        return RedirectResponse(url=f"/lab/sessions/{session['session_id']}", status_code=302)
+
+    @app.get("/lab/sessions/{session_id}", response_class=HTMLResponse)
+    def lab_session(
+        session_id: str,
+        message: str = "",
+        level: str = "info",
+        claim_status: str = "",
+        claim_type: str = "",
+        relation_filter: str = "",
+    ):
+        session = toolbox.lab_session_get(session_id=session_id)
+        if message:
+            session["flash_message"] = message
+            session["flash_level"] = level
+        session["claim_status_filter"] = claim_status
+        session["claim_type_filter"] = claim_type
+        session["relation_filter"] = relation_filter
+        return LabSessionPage(session=session)
+
+    @app.post("/lab/sessions/{session_id}/advance")
+    def lab_advance(session_id: str, max_steps: int = 1, target_phase: str | None = None, use_model_arena: bool = False):
+        return _run_lab_action_redirect(
+            session_id=session_id,
+            action=lambda: toolbox.lab_session_advance(
+                session_id=session_id,
+                max_steps=max_steps,
+                target_phase=target_phase,
+                use_model_arena=use_model_arena,
+                use_verifier=True,
+            ),
+            success_message="Lab session advanced.",
+            error_prefix="Advance failed",
+        )
+
+    @app.post("/lab/sessions/{session_id}/model-arena")
+    def lab_model_arena(session_id: str):
+        session = toolbox.lab_session_get(session_id=session_id)
+        participant_models = [str(item.get("model_id", "")) for item in session.get("session", {}).get("participants", [])]
+        return _run_lab_action_redirect(
+            session_id=session_id,
+            action=lambda: toolbox.lab_models_debate(
+                session_id=session_id,
+                question=str(session.get("session", {}).get("problem", "")),
+                participants=[item for item in participant_models if item],
+                rounds=["independent_discovery", "cross_critique", "revision_after_evidence", "final_synthesis"],
+                use_existing_research_table=True,
+            ),
+            success_message="Model Arena run completed.",
+            error_prefix="Model Arena failed",
+        )
+
+    @app.post("/lab/sessions/{session_id}/report")
+    def lab_report(session_id: str):
+        return _run_lab_action_redirect(
+            session_id=session_id,
+            action=lambda: toolbox.lab_report_generate(
+                session_id=session_id,
+                format="markdown",
+                include_failures=True,
+                include_next_actions=True,
+            ),
+            success_message="Lab report generated.",
+            error_prefix="Report generation failed",
+        )
+
+    @app.post("/lab/sessions/{session_id}/referee-review")
+    def lab_referee_review(session_id: str):
+        session = toolbox.lab_session_get(session_id=session_id)
+        claims = session.get("claims", [])
+        if not claims:
+            return _lab_session_redirect(session_id, message="Referee review unavailable: no claims yet.", level="error")
+        latest_claim = claims[-1]
+        return _run_lab_action_redirect(
+            session_id=session_id,
+            action=lambda: toolbox.lab_referee_review(
+                session_id=session_id,
+                claim_id=str(latest_claim.get("claim_id", "")),
+                text=str(latest_claim.get("text", "")),
+                strictness="hostile",
+            ),
+            success_message="Referee review completed.",
+            error_prefix="Referee review failed",
+        )
+
+    @app.post("/lab/sessions/{session_id}/experiments/create")
+    def lab_create_experiment(session_id: str):
+        session = toolbox.lab_session_get(session_id=session_id)
+        claims = session.get("claims", [])
+        if not claims:
+            return _lab_session_redirect(session_id, message="Experiment creation unavailable: no claims yet.", level="error")
+        latest_claim = claims[-1]
+        return _run_lab_action_redirect(
+            session_id=session_id,
+            action=lambda: toolbox.lab_experiment_create(
+                session_id=session_id,
+                claim_id=str(latest_claim.get("claim_id", "")),
+                question=f"Test claim: {latest_claim.get('text', '')}",
+                method="python_bruteforce",
+                inputs={"candidate_answer": str(latest_claim.get("text", ""))},
+            ),
+            success_message="Experiment created.",
+            error_prefix="Experiment creation failed",
+        )
+
+    @app.post("/lab/sessions/{session_id}/experiments/{experiment_id}/run")
+    def lab_run_experiment(session_id: str, experiment_id: str, dry_run: bool = False):
+        return _run_lab_action_redirect(
+            session_id=session_id,
+            action=lambda: toolbox.lab_experiment_run(
+                session_id=session_id,
+                experiment_id=experiment_id,
+                dry_run=dry_run,
+            ),
+            success_message="Experiment executed." if not dry_run else "Experiment dry-run completed.",
+            error_prefix="Experiment run failed",
+        )
+
+    @app.post("/lab/sessions/{session_id}/experiments/run-latest")
+    def lab_run_latest_experiment(session_id: str):
+        session = toolbox.lab_session_get(session_id=session_id)
+        experiments = session.get("experiments", [])
+        if not experiments:
+            return _lab_session_redirect(session_id, message="Experiment run unavailable: no experiments yet.", level="error")
+        latest = experiments[-1]
+        return _run_lab_action_redirect(
+            session_id=session_id,
+            action=lambda: toolbox.lab_experiment_run(
+                session_id=session_id,
+                experiment_id=str(latest.get("experiment_id", "")),
+                dry_run=False,
+            ),
+            success_message="Latest experiment executed.",
+            error_prefix="Experiment run failed",
+        )
 
     @app.get("/research-table/start/run", response_class=HTMLResponse)
     def research_table_run(
@@ -315,6 +504,21 @@ def _run_action_redirect(*, session_id: str, action: Any, error_prefix: str) -> 
 def _session_redirect(session_id: str, *, message: str, level: str) -> RedirectResponse:
     return RedirectResponse(
         url=f"/research-table/sessions/{session_id}?message={quote(message)}&level={quote(level)}",
+        status_code=302,
+    )
+
+
+def _run_lab_action_redirect(*, session_id: str, action: Any, success_message: str, error_prefix: str) -> RedirectResponse:
+    try:
+        action()
+        return _lab_session_redirect(session_id, message=success_message, level="success")
+    except Exception as exc:
+        return _lab_session_redirect(session_id, message=f"{error_prefix}: {exc}", level="error")
+
+
+def _lab_session_redirect(session_id: str, *, message: str, level: str) -> RedirectResponse:
+    return RedirectResponse(
+        url=f"/lab/sessions/{session_id}?message={quote(message)}&level={quote(level)}",
         status_code=302,
     )
 
@@ -882,6 +1086,7 @@ def _load_tool_results(path: Path, *, prefix: str) -> list[dict]:
 def _collect_session_index(root_path: Path) -> list[dict]:
     sessions: list[dict] = []
     for session_type, base in [
+        ("lab", root_path / "mystic_data/lab_sessions"),
         ("research_table", root_path / "mystic_data/research_table_sessions"),
         ("debate", root_path / "mystic_data/debate_sessions"),
     ]:
@@ -898,9 +1103,26 @@ def _collect_session_index(root_path: Path) -> list[dict]:
             sessions.append(
                 {
                     "type": session_type,
-                    "session_id": payload.get("session_id", item.name),
-                    "problem": payload.get("problem", ""),
+                    "session_id": payload.get("session_id", payload.get("session", {}).get("session_id", item.name)),
+                    "problem": payload.get("problem", payload.get("session", {}).get("problem", "")),
                     "path": str(session_path),
                 }
             )
     return sessions
+
+
+def _control_panel_warnings(status: dict[str, Any]) -> list[str]:
+    warnings: list[str] = []
+    if str(status.get("mcp_server_status", "")).lower() != "ready":
+        warnings.append("MCP server is not reporting READY.")
+    for model_id, payload in status.get("models", {}).items():
+        state = str(payload.get("status", {}).get("state", "unknown"))
+        message = str(payload.get("status", {}).get("message", "")).strip()
+        if state in {"not_authenticated", "auth_required"}:
+            warnings.append(f"{model_id} requires login. {message}".strip())
+        elif state in {"missing", "error", "disabled"}:
+            warnings.append(f"{model_id} is {state}. {message}".strip())
+    if not warnings:
+        recent_errors = status.get("recent_errors", [])
+        warnings.extend(str(item) for item in recent_errors[:3])
+    return warnings[:8]
