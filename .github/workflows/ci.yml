@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package with dev and api extras
+        run: python -m pip install -e ".[dev,api]"
+
+      # Two tests depend on the original author's machine and are deselected
+      # until they are made portable (see docs/dependencies.md, "Known CI gaps"):
+      #  - test_load_training_targets_returns_priority_order reads a committed
+      #    manifest that contains absolute /Users/... paths.
+      #  - test_service_definition_uses_validated_persistent_root is macOS
+      #    launchd specific (~/Library/Caches).
+      - name: Run tests
+        run: >
+          python -m pytest -q
+          --deselect tests/test_run_manifest_workflow.py::RunManifestWorkflowTests::test_load_training_targets_returns_priority_order
+          --deselect tests/test_engine_runner_launchd.py::EngineRunnerLaunchdTests::test_service_definition_uses_validated_persistent_root
